@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The SOURCES are ESM; esbuild bundles them to a single CommonJS file for
+    // the extension entry, and Vite bundles the webview. Bundler resolution is
+    // what says "a bundler resolves these imports, not Node" -- without it TS
+    // reads the package as CommonJS (no `"type": "module"`, because the emitted
+    // `dist/extension.js` genuinely is CommonJS) and rejects every ESM import.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "dist-types",
+    "rootDir": "src",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "vscode"],
+    "emitDeclarationOnly": true
+  },
+  "include": ["src/**/*"],
+  "references": [{ "path": "../protocol" }, { "path": "../runner" }, { "path": "../ui" }]
+}

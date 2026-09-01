@@ -1,0 +1,24 @@
+{
+  "name": "@tau-code/web",
+  "version": "0.1.0",
+  "description": "Standalone browser client for tau, served by @tau-code/server.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@tau-code/protocol": "0.1.0",
+    "@tau-code/ui": "0.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^5.4.0"
+  }
+}

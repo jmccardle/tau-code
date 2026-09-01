@@ -1,0 +1,97 @@
+{
+  "name": "tau-code-vscode",
+  "displayName": "tau",
+  "version": "0.1.0",
+  "description": "Run a tau agent inside VS Code or VSCodium.",
+  "license": "MIT",
+  "publisher": "tau-code",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["AI", "Other"],
+  "main": "./dist/extension.js",
+  "//extensionKind": "`workspace` so the agent's tools run where the code is -- over SSH, in WSL, in a devcontainer -- rather than on the laptop. The webview always renders locally regardless, which is the split a standalone web app cannot reproduce.",
+  "extensionKind": ["workspace"],
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tau-code",
+          "title": "tau",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tau-code": [
+        {
+          "id": "tau-code.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "tau-code.restart",
+        "title": "tau: Restart the agent process",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "tau-code.showLog",
+        "title": "tau: Show the agent log"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "tau-code.restart",
+          "when": "view == tau-code.chat",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "tau",
+      "properties": {
+        "tau-code.binary": {
+          "type": "string",
+          "default": "tau",
+          "description": "Path to tau's console script. A bare name is looked up on PATH."
+        },
+        "tau-code.model": {
+          "type": "string",
+          "default": "",
+          "description": "Passed to tau as --model. Empty uses tau's own configured default."
+        },
+        "tau-code.provider": {
+          "type": "string",
+          "default": "",
+          "description": "Passed to tau as --provider. Empty uses tau's own configured default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs && vite build --config vite.webview.config.ts",
+    "watch": "node esbuild.mjs --watch"
+  },
+  "dependencies": {
+    "@tau-code/protocol": "0.1.0",
+    "@tau-code/runner": "0.1.0",
+    "@tau-code/ui": "0.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/vscode": "^1.90.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "esbuild": "^0.24.0",
+    "vite": "^5.4.0"
+  }
+}

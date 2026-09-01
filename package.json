@@ -1,0 +1,33 @@
+{
+  "name": "tau-code",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Clients for the tau agent harness: a connection server, a web client, and a VS Code extension.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/protocol",
+    "packages/runner",
+    "packages/ui",
+    "packages/server",
+    "packages/web",
+    "packages/vscode"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-protocol.mjs",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc --build",
+    "test": "node --test packages/*/test/",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:server": "node scripts/smoke-server.mjs",
+    "check:protocol": "node scripts/generate-protocol.mjs --check",
+    "dev:server": "npm run dev --workspace @tau-code/server",
+    "dev:web": "npm run dev --workspace @tau-code/web",
+    "clean": "tsc --build --clean && rm -rf packages/*/dist packages/web/dist-web"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

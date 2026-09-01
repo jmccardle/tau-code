@@ -1,0 +1,14 @@
+/* The browser has no editor chrome to sit inside, so the page supplies the
+   full-height box that `.tau-app` fills. In the VS Code webview the panel does
+   this instead, which is why it lives here and not in the shared stylesheet. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #1e1e2e;
+  color: #cdd6f4;
+}

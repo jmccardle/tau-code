@@ -1,0 +1,26 @@
+{
+  "name": "@tau-code/server",
+  "version": "0.1.0",
+  "description": "Connection server: owns a tau process and serves it to browser clients over WebSocket.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "tau-code-server": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "node --watch dist/cli.js"
+  },
+  "dependencies": {
+    "@tau-code/protocol": "0.1.0",
+    "@tau-code/runner": "0.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.12"
+  }
+}
