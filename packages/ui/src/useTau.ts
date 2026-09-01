@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { NO_AGENT, TauClient, TauRpcError, type Capabilities, type Transport } from '@tau-code/protocol';
+import {
+  NO_AGENT,
+  TauClient,
+  TauRpcError,
+  type Capabilities,
+  type Transport,
+} from '@ffwf/tau-code-protocol';
 import { Conversation, type ConversationState } from './conversation.js';
 
 export type ConnectionPhase = 'connecting' | 'ready' | 'failed' | 'closed';

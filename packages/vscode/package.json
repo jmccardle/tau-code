@@ -1,10 +1,11 @@
 {
-  "name": "tau-code-vscode",
+  "//name": "The extension ID is publisher.name, so this pair reads `ffwf.tau-code`. It is not the npm scope -- an extension name may not contain `@` or `/`. The `tau-code.*` setting and command IDs below are a third namespace again, and are deliberately unchanged: renaming them would silently drop a user's settings.",
+  "name": "tau-code",
   "displayName": "tau",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Run a tau agent inside VS Code or VSCodium.",
   "license": "MIT",
-  "publisher": "tau-code",
+  "publisher": "ffwf",
   "private": true,
   "engines": {
     "vscode": "^1.90.0"
@@ -112,12 +113,12 @@
   "scripts": {
     "build": "node esbuild.mjs && vite build --config vite.webview.config.ts",
     "watch": "node esbuild.mjs --watch",
-    "package": "npx --yes @vscode/vsce package --allow-missing-repository --no-dependencies --out ../../tau-code-$npm_package_version.vsix"
+    "package": "npx --yes @vscode/vsce package --allow-missing-repository --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
   },
   "dependencies": {
-    "@tau-code/protocol": "0.1.0",
-    "@tau-code/runner": "0.1.0",
-    "@tau-code/ui": "0.1.0",
+    "@ffwf/tau-code-protocol": "0.2.0",
+    "@ffwf/tau-code-runner": "0.2.0",
+    "@ffwf/tau-code-ui": "0.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

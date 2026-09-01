@@ -8,6 +8,7 @@
  *
  *   TAU_BIN=/path/to/venv/bin/tau node scripts/smoke-server.mjs
  */
+import { writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { WebSocket } from 'ws';
@@ -25,7 +26,9 @@ function check(name, condition, detail = '') {
 
 const server = await startServer({
   port: 0,
-  staticDir: resolve(HERE, '../packages/web/dist-web'),
+  // The server's own copy, not the web workspace's: that is what ships in the
+  // package and in the container image, so it is what this should exercise.
+  staticDir: resolve(HERE, '../packages/server/dist-web'),
   tau: { noSession: true },
   onLog: () => {},
 });
@@ -144,8 +147,17 @@ try {
   // PROMPT tau built carries the file's content, which is decided before
   // admission and is therefore already true when the acceptance arrives. No
   // model has to answer, so this costs no API credits.
+  //
+  // The attached file is written here rather than being an existing one. This
+  // check used to read README.md and started failing the day the README grew
+  // past tau's `attachment_inline_limit` (10240 bytes by default), because tau
+  // then correctly emits `<reference>` instead of `<attachment>`. That was the
+  // test measuring the README's size, which is nobody's contract.
+  const fixture = resolve(HERE, '../smoke-attachment.txt');
+  writeFileSync(fixture, 'The seventh sea is called Corandel.\n');
+
   const accepted = await client.call('submit', {
-    text: 'read @README.md',
+    text: 'read @smoke-attachment.txt',
     source: 'rpc',
     submitter: 'smoke',
     submission_id: 'smoke-attachment-1',
@@ -176,17 +188,19 @@ try {
   const sent = JSON.stringify(after.messages);
   check(
     'the model was given the file, not the @word',
-    sent.includes('<attachment filename=\\"README.md\\">'),
+    sent.includes('<attachment filename=\\"smoke-attachment.txt\\">') &&
+      sent.includes('The seventh sea is called Corandel.'),
     `${after.messages.length} messages, ${sent.length} bytes`,
   );
   check(
     'and the @word stays where it was typed',
-    sent.includes('read @README.md'),
+    sent.includes('read @smoke-attachment.txt'),
     'the instruction still names the file the way the human did',
   );
 
   socket.close();
 } finally {
+  rmSync(resolve(HERE, '../smoke-attachment.txt'), { force: true });
   await server.close();
 }
 

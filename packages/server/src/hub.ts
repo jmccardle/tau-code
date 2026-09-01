@@ -1,5 +1,5 @@
-import { LineFramer, relayRefusal } from '@tau-code/protocol';
-import { StdioTransport, TauProcess, type TauProcessOptions } from '@tau-code/runner';
+import { LineFramer, relayRefusal } from '@ffwf/tau-code-protocol';
+import { StdioTransport, TauProcess, type TauProcessOptions } from '@ffwf/tau-code-runner';
 
 /** One connected browser. The hub does not care what it is beyond this. */
 export interface HubClient {
@@ -12,7 +12,8 @@ export interface HubClient {
  * Relays JSON-RPC between many browser connections and ONE tau process.
  *
  * The relay is deliberately close to a pass-through: a browser speaks the same
- * protocol the VS Code extension host speaks, so `@tau-code/ui` runs unchanged
+ * protocol the VS Code extension host speaks, so `@ffwf/tau-code-ui` runs
+ * unchanged
  * in both. Two things are NOT pass-through, and both are load-bearing.
  *
  * **Request ids are rewritten.** Every connection numbers its own requests from

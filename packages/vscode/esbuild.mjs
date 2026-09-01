@@ -2,7 +2,8 @@
  * Bundle the extension host entry.
  *
  * esbuild rather than plain `tsc` for one concrete reason: the workspace
- * packages this imports (`@tau-code/runner`, `@tau-code/protocol`) are ESM, and
+ * packages this imports (`@ffwf/tau-code-runner`, `@ffwf/tau-code-protocol`)
+ * are ESM, and
  * a CommonJS extension entry cannot `require` them. Bundling inlines them, so
  * the published extension is one CJS file with `vscode` left external -- the
  * only module the editor supplies at runtime.

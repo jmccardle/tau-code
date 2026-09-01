@@ -1,6 +1,6 @@
 {
-  "name": "@tau-code/runner",
-  "version": "0.1.0",
+  "name": "@ffwf/tau-code-runner",
+  "version": "0.2.0",
   "description": "Owns a `tau --mode rpc` child process and exposes it as a Transport. Node only.",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,7 @@
     "build": "tsc --build"
   },
   "dependencies": {
-    "@tau-code/protocol": "0.1.0"
+    "@ffwf/tau-code-protocol": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0"

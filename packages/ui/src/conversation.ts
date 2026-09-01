@@ -1,4 +1,4 @@
-import type { TauClient, WireEvent } from '@tau-code/protocol';
+import type { TauClient, WireEvent } from '@ffwf/tau-code-protocol';
 
 /**
  * The conversation store.

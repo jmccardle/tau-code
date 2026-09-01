@@ -2,8 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import { LineFramer, relayRefusal } from '@tau-code/protocol';
-import { TauProcess } from '@tau-code/runner';
+import { LineFramer, relayRefusal } from '@ffwf/tau-code-protocol';
+import { TauProcess } from '@ffwf/tau-code-runner';
 
 /** Expand a leading `~` in a configured path. Returns undefined for empty. */
 function expandHome(value: string | undefined): string | undefined {
@@ -17,7 +17,8 @@ function expandHome(value: string | undefined): string | undefined {
  * One agent, bound to one webview.
  *
  * The extension host owns the tau process and speaks stdio to it. The webview
- * speaks the SAME JSON-RPC over `postMessage`, so `@tau-code/ui` runs unchanged
+ * speaks the SAME JSON-RPC over `postMessage`, so `@ffwf/tau-code-ui` runs
+ * unchanged
  * here and in the browser -- the only difference is which `Transport` it is
  * handed. This is why the shared UI never imports `acquireVsCodeApi`.
  *

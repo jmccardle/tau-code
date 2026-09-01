@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { TauProcessOptions } from '@tau-code/runner';
+import type { TauProcessOptions } from '@ffwf/tau-code-runner';
 import { Hub } from './hub.js';
 import { createHttpServer } from './http.js';
 
@@ -55,7 +55,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const httpServer = createHttpServer({
     token,
     staticRoot: { dir: options.staticDir },
-    allowedOrigins: allowedOriginsFor(bind, port),
     onUpgrade: (request, socket, head) => {
       sockets.handleUpgrade(request, socket, head, (ws) => attach(ws));
     },
@@ -103,16 +102,3 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
 }
 
-function allowedOriginsFor(bind: string, port: number): Set<string> {
-  const hosts = new Set<string>();
-  const add = (host: string): void => {
-    hosts.add(`${host}:${port}`);
-  };
-  add('127.0.0.1');
-  add('localhost');
-  add('[::1]');
-  if (bind !== '0.0.0.0' && bind !== '::' && bind !== '127.0.0.1') {
-    add(bind.includes(':') ? `[${bind}]` : bind);
-  }
-  return hosts;
-}

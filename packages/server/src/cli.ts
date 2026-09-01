@@ -1,11 +1,15 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { startServer } from './server.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_STATIC = resolve(HERE, '../../web/dist-web');
+// Inside this package, not in the sibling web workspace: this package's build
+// copies packages/web/dist-web here. A sibling path works in the checkout and
+// nowhere else -- not in a published tarball, and not in the container image.
+const DEFAULT_STATIC = resolve(HERE, '../dist-web');
 
 const USAGE = `tau-code-server -- serve a tau agent to browser clients.
 
@@ -76,11 +80,26 @@ if (!Number.isInteger(portArg) || portArg < 0 || portArg > 65535) {
   process.exit(2);
 }
 
+const staticDir = typeof args['static'] === 'string' ? resolve(args['static']) : DEFAULT_STATIC;
+
+// Fail Early: with no index.html the server starts, answers every page request
+// with a 404, and the reason lives in a browser tab rather than in this
+// terminal. Refuse instead, and say which of the two cases it is.
+if (!existsSync(join(staticDir, 'index.html'))) {
+  console.error(`No web client at ${staticDir} (there is no index.html there).`);
+  console.error(
+    typeof args['static'] === 'string'
+      ? '  --static must name a directory holding a built web client.'
+      : '  Run `npm run build` in the tau-code checkout, or pass --static.',
+  );
+  process.exit(2);
+}
+
 const running = await startServer({
   bind,
   port: portArg,
   ...(typeof args['token'] === 'string' ? { token: args['token'] } : {}),
-  staticDir: typeof args['static'] === 'string' ? resolve(args['static']) : DEFAULT_STATIC,
+  staticDir,
   tau: {
     ...(typeof args['cwd'] === 'string' ? { cwd: resolve(args['cwd']) } : {}),
     ...(typeof args['model'] === 'string' ? { model: args['model'] } : {}),

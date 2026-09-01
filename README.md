@@ -1,4 +1,4 @@
-# tau-code
+# ffwf-tau-code
 
 Clients for [τ](https://github.com/jmccardle/tau), the Python agent harness: a
 connection server, a standalone web client, and a VS Code / VSCodium extension.
@@ -12,20 +12,36 @@ designed for but not built. `docs/ARCHITECTURE.md` says what exists, what is
 missing, and why the layering is the way it is.
 
 Requires τ at **protocol 1.4 or later** for `@file` completion. Everything else
-works against 1.3; the composer says so rather than failing.
+works against 1.3; the composer says so rather than failing. The τ on PyPI is
+0.9.6, which speaks 1.3.
+
+## Artifacts
+
+Three, and no more:
+
+| Artifact | Build it with | What it is |
+|---|---|---|
+| `ffwf-tau-code-<version>.vsix` | `npm run package:vsix` | The editor extension |
+| `ffwf/tau-code:<version>` | `npm run package:image` | τ and the web client, in one container |
+| this checkout | `npm install && npm run build` | Both of the above, run from source |
+
+`npm run package` builds both artifacts. It publishes nothing.
 
 ## What is here
 
 | Package | What it is | Runs where |
 |---|---|---|
-| `@tau-code/protocol` | Generated types and a JSON-RPC client | anywhere |
-| `@tau-code/runner` | Owns a `tau --mode rpc` child process | Node |
-| `@tau-code/ui` | React components | anywhere |
-| `@tau-code/server` | WebSocket server for browser clients | Node |
-| `@tau-code/web` | The standalone browser client | browser |
-| `tau-code-vscode` | The editor extension | VS Code |
+| `@ffwf/tau-code-protocol` | Generated types and a JSON-RPC client | anywhere |
+| `@ffwf/tau-code-runner` | Owns a `tau --mode rpc` child process | Node |
+| `@ffwf/tau-code-ui` | React components | anywhere |
+| `@ffwf/tau-code-server` | WebSocket server for browser clients | Node |
+| `@ffwf/tau-code-web` | The standalone browser client | browser |
+| `tau-code` (publisher `ffwf`) | The editor extension | VS Code |
 
-The dependency direction is one way. `@tau-code/ui` imports no host: it is
+None of these is published to npm. They are workspace packages, and the names
+exist so the imports read the same as they would if they were.
+
+The dependency direction is one way. `@ffwf/tau-code-ui` imports no host: it is
 handed a `Transport` and does not learn whether it is a WebSocket or the
 webview's `postMessage` channel. That is what lets the same components run in
 the browser and in the editor.
@@ -56,7 +72,7 @@ if the committed file and the installed τ disagree.
 ## Run the web client
 
 ```bash
-npm run build --workspace @tau-code/web
+npm run build --workspace @ffwf/tau-code-web
 node packages/server/dist/cli.js --cwd /path/to/your/project
 ```
 
@@ -95,10 +111,49 @@ the TUI wrote, and `tau --continue` resumes ones written here. See
 
 `node packages/server/dist/cli.js --help` lists the rest.
 
+## Run the container
+
+The container is the whole web instance in one artifact: Python runs τ, Node
+runs the connection server, and the browser gets the web client. Nothing has to
+be installed on the host except a container runtime.
+
+```bash
+npm run package:image                 # -> ffwf/tau-code:<version>
+
+docker run --rm -p 127.0.0.1:8791:8791 -v "$PWD:/work" \
+  -e TAU_MODEL_BASE_URL=http://host.docker.internal:8000/v1 \
+  -e TAU_MODEL_NAME=your-model \
+  ffwf/tau-code
+```
+
+It prints the same authenticated URL the server always prints. Open it.
+
+- **`-v "$PWD:/work"` is the working directory the agent's tools resolve
+  against.** Without it the agent can see nothing of yours. The image runs as
+  uid 1000; build with `--build-arg TAU_UID=$(id -u) --build-arg TAU_GID=$(id -g)`
+  if that is not you.
+- **`TAU_MODEL_BASE_URL` is required**, unless you mount your own config at
+  `/home/node/.tau/config.json`. τ's first-run template points at
+  `localhost:8000`, which inside a container is wrong and wrong quietly — the
+  server would start and the first turn would fail. The entrypoint refuses
+  instead. `TAU_API_KEY` and `TAU_SYSTEM_PROMPT` are the other two knobs.
+- **The server binds `0.0.0.0` inside the container and says so in a warning.**
+  That warning describes the container's network, not yours: what is actually
+  exposed is set by `-p`. `-p 127.0.0.1:8791:8791` keeps it on your loopback.
+- **A remapped port breaks the printed link.** The server prints the port it
+  listens on (8791), not the one you published. Set `TAU_CODE_TOKEN` to a value
+  you choose and build the URL yourself. The token then shows up in
+  `docker inspect`.
+- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.9.6` today.
+
+`docker build --target verify -t ffwf/tau-code-verify . && docker run --rm
+ffwf/tau-code-verify` starts τ inside the image and reads back its protocol
+version. It contacts no model. `npm run package:image` runs it for you.
+
 ## Run the extension
 
 ```bash
-npm run build --workspace tau-code-vscode
+npm run build --workspace packages/vscode
 code --extensionDevelopmentPath=packages/vscode
 ```
 
@@ -108,9 +163,16 @@ Then open the τ view in the activity bar. Settings live under `tau-code.*`:
 To build an installable `.vsix` instead:
 
 ```bash
-npm run build --workspace tau-code-vscode
-npm run package --workspace tau-code-vscode     # -> tau-code-<version>.vsix
-code --install-extension tau-code-<version>.vsix
+npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
+code --install-extension ffwf-tau-code-0.2.0.vsix
+```
+
+**If you installed 0.1.x, uninstall it first.** The extension ID changed from
+`tau-code.tau-code-vscode` to `ffwf.tau-code` in 0.2.0, so the editor treats the
+new one as a different extension and leaves the old one in place:
+
+```bash
+code --uninstall-extension tau-code.tau-code-vscode
 ```
 
 `code` and `codium` keep separate extension directories, so installing into one
@@ -146,6 +208,25 @@ npm run smoke:completion -- 'http://127.0.0.1:8791/?token=...' shot.png
 `@file` a user completed actually reaches the model as content. It does that
 against whatever model your config names, so it is one short local call rather
 than free. Nothing else here sends a prompt.
+
+`npm run package` runs the version check, `typecheck`, `test` and
+`check:protocol` before it builds anything, and stops at the first failure.
+`check:protocol` is skipped, loudly, when no τ is reachable — it is the only one
+of the four that needs a live agent.
+
+## Names
+
+Nothing here is published to npm; see `docs/ARCHITECTURE.md` §9.1 for why. The
+names are still worth holding so nobody else takes them:
+
+```bash
+PYTHON=/path/to/venv/bin/python scripts/reserve-names.sh            # dry run
+PYTHON=/path/to/venv/bin/python scripts/reserve-names.sh --publish  # for real
+```
+
+Each placeholder is a README and no code. Read the script's header first: the
+npm organisation `@ffwf` is the reservation that actually matters, it has to be
+created by hand, and both registries are one-way.
 
 ## Tab completion
 

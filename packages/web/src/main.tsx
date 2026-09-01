@@ -1,8 +1,8 @@
 import { StrictMode, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { Transport } from '@tau-code/protocol';
-import { Chat, useConversation, useTauConnection } from '@tau-code/ui';
-import '@tau-code/ui/styles.css';
+import type { Transport } from '@ffwf/tau-code-protocol';
+import { Chat, useConversation, useTauConnection } from '@ffwf/tau-code-ui';
+import '@ffwf/tau-code-ui/styles.css';
 import './app.css';
 import { WebSocketTransport, socketUrlFromLocation } from './ws-transport.js';
 

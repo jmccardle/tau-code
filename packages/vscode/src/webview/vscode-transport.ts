@@ -1,4 +1,4 @@
-import type { Transport } from '@tau-code/protocol';
+import type { Transport } from '@ffwf/tau-code-protocol';
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -24,7 +24,8 @@ function api(): VsCodeApi {
  *
  * The extension host relays these to tau's stdin verbatim, so what travels here
  * is ordinary JSON-RPC -- the same messages the browser sends over a
- * WebSocket. `@tau-code/ui` cannot tell the difference, which is the point.
+ * WebSocket. `@ffwf/tau-code-ui` cannot tell the difference, which is the
+ * point.
  *
  * No framing: `postMessage` delivers structured values, already whole. The line
  * framer exists for byte streams and there is no byte stream here.

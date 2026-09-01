@@ -1,4 +1,4 @@
-import { LineFramer, frame, type Transport } from '@tau-code/protocol';
+import { LineFramer, frame, type Transport } from '@ffwf/tau-code-protocol';
 import type { TauProcess } from './process.js';
 
 /**

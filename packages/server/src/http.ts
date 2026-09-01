@@ -121,15 +121,25 @@ export function authCookie(token: string): string {
  * in a URL that gets shared or logged, and this is one line of defence that
  * costs nothing.
  *
+ * The comparison is against this request's own `Host`, not against a list the
+ * server builds from its bind address and port. Those are the same thing only
+ * when the client reaches the server directly. Behind a published container
+ * port, an `ssh -L` tunnel, or a reverse proxy that preserves `Host`, the
+ * browser's origin carries the port IT dialled -- and a server-side list built
+ * from the port it LISTENS on rejects the page it just served. That was a real
+ * bug: `-p 8799:8791` served the client and then refused its socket.
+ *
  * A request with no `Origin` is not a browser and is allowed through -- curl,
  * the VS Code extension host, a test. Those never had the ambient authority
  * this check exists to remove.
  */
-export function originAllowed(request: IncomingMessage, allowed: Set<string>): boolean {
+export function originAllowed(request: IncomingMessage): boolean {
   const origin = request.headers['origin'];
   if (typeof origin !== 'string' || origin === '') return true;
+  const host = request.headers['host'];
+  if (typeof host !== 'string' || host === '') return false;
   try {
-    return allowed.has(new URL(origin).host);
+    return new URL(origin).host === host;
   } catch {
     return false;
   }
@@ -184,7 +194,7 @@ export function serveStatic(
     response.writeHead(404, { ...extraHeaders, 'content-type': 'text/plain' });
     response.end(
       'No web client build found.\n' +
-        'Run `npm run build --workspace @tau-code/web` and start the server again.',
+        'Run `npm run build --workspace @ffwf/tau-code-web` and start the server again.',
     );
     return;
   }
@@ -200,7 +210,6 @@ export function serveStatic(
 export interface HttpServerOptions {
   token: string;
   staticRoot: StaticRoot;
-  allowedOrigins: Set<string>;
   onUpgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void;
 }
 
@@ -240,7 +249,7 @@ export function createHttpServer(options: HttpServerOptions): Server {
       socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n${detail}`);
       socket.destroy();
     };
-    if (!originAllowed(request, options.allowedOrigins)) {
+    if (!originAllowed(request)) {
       reject('403 Forbidden', 'Cross-origin WebSocket connections are refused.');
       return;
     }

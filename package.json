@@ -1,15 +1,16 @@
 {
-  "name": "tau-code",
+  "name": "ffwf-tau-code",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Clients for the tau agent harness: a connection server, a web client, and a VS Code extension.",
   "license": "MIT",
+  "//workspaces": "Order matters: npm builds workspaces in this order, and packages/server's build copies packages/web/dist-web into itself, so web has to be built first.",
   "workspaces": [
     "packages/protocol",
     "packages/runner",
     "packages/ui",
-    "packages/server",
     "packages/web",
+    "packages/server",
     "packages/vscode"
   ],
   "engines": {
@@ -23,11 +24,14 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:server": "node scripts/smoke-server.mjs",
     "smoke:browser": "node scripts/smoke-browser.mjs",
+    "smoke:completion": "node scripts/smoke-completion.mjs",
     "check:protocol": "node scripts/generate-protocol.mjs --check",
-    "dev:server": "npm run dev --workspace @tau-code/server",
-    "dev:web": "npm run dev --workspace @tau-code/web",
-    "clean": "tsc --build --clean && rm -rf packages/*/dist packages/web/dist-web",
-    "smoke:completion": "node scripts/smoke-completion.mjs"
+    "dev:server": "npm run dev --workspace @ffwf/tau-code-server",
+    "dev:web": "npm run dev --workspace @ffwf/tau-code-web",
+    "clean": "tsc --build --clean && rm -rf packages/*/dist packages/web/dist-web packages/server/dist-web",
+    "package": "bash scripts/package.sh",
+    "package:vsix": "bash scripts/package.sh vsix",
+    "package:image": "bash scripts/package.sh image"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

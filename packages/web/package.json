@@ -1,7 +1,7 @@
 {
-  "name": "@tau-code/web",
-  "version": "0.1.0",
-  "description": "Standalone browser client for tau, served by @tau-code/server.",
+  "name": "@ffwf/tau-code-web",
+  "version": "0.2.0",
+  "description": "Standalone browser client for tau, served by @ffwf/tau-code-server.",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@tau-code/protocol": "0.1.0",
-    "@tau-code/ui": "0.1.0",
+    "@ffwf/tau-code-protocol": "0.2.0",
+    "@ffwf/tau-code-ui": "0.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

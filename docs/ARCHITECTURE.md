@@ -103,12 +103,12 @@ and the composer says so instead of calling a verb that would answer -32601.
 
 ```
                       ┌──────────────────────────────┐
-                      │        @tau-code/ui          │  React, no host imports
+                      │        @ffwf/tau-code-ui          │  React, no host imports
                       │  Conversation store + views  │
                       └───────────────┬──────────────┘
                                       │ Transport
                       ┌───────────────┴──────────────┐
-                      │     @tau-code/protocol       │  isomorphic
+                      │     @ffwf/tau-code-protocol       │  isomorphic
                       │  generated types + client    │
                       └───────────────┬──────────────┘
              ┌────────────────────────┴───────────────────────┐
@@ -116,14 +116,14 @@ and the composer says so instead of calling a verb that would answer -32601.
    WebSocketTransport                                 VsCodeTransport
    (packages/web)                                     (packages/vscode)
              │                                                │
-   @tau-code/server ──┐                          extension host ──┐
+   @ffwf/tau-code-server ──┐                          extension host ──┐
    Hub: many clients  │                          direct relay     │
              │        │                                │          │
-             └── @tau-code/runner ────────────────────────────────┘
+             └── @ffwf/tau-code-runner ────────────────────────────────┘
                  StdioTransport over a `tau --mode rpc` child
 ```
 
-One rule makes this work: **`@tau-code/ui` is handed a `Transport` and never
+One rule makes this work: **`@ffwf/tau-code-ui` is handed a `Transport` and never
 learns which one.** It imports neither `vscode` nor `ws`. The two hosts differ
 in the transport they construct and in nothing else.
 
@@ -154,14 +154,14 @@ The fix is two parts, and the first is what makes the second possible:
    sentence for as long as there is no agent. A one-shot message can be posted
    before anyone is listening; a held reason is available whenever the webview
    asks, which is the first thing it does.
-2. **`relayRefusal` (`@tau-code/protocol/bridge.ts`) answers.** A request gets
+2. **`relayRefusal` (`@ffwf/tau-code-protocol/bridge.ts`) answers.** A request gets
    an error response carrying its own id and the sentence; a notification gets
    nothing, per JSON-RPC. The code is `NO_AGENT = -32900`, below the reserved
    `-32768..-32000` band that JSON-RPC claims and τ uses part of, so a client
    can tell "τ refused this" from "this never reached τ". Those are different
    facts: nothing was attempted, so nothing was half-done.
 
-`Disconnected` in `@tau-code/ui` renders the sentence at full width between the
+`Disconnected` in `@ffwf/tau-code-ui` renders the sentence at full width between the
 status bar and the transcript. The status bar keeps its one word, and the
 composer's placeholder distinguishes waiting from gone — only one of them has a
 message above worth reading.
@@ -172,7 +172,7 @@ message above worth reading.
 of spawning a subprocess. It was not chosen, for one reason: the protocol types
 would then be written twice — once in Python for the server, once in TypeScript
 for the two clients — and the VS Code extension host would still need its own
-Node-side code to own a τ child process. One language means `@tau-code/runner`
+Node-side code to own a τ child process. One language means `@ffwf/tau-code-runner`
 is literally the same module in the server and in the extension.
 
 ### 2.2 What the extension has that the web client does not
@@ -282,6 +282,23 @@ Measured behaviour, in `scripts/smoke-server.mjs`:
   second line that costs nothing.
 
 `--bind 0.0.0.0` prints a warning naming what it exposes. There is no TLS.
+
+**What "cross-origin" is compared against changed in 0.2.0.** It used to be a
+set the server built from its own bind address and port. That equals the
+browser's origin only when the client reaches the server directly. The container
+made the difference visible: `docker run -p 8799:8791` served the page on 8799
+and then refused the socket that page opened, because the allowed set said 8791.
+An `ssh -L 9000:localhost:8791` tunnel had the same fault, and so did any
+reverse proxy.
+
+The check now compares the `Origin` header to **this request's own `Host`**,
+which is the actual same-origin question and does not depend on what the server
+listens on. It is not weaker: a page on `evil.example` reaching 127.0.0.1:8791
+still sends `Origin: https://evil.example` against `Host: 127.0.0.1:8791`, and
+is refused. A reverse proxy that rewrites `Host` to its backend does break it —
+that is the one deployment this does not serve, and `X-Forwarded-Host` is not
+consulted, because a header the client can set is not evidence.
+`packages/server/test/origin.test.mjs` holds the cases.
 
 ### 5.1 Why there is a cookie
 
@@ -459,3 +476,55 @@ MVP-0 and the two τ changes share no files and can run in parallel.
 as host capabilities with visible capability negotiation.
 
 The extension comes last, and by then it is mostly rendering.
+
+---
+
+## 9. Artifacts and names (0.2.0)
+
+### 9.1 Three artifacts, and npm is not one of them
+
+`ffwf-tau-code-<version>.vsix`, `ffwf/tau-code:<version>`, and this checkout.
+`scripts/package.sh` builds the first two and publishes nothing.
+
+Nothing here goes to npm. That is a decision, not a gap. Publishing the five
+workspace packages would mean five versions to keep in step, a scope to
+maintain, and — for `@ffwf/tau-code-server`, the only one anyone would install —
+an `npx` path that still leaves the user to install τ separately. The container
+answers that same want in one command and makes the working directory explicit,
+which for an agent is the thing that most needs to be explicit. If the npm path
+is ever wanted, the blocker that used to exist is already gone: see 9.3.
+
+### 9.2 Three namespaces, deliberately not unified
+
+| Namespace | Value | Where it binds |
+|---|---|---|
+| npm workspace names | `@ffwf/tau-code-*` | `import` statements, `package.json` |
+| VS Code extension ID | `ffwf.tau-code` | the Marketplace, `--install-extension` |
+| Extension settings and commands | `tau-code.*` | a user's `settings.json` |
+
+They look like they should be one string and they are not. An extension name
+may not contain `@` or `/`, so the scope cannot appear in the ID. And the
+settings namespace is the one thing here a user has typed into a file of their
+own, so renaming it would silently drop their configuration — it is left alone
+on purpose.
+
+The scope `@ffwf` rather than a flat `ffwf-tau-code-*` prefix is the one
+reservation decision. Creating the npm organisation covers `@ffwf/*` forever, so
+no future package under it needs its own reservation.
+`scripts/reserve-names.sh` handles the separate, smaller job: the unscoped names
+someone could otherwise publish. Its placeholders contain a README and no code,
+and it publishes only with `--publish`.
+
+### 9.3 The web build now ships inside the server package
+
+`DEFAULT_STATIC` used to resolve to `../../web/dist-web` — a sibling workspace.
+That path exists in a checkout and nowhere else, so the server could not have
+been packaged or containerised as it stood. `packages/server/copy-web.mjs` now
+copies the built client into `packages/server/dist-web` at build time, and the
+root `workspaces` array lists `packages/web` before `packages/server` so npm
+builds them in that order.
+
+The CLI also refuses to start when the resolved static directory has no
+`index.html`. Without that, a missing web build produced a server that answered
+every page with a 404 and reported the reason in a browser tab rather than in
+the terminal that started it.

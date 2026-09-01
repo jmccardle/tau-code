@@ -1,7 +1,7 @@
-import { LineFramer, type Transport } from '@tau-code/protocol';
+import { LineFramer, type Transport } from '@ffwf/tau-code-protocol';
 
 /**
- * A `Transport` over a WebSocket to `@tau-code/server`.
+ * A `Transport` over a WebSocket to `@ffwf/tau-code-server`.
  *
  * The server relays JSON-RPC lines to and from tau essentially unchanged, so
  * the client above this is the same one the VS Code extension host uses. The

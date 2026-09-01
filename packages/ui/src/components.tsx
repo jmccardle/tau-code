@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { commandsOf, type Capabilities, type TauClient } from '@tau-code/protocol';
+import { commandsOf, type Capabilities, type TauClient } from '@ffwf/tau-code-protocol';
 import type { Conversation, ConversationState, LiveToolCall } from './conversation.js';
 import { blocksToText, readEntries, type ContentBlock, type Entry } from './messages.js';
 import {

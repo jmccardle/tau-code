@@ -1,6 +1,6 @@
 {
-  "name": "@tau-code/server",
-  "version": "0.1.0",
+  "name": "@ffwf/tau-code-server",
+  "version": "0.2.0",
   "description": "Connection server: owns a tau process and serves it to browser clients over WebSocket.",
   "license": "MIT",
   "type": "module",
@@ -9,14 +9,15 @@
   "bin": {
     "tau-code-server": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "//files": "dist-web is the built web client, copied in by `build`. It ships here rather than being read out of the sibling workspace, because the sibling only exists in a checkout.",
+  "files": ["dist", "dist-web"],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && node copy-web.mjs",
     "dev": "node --watch dist/cli.js"
   },
   "dependencies": {
-    "@tau-code/protocol": "0.1.0",
-    "@tau-code/runner": "0.1.0",
+    "@ffwf/tau-code-protocol": "0.2.0",
+    "@ffwf/tau-code-runner": "0.2.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

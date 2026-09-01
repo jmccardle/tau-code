@@ -1,4 +1,4 @@
-import type { TauClient } from '@tau-code/protocol';
+import type { TauClient } from '@ffwf/tau-code-protocol';
 import type { CommandInfo } from './completion.js';
 
 /**

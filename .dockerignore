@@ -1,0 +1,20 @@
+# Build outputs are produced inside the image, never copied in: a stale local
+# dist/ shipping instead of a fresh build is exactly the class of mistake a
+# container is supposed to remove.
+#
+# The `**/` prefix is not decoration. A bare `dist` matches only the context
+# root, so nested `packages/*/dist` would be copied in.
+**/node_modules
+**/dist
+**/dist-web
+**/dist-webview
+**/dist-types
+**/*.tsbuildinfo
+*.vsix
+
+.git
+.gitignore
+docs
+*.md
+.DS_Store
+.env
