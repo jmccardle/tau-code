@@ -303,6 +303,12 @@ export interface ComposerProps {
   pathCompletion?: boolean;
   /** Perform a frontend command. Absent means none can be performed. */
   onCommand?: (name: string, args: string) => Promise<CommandResult>;
+  /**
+   * The connection phase, used for the placeholder alone -- what the composer
+   * can DO is decided by `client` being null. The two are separate because
+   * "waiting" and "gone" are both unusable and need different words.
+   */
+  phase?: ConnectionPhase;
 }
 
 /**
@@ -321,6 +327,7 @@ export function Composer({
   commands = [],
   pathCompletion = true,
   onCommand,
+  phase = 'ready',
 }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
   /**
@@ -478,7 +485,18 @@ export function Composer({
         className="tau-input"
         rows={3}
         value={text}
-        placeholder={running ? 'A turn is running…' : 'Ask tau something — / for commands, @ for files'}
+        placeholder={
+          // A composer inviting a question it cannot send is the same defect
+          // one level down: it looks ready and is not. Waiting and gone are
+          // told apart, because only one of them has a message above to read.
+          client === null
+            ? phase === 'connecting'
+              ? 'Connecting to tau…'
+              : 'No agent is connected — see the message above.'
+            : running
+              ? 'A turn is running…'
+              : 'Ask tau something — / for commands, @ for files'
+        }
         onChange={(event) => {
           setText(event.target.value);
           // Typing invalidates whatever the popup was describing. It reopens on
@@ -691,6 +709,49 @@ export function SessionPicker({
   );
 }
 
+/* ----------------------------------------------------------- disconnected */
+
+export interface DisconnectedProps {
+  phase: ConnectionPhase;
+  /** The reason, as a whole sentence, from whoever knows it. */
+  detail: string | null;
+  /**
+   * One host-specific line about where to look next -- the command palette
+   * entry in VS Code, a server log in the browser. Optional, and supplied by
+   * the host: this component is shared, so it must not name one.
+   */
+  hint?: string;
+}
+
+/**
+ * Why there is no agent, said where the reader is looking.
+ *
+ * The status bar has room for one word and a fragment. That was enough while
+ * the only failures were connection-shaped, and it stopped being enough the
+ * first time a start was REFUSED for a reason the reader could act on -- no
+ * folder open, a `tau-code.binary` naming nothing. Those need a sentence, and
+ * a sentence needs a block.
+ *
+ * `detail` is shown verbatim and never summarised. The summary is what the
+ * status bar already is, and the whole defect this fixes was a summary standing
+ * in for a reason.
+ */
+export function Disconnected({ phase, detail, hint }: DisconnectedProps): JSX.Element | null {
+  if (phase === 'ready' || phase === 'connecting') return null;
+  return (
+    <div className="tau-disconnected" role="alert">
+      <div className="tau-disconnected-head">
+        {phase === 'failed' ? 'No agent is running.' : 'The agent stopped.'}
+      </div>
+      <div className="tau-disconnected-why">
+        {detail ??
+          'No reason was reported, which is itself a fault — nothing should fail without saying why.'}
+      </div>
+      {hint ? <div className="tau-disconnected-hint">{hint}</div> : null}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------- statusbar */
 
 export interface StatusBarProps {
@@ -752,6 +813,12 @@ export interface ChatProps {
    * finds out it is talking to a pre-1.4 tau without calling and failing.
    */
   capabilities?: Capabilities | null;
+  /**
+   * Where to look when there is no agent. Host-specific, so the host supplies
+   * it: this component runs in a browser tab and in an editor panel, and only
+   * one of those has a command palette.
+   */
+  disconnectedHint?: string;
 }
 
 /** The whole chat head: status, session picker, transcript, composer. */
@@ -763,6 +830,7 @@ export function Chat({
   state,
   enterSubmits,
   capabilities,
+  disconnectedHint,
 }: ChatProps): JSX.Element {
   const [model, setModel] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -842,6 +910,7 @@ export function Chat({
         sessionsOpen={sessionsOpen}
         {...(phase === 'ready' ? { onToggleSessions: () => setSessionsOpen((open) => !open) } : {})}
       />
+      <Disconnected phase={phase} detail={detail} {...(disconnectedHint ? { hint: disconnectedHint } : {})} />
       {sessionsOpen ? (
         <SessionPicker
           client={client}
@@ -853,7 +922,13 @@ export function Chat({
       ) : null}
       <Transcript state={state} />
       <Composer
-        client={client}
+        // Null once the phase leaves `ready`, which disables Send and changes
+        // the placeholder. `useTauConnection` keeps the client object across a
+        // close so the transcript survives, but every call it can make now
+        // fails -- and a composer that invites a message it cannot deliver is
+        // the same defect as a status bar that says `connecting` forever.
+        client={phase === 'ready' ? client : null}
+        phase={phase}
         running={state.running}
         commands={commands}
         pathCompletion={pathCompletion}

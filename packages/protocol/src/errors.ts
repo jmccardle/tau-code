@@ -57,6 +57,16 @@ export class TauRpcError extends Error {
   readonly code: number;
   readonly data: unknown;
   readonly method: string;
+  /**
+   * The peer's own message, without the method name and code that `message`
+   * adds.
+   *
+   * Kept because some errors arrive as a finished sentence written for a
+   * person, and prefixing that with whichever request happened to receive it
+   * makes it worse to read. The caller picks the form it wants; neither is
+   * discarded.
+   */
+  readonly raw: string;
 
   constructor(method: string, error: RpcErrorObject) {
     super(`${method}: ${error.message} (${error.code})`);
@@ -64,6 +74,7 @@ export class TauRpcError extends Error {
     this.code = error.code;
     this.data = error.data;
     this.method = method;
+    this.raw = error.message;
   }
 
   /** True when retrying later could plausibly succeed. */

@@ -127,6 +127,45 @@ One rule makes this work: **`@tau-code/ui` is handed a `Transport` and never
 learns which one.** It imports neither `vscode` nor `ws`. The two hosts differ
 in the transport they construct and in nothing else.
 
+### 2.0 The relay rule: a request is answered, never dropped
+
+Both hosts are relays. The extension host writes the webview's JSON-RPC into a
+τ child; the server's `Hub` writes many browsers' JSON-RPC into one. Both had
+the same defect, and it is worth stating as a rule because the shape recurs
+wherever a relay exists.
+
+`TauClient.call` has **no deadline**, deliberately: a turn may take as long as
+it takes, and a timeout would cancel real work. The price is that a *dropped*
+request is indistinguishable from a slow one, forever. So a relay with nothing
+behind it must answer.
+
+What this looked like before. VS Code with no folder open refuses to start τ —
+correctly, there is no honest working directory. It wrote the reason to its log
+and posted it to the webview with `postMessage`. But `start()` runs in the same
+tick as `webview.html = …`, so the document had not loaded and nothing was
+listening. The webview then sent `get_capabilities`, the host dropped it
+because there was no process, and the panel said `connecting` until it was
+closed. The server had the same hole for a client that connects *after* τ died:
+clients attached at the time get a 1011 close, a later one gets silence.
+
+The fix is two parts, and the first is what makes the second possible:
+
+1. **The reason is durable, not a message.** `TauSession.#stopped` holds a
+   sentence for as long as there is no agent. A one-shot message can be posted
+   before anyone is listening; a held reason is available whenever the webview
+   asks, which is the first thing it does.
+2. **`relayRefusal` (`@tau-code/protocol/bridge.ts`) answers.** A request gets
+   an error response carrying its own id and the sentence; a notification gets
+   nothing, per JSON-RPC. The code is `NO_AGENT = -32900`, below the reserved
+   `-32768..-32000` band that JSON-RPC claims and τ uses part of, so a client
+   can tell "τ refused this" from "this never reached τ". Those are different
+   facts: nothing was attempted, so nothing was half-done.
+
+`Disconnected` in `@tau-code/ui` renders the sentence at full width between the
+status bar and the transcript. The status bar keeps its one word, and the
+composer's placeholder distinguishes waiting from gone — only one of them has a
+message above worth reading.
+
 ### 2.1 Why the server is Node and not Python
 
 τ is Python, and a Python server could import `tau_agent_core` directly instead

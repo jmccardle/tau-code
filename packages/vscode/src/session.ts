@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import { LineFramer } from '@tau-code/protocol';
+import { LineFramer, relayRefusal } from '@tau-code/protocol';
 import { TauProcess } from '@tau-code/runner';
 
 /** Expand a leading `~` in a configured path. Returns undefined for empty. */
@@ -39,6 +39,17 @@ export class TauSession implements vscode.Disposable {
   #framer: LineFramer | null = null;
   #webview: vscode.Webview;
   #disposed = false;
+  /**
+   * Why there is no agent, as a sentence, or null while one is running.
+   *
+   * DURABLE, and that is the whole point. `#tellWebview` is a one-shot message
+   * into a document that, at `start()` time, has not loaded yet -- so every
+   * refusal announced that way was posted to nobody, and the panel sat on
+   * `connecting` while the log held the reason. Holding the reason instead
+   * means the webview gets it whenever it asks, which is the first thing it
+   * does.
+   */
+  #stopped: string | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -89,10 +100,13 @@ export class TauSession implements vscode.Disposable {
       // Fail Early: with no folder open there is no honest working directory,
       // and starting in whatever directory the editor happened to launch from
       // would let the agent write somewhere the user never chose.
-      this.#tellWebview(
+      //
+      // Recorded rather than posted. The webview does not exist yet, so a
+      // message would be lost; `#toTau` hands this sentence back on the first
+      // request instead.
+      this.#stopped =
         'No folder is open, so there is no working directory for the agent. ' +
-          'Open a folder or workspace and run "tau: Open Agent" again.',
-      );
+        'Open a folder or workspace, then run "tau: Restart Agent".';
       this.output.warn('Refused to start: no workspace folder is open.');
       return;
     }
@@ -125,9 +139,13 @@ export class TauSession implements vscode.Disposable {
       if (this.#disposed) return;
       const how = exit.signal !== null ? `killed by ${exit.signal}` : `exited with code ${exit.code}`;
       this.output.warn(`[${this.label}] tau ${how}`);
-      this.#tellWebview(`tau ${how}. Run "tau: Restart Agent" to start it again.`);
+      // Both: the message reaches a webview that is certainly alive by now, and
+      // the record answers anything it sends afterwards.
+      this.#stopped = `tau ${how}. Run "tau: Restart Agent" to start it again.`;
+      this.#tellWebview(this.#stopped);
     });
 
+    this.#stopped = null;
     this.#proc = proc;
     this.output.info(`[${this.label}] tau started in ${cwd} (pid ${proc.pid ?? '?'}): ${proc.argv.join(' ')}`);
   }
@@ -151,7 +169,18 @@ export class TauSession implements vscode.Disposable {
   #toTau(message: unknown): void {
     const proc = this.#proc;
     if (!proc || !proc.running) {
-      this.output.warn(`[${this.label}] a webview message arrived with no running tau; dropped.`);
+      // A request is answered, never dropped: this relay is the only thing that
+      // knows why tau is not there, and a pending request never fails on its
+      // own. See `relayRefusal`.
+      const refusal = relayRefusal(
+        message,
+        this.#stopped ?? 'The agent is not running. Run "tau: Restart Agent" to start it.',
+      );
+      if (refusal) {
+        void this.#webview.postMessage(refusal);
+        return;
+      }
+      this.output.warn(`[${this.label}] a webview notification arrived with no running tau; dropped.`);
       return;
     }
     proc.child.stdin.write(JSON.stringify(message) + '\n');
@@ -182,7 +211,10 @@ export class TauSession implements vscode.Disposable {
   #report(error: unknown): void {
     const detail = error instanceof Error ? error.message : String(error);
     this.output.error(detail);
-    this.#tellWebview(`tau could not start: ${detail}`);
+    // Recorded, not posted: a spawn failure happens in the same tick as
+    // `start()`, so the webview is not listening yet. This is the case where
+    // `tau-code.binary` names something that is not on PATH.
+    this.#stopped = `tau could not start: ${detail}`;
     void vscode.window
       .showErrorMessage(`tau could not start: ${detail}`, 'Show log', 'Open settings')
       .then((choice) => {

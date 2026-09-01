@@ -105,6 +105,22 @@ code --extensionDevelopmentPath=packages/vscode
 Then open the τ view in the activity bar. Settings live under `tau-code.*`:
 `binary`, `model`, `provider`.
 
+To build an installable `.vsix` instead:
+
+```bash
+npm run build --workspace tau-code-vscode
+npm run package --workspace tau-code-vscode     # -> tau-code-<version>.vsix
+code --install-extension tau-code-<version>.vsix
+```
+
+`code` and `codium` keep separate extension directories, so installing into one
+does not update the other. Installing a version that is already present is a
+no-op — bump `packages/vscode/package.json`, or pass `--force`.
+
+**The extension needs a folder or workspace open.** With none there is no honest
+working directory for the agent's tools, so it refuses to start and the panel
+says so.
+
 The extension declares `extensionKind: ["workspace"]`, so over SSH, in WSL, or
 in a devcontainer the agent runs where the code is while the panel renders
 locally. That split is the one thing the standalone web client cannot
@@ -174,6 +190,10 @@ Named here rather than discovered later:
   call the UI shows the tool's name and that it is running; the arguments arrive
   with the pull at turn end.
 - **Backpressure.** The server does not bound a slow client's queue.
+- **Restarting the agent from the panel.** When there is no agent the panel says
+  why and names the command that fixes it; it does not run it. In VS Code that
+  is `tau: Restart Agent`; for the standalone server it is a restart of the
+  server process, which does not respawn τ on its own.
 
 `docs/ARCHITECTURE.md` has the detail, including what has to change in τ first.
 

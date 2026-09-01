@@ -1,4 +1,4 @@
-import { LineFramer } from '@tau-code/protocol';
+import { LineFramer, relayRefusal } from '@tau-code/protocol';
 import { StdioTransport, TauProcess, type TauProcessOptions } from '@tau-code/runner';
 
 /** One connected browser. The hub does not care what it is beyond this. */
@@ -109,7 +109,25 @@ export class Hub {
 
   /** One raw line from a browser, on its way to tau. */
   fromClient(clientId: number, raw: string): void {
-    if (!this.running) return;
+    if (!this.running) {
+      // A request is answered, never dropped. A client attached BEFORE tau died
+      // learns from the 1011 close above; one that connects afterwards -- a
+      // reload, a second tab -- gets no close at all, and its
+      // `get_capabilities` would wait forever behind a deadline-free `call`.
+      // That is `connecting` on screen with the reason only in this log.
+      let message: unknown;
+      try {
+        message = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      const refusal = relayRefusal(
+        message,
+        'tau is no longer running behind this server. Restart the server to get a new agent.',
+      );
+      if (refusal) this.#clients.get(clientId)?.send(JSON.stringify(refusal));
+      return;
+    }
     let message: Record<string, unknown>;
     try {
       message = JSON.parse(raw) as Record<string, unknown>;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { TauClient, TauRpcError, type Capabilities, type Transport } from '@tau-code/protocol';
+import { NO_AGENT, TauClient, TauRpcError, type Capabilities, type Transport } from '@tau-code/protocol';
 import { Conversation, type ConversationState } from './conversation.js';
 
 export type ConnectionPhase = 'connecting' | 'ready' | 'failed' | 'closed';
@@ -11,6 +11,19 @@ export interface TauConnection {
   capabilities: Capabilities | null;
   /** Why the connection failed or closed. Never a bare "something went wrong". */
   detail: string | null;
+}
+
+/**
+ * Why the connection failed, in the words worth showing a reader.
+ *
+ * A relay's `NO_AGENT` refusal is already a finished sentence: the host wrote
+ * it, it names the cause and what to do about it, and WHICH request happened to
+ * receive it is an accident. So that one case is unwrapped, and everything else
+ * keeps the method and code that make an unexpected error diagnosable.
+ */
+function whyItFailed(error: unknown): string {
+  if (error instanceof TauRpcError && error.code === NO_AGENT) return error.raw;
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -55,7 +68,7 @@ export function useTauConnection(transport: Transport | null): TauConnection {
           conversation: null,
           phase: 'failed',
           capabilities: null,
-          detail: error instanceof Error ? error.message : String(error),
+          detail: whyItFailed(error),
         });
       });
 

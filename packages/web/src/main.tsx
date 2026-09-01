@@ -21,6 +21,7 @@ function App(): JSX.Element {
       detail={detail}
       state={state}
       capabilities={capabilities}
+      disconnectedHint="The connection server holds the agent's output; its terminal has the rest."
     />
   );
 }

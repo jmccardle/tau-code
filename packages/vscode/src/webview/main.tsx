@@ -22,6 +22,7 @@ function App(): JSX.Element {
       detail={detail}
       state={state}
       capabilities={capabilities}
+      disconnectedHint='Run "tau: Show Agent Log" from the command palette for the full output.'
       enterSubmits={false}
     />
   );
