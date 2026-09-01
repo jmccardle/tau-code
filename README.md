@@ -72,6 +72,23 @@ A token is always required, including on loopback. `--bind 0.0.0.0` exposes the
 server to your network and prints a warning saying so; there is no TLS, so put a
 reverse proxy in front of it if the network is not one you control.
 
+### Sharing sessions with the τ TUI
+
+By default τ writes an RPC host's sessions to a private
+`<tmp>/.tau-<uid>/sessions`, so this client does not fill the session list you
+see in the TUI. **Those do not survive a reboot that clears the temp
+directory.** To share one store instead:
+
+```bash
+node packages/server/dist/cli.js --session-dir ~/.tau/sessions
+```
+
+or, in the extension, set `tau-code.sessionDir` to `~/.tau/sessions`.
+
+Resume then works in both directions — the picker in this client lists sessions
+the TUI wrote, and `tau --continue` resumes ones written here. See
+`docs/ARCHITECTURE.md` §5.2 for what was measured.
+
 `node packages/server/dist/cli.js --help` lists the rest.
 
 ## Run the extension
@@ -110,6 +127,8 @@ Named here rather than discovered later:
 
 - **The conversation tree browser.** τ's differentiator, and the reason this
   repository exists. It needs tree verbs on the wire; τ has none today.
+- **Renaming a session.** `set_session_name` is on the wire; the picker lists,
+  switches, forks and starts, but does not rename yet.
 - **Jump-to-edit and diff views.** τ's tools compute the data and the agent loop
   discards it before a message is built.
 - **Live tool arguments.** They are not on the event stream, by design. During a

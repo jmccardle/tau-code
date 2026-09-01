@@ -132,6 +132,44 @@ export class Conversation {
     this.#patch({ messages: result.messages ?? [], live: [], liveTools: [] });
   }
 
+  /**
+   * Move this connection onto another session.
+   *
+   * The three session verbs share a shape worth handling in one place: each can
+   * answer `{cancelled: true}` because an extension hook vetoed it, and each can
+   * fail with TURN_STILL_RUNNING when a turn would not stop. A veto is a
+   * decision, not an error -- nothing was touched -- so it is reported rather
+   * than thrown, and the caller does not have to tell the two apart.
+   */
+  async switchTo(sessionId: string): Promise<boolean> {
+    const result = await this.#client.call('switch_session', { session_id: sessionId });
+    return this.#afterSessionChange(result, `Switched to ${sessionId.slice(0, 8)}.`);
+  }
+
+  /** Start a fresh conversation on the same warm agent. */
+  async newSession(): Promise<boolean> {
+    const result = await this.#client.call('new_session', {});
+    return this.#afterSessionChange(result, 'Started a new session.');
+  }
+
+  /** Branch this session's history into a new one and move onto it. */
+  async fork(): Promise<boolean> {
+    const result = await this.#client.call('fork', {});
+    return this.#afterSessionChange(result, 'Forked this session.');
+  }
+
+  async #afterSessionChange(result: { cancelled?: boolean }, done: string): Promise<boolean> {
+    if (result.cancelled === true) {
+      this.#patch({ notice: 'An extension refused that. Nothing was changed.' });
+      return false;
+    }
+    // The transcript is a different conversation now, and none of it was
+    // pushed. Everything on screen is stale until this returns.
+    this.#patch({ live: [], liveTools: [], endReason: null, error: null, notice: done });
+    await this.refresh();
+    return true;
+  }
+
   #patch(partial: Partial<ConversationState>): void {
     this.#state = { ...this.#state, ...partial };
     for (const listener of this.#listeners) listener(this.#state);

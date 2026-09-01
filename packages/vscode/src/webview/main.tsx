@@ -14,7 +14,16 @@ function App(): JSX.Element {
   // default (`enter_key: "newline"`, docs/ENTER-KEY.md). An agent prompt is
   // usually several lines, and the editor this sits beside treats Enter the
   // same way.
-  return <Chat client={client} phase={phase} detail={detail} state={state} enterSubmits={false} />;
+  return (
+    <Chat
+      client={client}
+      conversation={conversation}
+      phase={phase}
+      detail={detail}
+      state={state}
+      enterSubmits={false}
+    />
+  );
 }
 
 const root = document.getElementById('root');

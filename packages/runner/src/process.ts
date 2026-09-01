@@ -16,6 +16,20 @@ export interface TauProcessOptions {
    * rather than discover it by tripping the error.
    */
   noSession?: boolean;
+  /**
+   * `--session-dir`. Where session logs are written.
+   *
+   * **This is what decides whether the TUI and this client share sessions.**
+   * tau's default for `--mode rpc` is a private `<tmp>/.tau-<uid>/sessions`,
+   * deliberately, so an RPC host does not fill the user's session list. The TUI
+   * and `--print` use `~/.tau/sessions`. Point both at one directory and the
+   * two are fully interchangeable: measured, `switch_session` resumes a session
+   * the TUI wrote, and the TUI's `--continue` resumes one this client wrote.
+   *
+   * The temp default also means those sessions do not survive a reboot on a
+   * system that clears its temp directory.
+   */
+  sessionDir?: string;
   /** Extra arguments appended verbatim. */
   extraArgs?: string[];
   /** Environment overlaid on the parent's. */
@@ -56,11 +70,12 @@ export class TauProcess {
   }
 
   get argv(): string[] {
-    const { model, provider, noSession, extraArgs } = this.#options;
+    const { model, provider, noSession, sessionDir, extraArgs } = this.#options;
     const args = ['--mode', 'rpc'];
     if (model) args.push('--model', model);
     if (provider) args.push('--provider', provider);
     if (noSession) args.push('--no-session');
+    if (sessionDir) args.push('--session-dir', sessionDir);
     if (extraArgs) args.push(...extraArgs);
     return args;
   }

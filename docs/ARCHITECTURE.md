@@ -246,6 +246,43 @@ a fast stream buffers in the WebSocket layer.
 
 ---
 
+## 5.2 Sessions are shared with the TUI, if you say so
+
+**RPC sessions are ordinary tau sessions.** Same format, same store machinery,
+same `SessionCatalog`. They are simply written somewhere else by default.
+
+Measured on this checkout:
+
+- `tau --mode rpc` defaults to a private `<tmp>/.tau-<uid>/sessions`. The TUI and
+  `--print` use `~/.tau/sessions`. Both are namespaced by working directory.
+- Sessions from an RPC process report `addressable: true` — they are durable and
+  `switch_session` can reach them. They are not second-class.
+- The isolation is deliberate. tau's own help text: "so an RPC host does not fill
+  your session list."
+
+Point both at one directory with `--session-dir` and they are **fully
+interchangeable, in both directions**:
+
+| Direction | Verified by |
+|---|---|
+| RPC resumes a TUI session | `switch_session` onto a session written by `tau -p`, confirmed by a following `get_state` |
+| TUI resumes an RPC session | `list_sessions` offers it, and `most_recent` — what `--continue` uses — selects it |
+
+The web client's session picker shows this working: a row titled from a prompt
+sent through `tau -p` appears in the browser and switching to it succeeds.
+
+Two consequences worth stating plainly:
+
+- **The temp default does not survive a reboot** on a system that clears its
+  temp directory. Conversations held only there are lost.
+- **The store directory is part of a session's identity.** Two identical-looking
+  listings can be two different universes, which is why the picker displays the
+  store directory and the working-directory scope rather than just the rows.
+
+Set it with `tau-code.sessionDir` in the extension, or `--session-dir` on the
+server. Both expand a leading `~`: tau is spawned with no shell in between, so
+an unexpanded `~` would become a literal directory of that name.
+
 ## 6. Forward compatibility
 
 Three things cost nothing now and are expensive to retrofit. All three are in

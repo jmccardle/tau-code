@@ -99,6 +99,11 @@
           "type": "string",
           "default": "",
           "description": "Passed to tau as --provider. Empty uses tau's own configured default."
+        },
+        "tau-code.sessionDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where session logs are written (`--session-dir`).\n\nEmpty uses tau's default for RPC hosts: a private `<tmp>/.tau-<uid>/sessions`, so this extension does not fill the session list you see in the TUI. **Those sessions do not survive a reboot on a system that clears its temp directory.**\n\nSet this to `~/.tau/sessions` to share one store with the tau TUI and `tau -p`. The two are then fully interchangeable in both directions: this extension can resume a session the TUI wrote, and the TUI's `--continue` resumes one written here."
         }
       }
     }

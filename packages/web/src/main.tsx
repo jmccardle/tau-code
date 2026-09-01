@@ -13,7 +13,9 @@ function App(): JSX.Element {
   const { client, conversation, phase, detail } = useTauConnection(transport);
   const state = useConversation(conversation);
 
-  return <Chat client={client} phase={phase} detail={detail} state={state} />;
+  return (
+    <Chat client={client} conversation={conversation} phase={phase} detail={detail} state={state} />
+  );
 }
 
 const root = document.getElementById('root');

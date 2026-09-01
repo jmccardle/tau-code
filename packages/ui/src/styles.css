@@ -51,7 +51,10 @@
 .tau-status-connecting .tau-status-dot { background: var(--tau-warn); }
 .tau-status-failed .tau-status-dot,
 .tau-status-closed .tau-status-dot { background: var(--tau-error); }
-.tau-status-model { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* The push to the right is `.tau-status-spacer`'s job now, so the model no
+   longer claims it -- two elements with `margin-left: auto` would each take a
+   share and split the row. */
+.tau-status-model { font-variant-numeric: tabular-nums; }
 .tau-status-detail {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -193,4 +196,99 @@
   background: transparent;
   color: var(--tau-fg);
   border: 1px solid var(--tau-border);
+}
+
+/* session picker --------------------------------------------------------- */
+
+.tau-status-spacer { margin-left: auto; }
+
+.tau-status-button {
+  background: transparent;
+  color: var(--tau-fg);
+  border: 1px solid var(--tau-border);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.tau-status-button[aria-pressed='true'] {
+  border-color: var(--tau-accent);
+  color: var(--tau-accent);
+}
+
+.tau-sessions {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--tau-border);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tau-sessions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tau-sessions-scope {
+  color: var(--tau-muted);
+  font-size: 0.88em;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tau-sessions-scope code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+
+.tau-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tau-session-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--tau-fg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tau-session-row:hover:not(:disabled) {
+  background: var(--tau-input-bg);
+  border-color: var(--tau-border);
+}
+.tau-session-row:disabled { cursor: default; }
+.tau-session-current {
+  border-color: var(--tau-accent);
+  background: var(--tau-input-bg);
+}
+
+.tau-session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tau-session-meta {
+  color: var(--tau-muted);
+  font-size: 0.85em;
+}
+.tau-session-error {
+  color: var(--tau-error);
+  font-size: 0.85em;
 }

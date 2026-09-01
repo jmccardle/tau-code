@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { startServer } from './server.js';
@@ -20,6 +21,11 @@ Options:
   --cwd <dir>          Working directory for the agent's tools.
   --model <name>       Passed to tau as --model.
   --provider <name>    Passed to tau as --provider.
+  --session-dir <dir>  Where session logs go. Omitted uses tau's RPC default,
+                       a private <tmp>/.tau-<uid>/sessions, which does not
+                       survive a reboot that clears the temp directory. Pass
+                       ~/.tau/sessions to share one store with the tau TUI --
+                       resume works in both directions.
   --no-session         Run tau with --no-session (nothing is persisted).
   -h, --help           This text.
 
@@ -79,6 +85,12 @@ const running = await startServer({
     ...(typeof args['cwd'] === 'string' ? { cwd: resolve(args['cwd']) } : {}),
     ...(typeof args['model'] === 'string' ? { model: args['model'] } : {}),
     ...(typeof args['provider'] === 'string' ? { provider: args['provider'] } : {}),
+    // resolve() expands a relative path but NOT a leading `~`: tau is spawned
+    // with no shell in between, so an unexpanded `~` becomes a literal
+    // directory name.
+    ...(typeof args['session-dir'] === 'string'
+      ? { sessionDir: resolve(args['session-dir'].replace(/^~(?=$|\/)/, homedir())) }
+      : {}),
     ...(args['no-session'] === true ? { noSession: true } : {}),
   },
 }).catch((error: unknown) => {

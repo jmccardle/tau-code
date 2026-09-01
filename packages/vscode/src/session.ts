@@ -1,7 +1,17 @@
 import { randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { LineFramer } from '@tau-code/protocol';
 import { TauProcess } from '@tau-code/runner';
+
+/** Expand a leading `~` in a configured path. Returns undefined for empty. */
+function expandHome(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value === '~') return homedir();
+  if (value.startsWith('~/')) return join(homedir(), value.slice(2));
+  return value;
+}
 
 /**
  * One agent, bound to one webview.
@@ -68,6 +78,11 @@ export class TauSession implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration('tau-code');
     const model = config.get<string>('model')?.trim();
     const provider = config.get<string>('provider')?.trim();
+    // `~` is not expanded by the shell here -- tau is spawned directly, with no
+    // shell in between -- so the setting would land as a literal `~` directory
+    // in the workspace. Expanding it is the difference between the setting
+    // working as written and silently creating a folder called `~`.
+    const sessionDir = expandHome(config.get<string>('sessionDir')?.trim());
     const cwd = TauSession.workingDirectory();
 
     if (!cwd) {
@@ -87,6 +102,7 @@ export class TauSession implements vscode.Disposable {
       cwd,
       ...(model ? { model } : {}),
       ...(provider ? { provider } : {}),
+      ...(sessionDir ? { sessionDir } : {}),
     });
 
     this.#framer = new LineFramer(
