@@ -4,7 +4,7 @@
 tree browser and the editor integrations are designed for and not built.
 
 Provenance: every claim about τ's protocol in this document was measured against
-a live τ process in `~/Development/agent-harness-py` at protocol version 1.3.
+a live τ process in `~/Development/agent-harness-py` at protocol version 1.4.
 Claims about VS Code come from its published API documentation.
 
 ---
@@ -14,7 +14,7 @@ Claims about VS Code come from its published API documentation.
 τ ships a JSON-RPC 2.0 server over LF-delimited stdio, started with
 `tau --mode rpc`. Measured, not assumed:
 
-- **Protocol 1.3**, with MAJOR/MINOR version negotiation.
+- **Protocol 1.4**, with MAJOR/MINOR version negotiation.
 - **20 live verbs** in three tiers, and **7 declined verbs each with a stated
   reason** — calling one returns `METHOD_NOT_FOUND`, and the reason is the only
   place that says why.
@@ -48,12 +48,54 @@ with the `get_messages` pull at turn end.
 
 ### 1.3 Frontend commands
 
-`submit` with `expand_commands: true` refuses four commands with
-`COMMAND_NOT_SUPPORTED` (-32001): `/tree`, `/fork`, `/extensions`, `/compact`.
-τ identifies what they are and will not silently no-op them, because the wire
-has no screen to push a panel onto. A head implements them itself. Two have a
-verb that does the same job (`fork`, `compact`); `/tree` does not, and it is
-exactly the tree browser.
+`submit` with `expand_commands: true` refuses five commands with
+`COMMAND_NOT_SUPPORTED` (-32001): `/tree`, `/fork`, `/extensions`, `/compact`,
+`/resume`. τ identifies what they are and will not silently no-op them, because
+the wire has no screen to push a panel onto. A head implements them itself.
+
+This head implements three, in `packages/ui/src/commands.ts`:
+
+| command | here |
+|---|---|
+| `/compact` | the `compact` verb |
+| `/fork` | the `fork` verb |
+| `/resume` | opens the session picker |
+| `/tree` | **not performed** — the tree browser is not built |
+| `/extensions` | **not performed** — there is no extension panel |
+
+The composer intercepts every frontend command before `submit`, so the two it
+cannot perform produce a sentence saying which head is missing what, rather than
+a -32001 the reader has to decode. Both are still listed in the completion
+popup, greyed: hiding them would say they do not exist, when the truth is
+narrower and more useful.
+
+### 1.4 Completion (protocol 1.4)
+
+The composer's Tab completion has two halves, and they come from different
+places for a reason worth stating.
+
+`/command` is computed **in this client**, from `get_commands`. The whole
+vocabulary — name, description, performer — is already on the wire, and the
+matching rule is a case-sensitive prefix test on the first word, which is what
+τ's own `resolve_command` does with the finished line.
+
+`@file` is computed **by τ**, through `complete_path`. This client cannot do it:
+a browser has no filesystem, and the VS Code extension host does have one but
+under Remote SSH or a devcontainer it is the wrong machine's. τ answers from the
+working directory its own tools resolve against, which is the only answer that
+cannot be wrong — and it is the same directory `expand_attachments` then reads,
+so a path the popup offers is a path the expansion resolves.
+
+`submit` sets `expand_attachments: true`, without which `@notes.txt` reaches the
+model as those eleven literal characters. The acceptance carries a report of
+what expansion did; `unresolved` and `failures` are both shown, because τ
+reports them on purpose and a head that showed neither would make a visible
+failure silent again.
+
+Against a pre-1.4 τ, `complete_path` is absent from `get_capabilities().commands`
+and the composer says so instead of calling a verb that would answer -32601.
+`/command` completion is unaffected — `get_commands` has been on the wire since
+1.0.
 
 ---
 

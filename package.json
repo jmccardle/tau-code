@@ -26,7 +26,8 @@
     "check:protocol": "node scripts/generate-protocol.mjs --check",
     "dev:server": "npm run dev --workspace @tau-code/server",
     "dev:web": "npm run dev --workspace @tau-code/web",
-    "clean": "tsc --build --clean && rm -rf packages/*/dist packages/web/dist-web"
+    "clean": "tsc --build --clean && rm -rf packages/*/dist packages/web/dist-web",
+    "smoke:completion": "node scripts/smoke-completion.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

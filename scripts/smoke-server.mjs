@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { WebSocket } from 'ws';
 import { startServer } from '../packages/server/dist/index.js';
-import { TauClient } from '../packages/protocol/dist/index.js';
+import { TauClient, BUILT_AGAINST } from '../packages/protocol/dist/index.js';
 import { LineFramer } from '../packages/protocol/dist/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -123,13 +123,67 @@ try {
   });
 
   const caps = await client.connect();
-  check('negotiated through the server', caps.protocol_version === '1.3', `protocol ${caps.protocol_version}`);
+  // BUILT_AGAINST, not a literal: this asserts the client and the tau on PATH
+  // agree, which is what the check is for. A literal here goes stale at every
+  // protocol bump and fails for a reason that has nothing to do with the server.
+  check(
+    'negotiated through the server',
+    caps.protocol_version === BUILT_AGAINST,
+    `protocol ${caps.protocol_version}, client built against ${BUILT_AGAINST}`,
+  );
 
   const state = await client.call('get_state', {});
   check('get_state answers through the server', typeof state.session_id === 'string', state.session_id);
 
   const messages = await client.call('get_messages', {});
   check('get_messages answers', Array.isArray(messages.messages), `${messages.messages.length} messages`);
+
+  // --- @file expansion, end to end (protocol 1.4) -------------------------
+  //
+  // The turn itself is aborted immediately: what is being checked is that the
+  // PROMPT tau built carries the file's content, which is decided before
+  // admission and is therefore already true when the acceptance arrives. No
+  // model has to answer, so this costs no API credits.
+  const accepted = await client.call('submit', {
+    text: 'read @README.md',
+    source: 'rpc',
+    submitter: 'smoke',
+    submission_id: 'smoke-attachment-1',
+    expand_attachments: true,
+  });
+  const report = accepted.attachments;
+  check(
+    'submit reports what expand_attachments did',
+    report !== undefined && report.expanded === 1 && report.failures.length === 0,
+    JSON.stringify(report),
+  );
+
+  // The turn is aborted, and then this WAITS for agent_end before reading.
+  // `get_messages` answers from the persisted path, which tau writes when the
+  // turn closes -- measured: reading mid-turn returns 0 messages, which is a
+  // fact about when tau persists rather than about the expansion.
+  let ended = false;
+  const offEnd = client.on('event', (event) => {
+    if (event.type === 'agent_end') ended = true;
+  });
+  await client.call('abort', {});
+  for (let i = 0; i < 60 && !ended; i++) await new Promise((r) => setTimeout(r, 200));
+  offEnd();
+  check('the aborted turn closed', ended);
+  await new Promise((r) => setTimeout(r, 400));
+
+  const after = await client.call('get_messages', {});
+  const sent = JSON.stringify(after.messages);
+  check(
+    'the model was given the file, not the @word',
+    sent.includes('<attachment filename=\\"README.md\\">'),
+    `${after.messages.length} messages, ${sent.length} bytes`,
+  );
+  check(
+    'and the @word stays where it was typed',
+    sent.includes('read @README.md'),
+    'the instruction still names the file the way the human did',
+  );
 
   socket.close();
 } finally {

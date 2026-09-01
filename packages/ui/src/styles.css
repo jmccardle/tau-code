@@ -292,3 +292,75 @@
   color: var(--tau-error);
   font-size: 0.85em;
 }
+
+/* ---------------------------------------------------- completion popup */
+
+/* Sits ABOVE the editor, not over it. An overlay would cover the line being
+   typed, which is the one thing the reader needs to see while cycling. */
+.tau-popup {
+  border: 1px solid var(--tau-border);
+  border-radius: 4px;
+  background: var(--tau-input-bg);
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.tau-popup-empty {
+  border: 1px solid var(--tau-warn);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--tau-muted);
+  font-size: 0.9em;
+}
+
+.tau-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tau-popup-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 3px 8px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tau-popup-row:hover { background: var(--tau-border); }
+.tau-popup-selected { background: var(--tau-border); }
+.tau-popup-unavailable { opacity: 0.5; }
+
+.tau-popup-value {
+  color: var(--tau-accent);
+  white-space: nowrap;
+}
+
+.tau-popup-detail {
+  color: var(--tau-muted);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* tau bounds its own match list. Saying so is the difference between "these
+   are the matches" and "these are SOME of the matches". */
+.tau-popup-more {
+  padding: 3px 8px;
+  color: var(--tau-muted);
+  font-size: 0.85em;
+  border-top: 1px solid var(--tau-border);
+}
+
+.tau-composer-hint {
+  margin-left: auto;
+  align-self: center;
+  color: var(--tau-muted);
+  font-size: 0.85em;
+}

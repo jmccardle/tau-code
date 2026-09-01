@@ -10,11 +10,18 @@ function App(): JSX.Element {
   // Built once, on purpose. A transport rebuilt on each render would open a
   // socket per render, and `useTauConnection` keys its effect on this identity.
   const transport = useMemo<Transport>(() => new WebSocketTransport(socketUrlFromLocation()), []);
-  const { client, conversation, phase, detail } = useTauConnection(transport);
+  const { client, conversation, phase, detail, capabilities } = useTauConnection(transport);
   const state = useConversation(conversation);
 
   return (
-    <Chat client={client} conversation={conversation} phase={phase} detail={detail} state={state} />
+    <Chat
+      client={client}
+      conversation={conversation}
+      phase={phase}
+      detail={detail}
+      state={state}
+      capabilities={capabilities}
+    />
   );
 }
 

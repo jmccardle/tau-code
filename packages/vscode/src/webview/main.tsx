@@ -7,7 +7,7 @@ import { VsCodeTransport } from './vscode-transport.js';
 
 function App(): JSX.Element {
   const transport = useMemo<Transport>(() => new VsCodeTransport(), []);
-  const { client, conversation, phase, detail } = useTauConnection(transport);
+  const { client, conversation, phase, detail, capabilities } = useTauConnection(transport);
   const state = useConversation(conversation);
 
   // Enter inserts a newline and Ctrl+Enter sends, matching tau's own TUI
@@ -21,6 +21,7 @@ function App(): JSX.Element {
       phase={phase}
       detail={detail}
       state={state}
+      capabilities={capabilities}
       enterSubmits={false}
     />
   );

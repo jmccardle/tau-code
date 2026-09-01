@@ -96,12 +96,41 @@ export function useConversation(conversation: Conversation | null): Conversation
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
+/**
+ * What `expand_attachments` did, read off the acceptance response.
+ *
+ * `unresolved` names the `@words` that matched no file and were therefore left
+ * in the text as prose. `failures` names the ones that resolved but could not
+ * be sent. Both are shown: the model is told the same thing through a
+ * `<reference error=…>` block, and a head that showed neither would turn a
+ * failure tau reported on purpose back into a silent one.
+ */
+export interface AttachmentReport {
+  expanded: number;
+  images: number;
+  unresolved: string[];
+  failures: string[];
+}
+
 export interface Submitter {
-  submit(text: string): Promise<void>;
+  submit(text: string): Promise<AttachmentReport | null>;
   abort(): Promise<void>;
   /** The last submission error, in words the user can act on. */
   error: string | null;
   busy: boolean;
+}
+
+function readAttachmentReport(value: unknown): AttachmentReport | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  const strings = (key: string): string[] =>
+    Array.isArray(record[key]) ? (record[key] as unknown[]).map(String) : [];
+  return {
+    expanded: Number(record['expanded'] ?? 0),
+    images: Number(record['images'] ?? 0),
+    unresolved: strings('unresolved'),
+    failures: strings('failures'),
+  };
 }
 
 /**
@@ -118,15 +147,15 @@ export function useSubmitter(client: TauClient | null): Submitter {
   const counter = useRef(0);
 
   const submit = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<AttachmentReport | null> => {
       if (!client) {
         setError('Not connected.');
-        return;
+        return null;
       }
       setBusy(true);
       setError(null);
       try {
-        await client.call('submit', {
+        const result = await client.call('submit', {
           text,
           source: 'rpc',
           submitter: 'tau-code',
@@ -136,9 +165,22 @@ export function useSubmitter(client: TauClient | null): Submitter {
           // structured error the UI can show, rather than silently queued
           // behind an answer the user is still reading.
           multitask_strategy: 'reject',
+          // Protocol 1.4. Without it `@notes.txt` reaches the model as those
+          // eleven literal characters, which is a composer that completes a
+          // path and then does not attach it.
+          //
+          // The composer intercepts every FRONTEND command before it gets here
+          // (a `/tree` sent with expand_commands would earn a -32001), so what
+          // this flag reaches is the extension-registered vocabulary. An
+          // unknown `/word` still falls through to the model as prose, which is
+          // tau's own rule and not a fallback added here.
+          expand_attachments: true,
+          expand_commands: true,
         });
+        return readAttachmentReport(result.attachments);
       } catch (raw) {
         setError(describe(raw));
+        return null;
       } finally {
         setBusy(false);
       }

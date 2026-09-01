@@ -4,7 +4,7 @@ import { uiMethodsOf } from './capabilities.js';
 import type { Capabilities, CommandName, CommandParams, CommandResult, WireEvent } from './generated.js';
 
 /** The protocol MAJOR.MINOR this client was generated against. */
-export const BUILT_AGAINST = '1.3';
+export const BUILT_AGAINST = '1.4';
 
 /**
  * A `compaction_end` notification. It is NOT an `event`: it is its own method

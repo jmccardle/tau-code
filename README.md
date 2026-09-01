@@ -6,9 +6,13 @@ connection server, a standalone web client, and a VS Code / VSCodium extension.
 τ itself is not in this repository. This repository talks to it over τ's
 documented JSON-RPC protocol, and spawns it as a child process.
 
-**Status: scaffold.** Chat works end to end. The conversation tree browser and
-the editor integrations are designed for but not built. `docs/ARCHITECTURE.md`
-says what exists, what is missing, and why the layering is the way it is.
+**Status: scaffold.** Chat works end to end, with Tab completion for `/commands`
+and `@files`. The conversation tree browser and the editor integrations are
+designed for but not built. `docs/ARCHITECTURE.md` says what exists, what is
+missing, and why the layering is the way it is.
+
+Requires τ at **protocol 1.4 or later** for `@file` completion. Everything else
+works against 1.3; the composer says so rather than failing.
 
 ## What is here
 
@@ -110,16 +114,45 @@ reproduce.
 
 ```bash
 npm run typecheck        # all six packages
-npm test                 # the conversation store, no network
+npm test                 # the conversation store and the completion logic
 npm run smoke            # spawn tau, negotiate, read state and tools
-npm run smoke:server     # auth, static serving, a live WebSocket round trip
+npm run smoke:server     # auth, static serving, a WebSocket round trip,
+                         # and @file expansion end to end
 
-# With a server already running, load the page in real headless Chrome and
-# report console errors, failed requests, and whether the app rendered:
+# With a server already running, load the page in real headless Chrome:
 npm run smoke:browser -- 'http://127.0.0.1:8791/?token=...' shot.png
+
+# ...and drive Tab completion in it -- real key events, real popup, real tau.
+npm run smoke:completion -- 'http://127.0.0.1:8791/?token=...' shot.png
 ```
 
-None of these send a prompt, so none of them cost API credits.
+`smoke:server` submits one prompt and aborts it immediately, to check that the
+`@file` a user completed actually reaches the model as content. It does that
+against whatever model your config names, so it is one short local call rather
+than free. Nothing else here sends a prompt.
+
+## Tab completion
+
+`/` lists tau's commands, `@` lists files. Tab opens the list and writes the
+first candidate straight into the editor; Tab again cycles, Shift+Tab goes back.
+There is no separate accept key, so the editor always holds exactly what will be
+sent.
+
+```
+read @packages/ui/src/conv⌷
+┌────────────────────────────────┐
+│ @packages/ui/src/…    4.1 kB   │
+└────────────────────────────────┘
+```
+
+The file list comes from **tau**, not from this client, and that is not an
+implementation detail: under Remote SSH or in a devcontainer the code lives on
+the other machine, and a browser has no filesystem at all. tau answers from the
+directory its own tools resolve against.
+
+An unknown `/word` is sent to the model as ordinary text. That has always been
+tau's behaviour and it is deliberate; the popup now says so, instead of leaving
+it to be discovered.
 
 ## What is deliberately missing
 
@@ -129,6 +162,12 @@ Named here rather than discovered later:
   repository exists. It needs tree verbs on the wire; τ has none today.
 - **Renaming a session.** `set_session_name` is on the wire; the picker lists,
   switches, forks and starts, but does not rename yet.
+- **`/tree` and `/extensions`.** tau resolves both and expects the frontend to
+  perform them. This head does not, so it says which head is missing what. They
+  are listed in the completion popup, greyed.
+- **Removing an attachment by clicking it.** The tau TUI has a bar of attached
+  files with a click-to-remove. Here the `@word` is the only handle: delete it
+  from the text.
 - **Jump-to-edit and diff views.** τ's tools compute the data and the agent loop
   discards it before a message is built.
 - **Live tool arguments.** They are not on the event stream, by design. During a
