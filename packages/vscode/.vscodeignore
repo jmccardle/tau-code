@@ -1,0 +1,13 @@
+# vsce packages the whole directory unless told otherwise. The extension loads
+# a single bundled dist/extension.js plus the webview build, so everything that
+# produced them is dead weight in the .vsix.
+src/**
+node_modules/**
+dist-types/**
+esbuild.mjs
+vite.webview.config.ts
+tsconfig.json
+tsconfig.tsbuildinfo
+**/*.map
+**/*.ts
+!dist/**

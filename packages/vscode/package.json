@@ -10,6 +10,8 @@
     "vscode": "^1.90.0"
   },
   "categories": ["AI", "Other"],
+  "icon": "media/icon.png",
+  "//packaging": "What lands in the .vsix is controlled by .vscodeignore. vsce refuses to accept both that and a `files` property, so there is no `files` here.",
   "main": "./dist/extension.js",
   "//extensionKind": "`workspace` so the agent's tools run where the code is -- over SSH, in WSL, in a devcontainer -- rather than on the laptop. The webview always renders locally regardless, which is the split a standalone web app cannot reproduce.",
   "extensionKind": ["workspace"],
@@ -35,24 +37,51 @@
     },
     "commands": [
       {
+        "command": "tau-code.open",
+        "title": "Open Agent",
+        "category": "tau",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "tau-code.restart",
-        "title": "tau: Restart the agent process",
+        "title": "Restart Agent",
+        "category": "tau",
         "icon": "$(debug-restart)"
       },
       {
         "command": "tau-code.showLog",
-        "title": "tau: Show the agent log"
+        "title": "Show Agent Log",
+        "category": "tau"
       }
     ],
     "menus": {
       "view/title": [
         {
+          "command": "tau-code.open",
+          "when": "view == tau-code.chat",
+          "group": "navigation@1"
+        },
+        {
           "command": "tau-code.restart",
           "when": "view == tau-code.chat",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "tau-code.restart",
+          "when": "activeWebviewPanelId == tau-code.panel",
           "group": "navigation"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "tau-code.open",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
+      }
+    ],
     "configuration": {
       "title": "tau",
       "properties": {
