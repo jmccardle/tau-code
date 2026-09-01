@@ -46,6 +46,40 @@ try {
   const html = await page.text();
   check('token serves the web build', page.status === 200 && html.includes('<div id="root">'));
 
+  // The regression this file exists to catch. A browser does NOT copy the
+  // query string onto sub-resource requests, so the page's own module script
+  // arrives with no token. Before the cookie it came back 401 as text/plain,
+  // and the browser reported a blocked MIME type rather than a refusal.
+  const cookie = page.headers.get('set-cookie');
+  check('an authenticated page plants a session cookie', Boolean(cookie), cookie ?? 'none');
+
+  const assetPath = /src="([^"]*\.js)"/.exec(html)?.[1] ?? '';
+  check('the page references a module asset', assetPath !== '', assetPath);
+
+  const bare = await fetch(`${base}${assetPath}`);
+  check('an asset with no credential is still refused', bare.status === 401, `status ${bare.status}`);
+
+  const withCookie = await fetch(`${base}${assetPath}`, {
+    headers: { cookie: (cookie ?? '').split(';')[0] ?? '' },
+  });
+  check(
+    'the cookie authenticates the module script',
+    withCookie.status === 200,
+    `status ${withCookie.status}`,
+  );
+  check(
+    'the module script is served as JavaScript',
+    (withCookie.headers.get('content-type') ?? '').startsWith('text/javascript'),
+    withCookie.headers.get('content-type') ?? 'none',
+  );
+
+  const missing = await fetch(`${base}/assets/does-not-exist.js?token=${server.token}`);
+  check(
+    'a missing asset 404s instead of falling back to HTML',
+    missing.status === 404,
+    `status ${missing.status}, type ${missing.headers.get('content-type')}`,
+  );
+
   const traversal = await fetch(`${base}/../../package.json?token=${server.token}`);
   const body = await traversal.text();
   check('path traversal does not escape the root', !body.includes('"workspaces"'));

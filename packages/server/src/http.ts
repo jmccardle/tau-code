@@ -30,22 +30,86 @@ export function tokenMatches(expected: string, supplied: string | null): boolean
   return timingSafeEqual(a, b);
 }
 
-/** Pull a token from `?token=`, `Authorization: token <t>`, or `X-Tau-Token`. */
-export function extractToken(request: IncomingMessage): string | null {
+/** The name of the session cookie. See `readToken`. */
+export const TOKEN_COOKIE = 'tau_code_token';
+
+export type TokenSource = 'query' | 'header' | 'cookie';
+
+export interface SuppliedToken {
+  value: string | null;
+  source: TokenSource | null;
+}
+
+/** Read one cookie out of a `Cookie:` header. */
+export function readCookie(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the token on a request, and say where it came from.
+ *
+ * Four places, in order: `?token=`, `Authorization: token <t>`, `X-Tau-Token`,
+ * and the session cookie.
+ *
+ * **The cookie is why the web client works at all.** The server prints a URL
+ * with the token in the query string, so the HTML page authenticates. But the
+ * page then asks for `/assets/index-*.js` and `/assets/index-*.css` on its own,
+ * and a browser does not copy a query parameter onto sub-resource requests.
+ * Without a cookie those come back 401 -- and because the 401 body is plain
+ * text, the browser reports it as a blocked MIME type rather than as the
+ * refusal it is. That misleading symptom is exactly why this is a cookie and
+ * not, say, a rewritten asset URL.
+ *
+ * The caller plants the cookie once, on the first request that authenticated by
+ * some other means. See `createHttpServer`.
+ */
+export function readToken(request: IncomingMessage): SuppliedToken {
   const url = new URL(request.url ?? '/', 'http://placeholder');
   const query = url.searchParams.get('token');
-  if (query) return query;
+  if (query) return { value: query, source: 'query' };
 
   const header = request.headers['authorization'];
   if (typeof header === 'string') {
     const match = /^(?:token|Bearer)\s+(.+)$/i.exec(header.trim());
-    if (match?.[1]) return match[1];
+    if (match?.[1]) return { value: match[1], source: 'header' };
   }
 
   const custom = request.headers['x-tau-token'];
-  if (typeof custom === 'string' && custom) return custom;
+  if (typeof custom === 'string' && custom) return { value: custom, source: 'header' };
 
-  return null;
+  const cookie = readCookie(request.headers['cookie'], TOKEN_COOKIE);
+  if (cookie) return { value: cookie, source: 'cookie' };
+
+  return { value: null, source: null };
+}
+
+/** The token on a request, without its source. */
+export function extractToken(request: IncomingMessage): string | null {
+  return readToken(request).value;
+}
+
+/**
+ * The `Set-Cookie` value that keeps a browser authenticated for this origin.
+ *
+ * `HttpOnly` so page scripts cannot read it, `SameSite=Strict` so another site
+ * cannot cause the browser to send it, and no `Secure` flag because the server
+ * speaks plain HTTP -- setting it would mean the cookie is never sent at all.
+ * Session-scoped: it dies with the browser, and a new server run mints a new
+ * token anyway.
+ */
+export function authCookie(token: string): string {
+  return `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict`;
 }
 
 /**
@@ -83,23 +147,41 @@ export interface StaticRoot {
  * percent-encoded, doubled, or mixed with separators, and only resolution
  * settles where a path actually points.
  */
-export function serveStatic(root: StaticRoot, urlPath: string, response: ServerResponse): void {
+export function serveStatic(
+  root: StaticRoot,
+  urlPath: string,
+  response: ServerResponse,
+  extraHeaders: Record<string, string> = {},
+): void {
   const decoded = decodeURIComponent(urlPath.split('?')[0] ?? '/');
   const relative = normalize(decoded).replace(/^(\.\.[/\\])+/, '');
   const candidate = resolve(join(root.dir, relative));
 
   if (candidate !== root.dir && !candidate.startsWith(root.dir + sep)) {
-    response.writeHead(403, { 'content-type': 'text/plain' });
+    response.writeHead(403, { ...extraHeaders, 'content-type': 'text/plain' });
     response.end('Forbidden');
     return;
   }
 
+  const exists = existsSync(candidate) && !statSync(candidate).isDirectory();
   let file = candidate;
-  if (!existsSync(file) || statSync(file).isDirectory()) {
+
+  if (!exists) {
+    // Fall back to index.html only for paths that look like ROUTES. A missing
+    // `.js` or `.css` must 404: answering it with HTML gives the browser a
+    // module whose content-type is text/html, and the error it then reports is
+    // about the MIME type rather than about the file being absent. That is a
+    // long way from the actual fault.
+    if (extname(candidate) !== '') {
+      response.writeHead(404, { ...extraHeaders, 'content-type': 'text/plain' });
+      response.end(`Not found: ${relative}`);
+      return;
+    }
     file = join(root.dir, 'index.html');
   }
+
   if (!existsSync(file)) {
-    response.writeHead(404, { 'content-type': 'text/plain' });
+    response.writeHead(404, { ...extraHeaders, 'content-type': 'text/plain' });
     response.end(
       'No web client build found.\n' +
         'Run `npm run build --workspace @tau-code/web` and start the server again.',
@@ -108,6 +190,7 @@ export function serveStatic(root: StaticRoot, urlPath: string, response: ServerR
   }
 
   response.writeHead(200, {
+    ...extraHeaders,
     'content-type': MIME[extname(file)] ?? 'application/octet-stream',
     'cache-control': 'no-cache',
   });
@@ -133,7 +216,8 @@ export function createHttpServer(options: HttpServerOptions): Server {
       return;
     }
 
-    if (!tokenMatches(options.token, extractToken(request))) {
+    const supplied = readToken(request);
+    if (!tokenMatches(options.token, supplied.value)) {
       response.writeHead(401, { 'content-type': 'text/plain' });
       response.end(
         'Missing or invalid token.\n\n' +
@@ -143,7 +227,12 @@ export function createHttpServer(options: HttpServerOptions): Server {
       return;
     }
 
-    serveStatic(options.staticRoot, url.pathname, response);
+    // Plant the cookie whenever the token arrived some other way, so the
+    // sub-resources this page is about to request authenticate on their own.
+    const headers: Record<string, string> = {};
+    if (supplied.source !== 'cookie') headers['set-cookie'] = authCookie(options.token);
+
+    serveStatic(options.staticRoot, url.pathname, response, headers);
   });
 
   server.on('upgrade', (request, socket, head) => {

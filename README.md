@@ -96,6 +96,10 @@ npm run typecheck        # all six packages
 npm test                 # the conversation store, no network
 npm run smoke            # spawn tau, negotiate, read state and tools
 npm run smoke:server     # auth, static serving, a live WebSocket round trip
+
+# With a server already running, load the page in real headless Chrome and
+# report console errors, failed requests, and whether the app rendered:
+npm run smoke:browser -- 'http://127.0.0.1:8791/?token=...' shot.png
 ```
 
 None of these send a prompt, so none of them cost API credits.

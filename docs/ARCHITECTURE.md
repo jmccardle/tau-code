@@ -191,6 +191,8 @@ Measured behaviour, in `scripts/smoke-server.mjs`:
 - `/healthz` needs no token and reveals nothing but liveness.
 - No token and a wrong token both get 401, on HTTP and on the WebSocket upgrade.
 - Token comparison is constant-time.
+- An authenticated page plants a session cookie; the module script and
+  stylesheet authenticate with it; an asset with no credential is still 401.
 - Path traversal out of the static root is refused, checked on the resolved
   path rather than the request string.
 - Cross-origin WebSocket upgrades are refused. WebSocket handshakes are not
@@ -199,6 +201,33 @@ Measured behaviour, in `scripts/smoke-server.mjs`:
   second line that costs nothing.
 
 `--bind 0.0.0.0` prints a warning naming what it exposes. There is no TLS.
+
+### 5.1 Why there is a cookie
+
+The server prints a URL with the token in the query string, so the HTML page
+authenticates. The page then requests `/assets/index-*.js` and
+`/assets/index-*.css` on its own, and **a browser does not copy a query
+parameter onto sub-resource requests.** Without a cookie those come back 401.
+
+The symptom was misleading enough to be worth recording: because the 401 body is
+`text/plain`, Firefox reported
+
+> Loading module from "…/assets/index-*.js" was blocked because of a disallowed
+> MIME type ("text/plain").
+
+which reads like a content-type bug in the static handler. It was an auth
+refusal wearing a MIME error's clothes.
+
+The fix is Jupyter's: the first request that authenticates by any other means
+gets `Set-Cookie` with `HttpOnly` and `SameSite=Strict`, and every sub-resource
+rides on that. No `Secure` flag, because the server speaks plain HTTP and
+setting it would mean the cookie is never sent at all.
+
+A second change came out of the same bug. The static handler used to fall back
+to `index.html` for **any** missing path, so a missing `.js` was answered with
+HTML — producing exactly the same misleading MIME complaint for a completely
+different cause. It now falls back only for paths with no file extension, and
+404s the rest.
 
 ### 5.1 The server is not a multiplexer
 
