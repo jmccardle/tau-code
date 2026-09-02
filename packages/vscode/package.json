@@ -6,7 +6,12 @@
   "description": "Run a tau agent inside VS Code or VSCodium.",
   "license": "MIT",
   "publisher": "ffwf",
+  "//private": "`private` stops an accidental `npm publish`. It does not stop a marketplace publish: scripts/publish-extension.sh publishes the built .vsix by path, and vsce reads the manifest out of the archive rather than off disk.",
   "private": true,
+  "keywords": ["tau", "agent", "llm", "chat", "coding agent"],
+  "homepage": "https://github.com/jmccardle/tau-code",
+  "repository": { "type": "git", "url": "https://github.com/jmccardle/tau-code.git" },
+  "bugs": { "url": "https://github.com/jmccardle/tau-code/issues" },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -109,11 +114,11 @@
       }
     }
   },
-  "//package": "--no-dependencies because esbuild bundles everything into dist/extension.js: without it vsce walks the workspace-hoisted ../../node_modules and fails on a path outside the extension. --allow-missing-repository because this package is private.",
+  "//package": "--no-dependencies because esbuild bundles everything into dist/extension.js: without it vsce walks the workspace-hoisted ../../node_modules and fails on a path outside the extension.",
   "scripts": {
     "build": "node esbuild.mjs && vite build --config vite.webview.config.ts",
     "watch": "node esbuild.mjs --watch",
-    "package": "npx --yes @vscode/vsce package --allow-missing-repository --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
+    "package": "npx --yes @vscode/vsce package --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
   },
   "dependencies": {
     "@ffwf/tau-code-protocol": "0.2.0",

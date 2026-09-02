@@ -8,6 +8,9 @@ esbuild.mjs
 vite.webview.config.ts
 tsconfig.json
 tsconfig.tsbuildinfo
-**/*.map
 **/*.ts
-!dist/**
+# There is deliberately no `!dist/**` line. vsce applies every negation AFTER
+# every ignore, whatever the order in this file, so one here re-included
+# dist/extension.js.map and the source map shipped. Nothing excludes dist, so
+# the negation was never needed.
+**/*.map

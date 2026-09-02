@@ -509,8 +509,10 @@ own, so renaming it would silently drop their configuration — it is left alone
 on purpose.
 
 The scope `@ffwf` rather than a flat `ffwf-tau-code-*` prefix is the one
-reservation decision. Creating the npm organisation covers `@ffwf/*` forever, so
-no future package under it needs its own reservation.
+reservation decision. The npm organisation is claimed and covers `@ffwf/*`
+forever, so no future package under it needs its own reservation. The publisher
+name `ffwf` on the Visual Studio Marketplace and the namespace `ffwf` on Open
+VSX are two further registries where the same word had to be claimed separately.
 `scripts/reserve-names.sh` handles the separate, smaller job: the unscoped names
 someone could otherwise publish. Its placeholders contain a README and no code,
 and it publishes only with `--publish`.
@@ -528,3 +530,32 @@ The CLI also refuses to start when the resolved static directory has no
 `index.html`. Without that, a missing web build produced a server that answered
 every page with a 404 and reported the reason in a browser tab rather than in
 the terminal that started it.
+
+### 9.4 Two marketplaces, one archive
+
+`scripts/publish-extension.sh` publishes to the Visual Studio Marketplace and to
+Open VSX. VSCodium, and every other build that cannot use Microsoft's
+marketplace, reads Open VSX; publishing to only one of them means half the
+editors this extension claims to support cannot install it.
+
+Both get the **same file**. `vsce publish --packagePath` and `ovsx publish
+<file>` each read the manifest out of the `.vsix` rather than off disk, so the
+two listings cannot drift, and `packages/vscode/package.json` can stay marked
+`private` — which is what stops an accidental `npm publish` of an extension into
+a scope that holds libraries.
+
+Three things had to exist before a listing was worth publishing, and none of
+them was needed to build a `.vsix`:
+
+- **A README inside the extension package.** The listing page is that file. The
+  `.vsix` had none, so the page would have been blank.
+- **A `repository` field.** `--allow-missing-repository` had been papering over
+  its absence. It is gone from the package script, and the publish script
+  fetches the URL before uploading: a listing that links to a 404 can only be
+  fixed by publishing again, and a version number cannot be reused on either
+  marketplace.
+- **`.vscodeignore` actually excluding the source map.** It listed `**/*.map`
+  and shipped the map anyway. vsce applies every negation after every ignore
+  regardless of the order in the file, so the `!dist/**` line at the bottom
+  re-included it. Nothing excluded `dist`, so that line was never needed;
+  removing it took the archive from 82 KB to 69 KB.

@@ -31,7 +31,9 @@
     "clean": "tsc --build --clean && rm -rf packages/*/dist packages/web/dist-web packages/server/dist-web",
     "package": "bash scripts/package.sh",
     "package:vsix": "bash scripts/package.sh vsix",
-    "package:image": "bash scripts/package.sh image"
+    "package:image": "bash scripts/package.sh image",
+    "publish:extension": "bash scripts/publish-extension.sh",
+    "reserve:names": "bash scripts/reserve-names.sh"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

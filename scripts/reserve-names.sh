@@ -11,15 +11,21 @@
 #
 # WHAT THIS DOES NOT DO
 #
-# The npm scope `@ffwf` is the reservation that actually matters, and it cannot
-# be claimed from a script. Create the organisation at
-# https://www.npmjs.com/org/create -- it is free for public packages, it covers
-# `@ffwf/*` forever, and no future package under it needs its own reservation.
-# Do that FIRST. The unscoped names below are a smaller, separate thing: they
+# The npm organisation `@ffwf` is the reservation that actually matters, and it
+# cannot be claimed from a script. It is claimed: it covers `@ffwf/*` forever,
+# so no future package under that scope needs its own reservation and none is
+# generated below. The unscoped names here are a smaller, separate thing: they
 # stop someone publishing `ffwf-tau` on npm, which the scope does not.
 #
 # npm also refuses new names that are too similar to an existing one, so
 # publishing `ffwf-tau-code` blocks its near-misses without further effort.
+#
+# CREDENTIALS, for --publish
+#
+#   npm    `npm login` first; `npm whoami` has to answer.
+#   PyPI   an API token, in ~/.pypirc or as TWINE_USERNAME=__token__ and
+#          TWINE_PASSWORD=pypi-... . tau's own releases use Trusted Publishing
+#          from CI and leave no token on this machine, so this needs its own.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -30,6 +36,22 @@ trap 'rm -rf "$BUILD"' EXIT
 
 PUBLISH=0
 [ "${1:-}" = "--publish" ] && PUBLISH=1
+
+# Both credentials are checked before the first upload. Finding out about a
+# missing PyPI token after seven npm packages are already published would leave
+# the reservation half done, and npm's 72-hour unpublish window is the only way
+# back from a name published by mistake.
+if [ "$PUBLISH" -eq 1 ]; then
+  if ! npm whoami >/dev/null 2>&1; then
+    echo "npm: not logged in. Run  npm login  first." >&2
+    exit 1
+  fi
+  echo "npm user: $(npm whoami)"
+  if [ ! -f "$HOME/.pypirc" ] && [ -z "${TWINE_PASSWORD:-}" ]; then
+    echo "pypi: no ~/.pypirc and no TWINE_PASSWORD. See the header." >&2
+    exit 1
+  fi
+fi
 
 # name:what-it-points-at
 NPM_NAMES=(
@@ -135,9 +157,8 @@ done
 
 say "done"
 if [ "$PUBLISH" -eq 0 ]; then
-  echo "Nothing was published. Re-run with --publish once you have:"
-  echo "  1. created the npm organisation @ffwf   (npmjs.com/org/create)"
-  echo "  2. run  npm login,  and set up a PyPI token for twine"
+  echo "Nothing was published. Re-run with --publish once you have run"
+  echo "npm login and set up a PyPI token for twine."
   echo "PyPI names cannot be released once taken, and npm unpublish is blocked"
   echo "after 72 hours. Both of these are one-way."
 fi

@@ -214,19 +214,45 @@ than free. Nothing else here sends a prompt.
 `check:protocol` is skipped, loudly, when no τ is reachable — it is the only one
 of the four that needs a live agent.
 
-## Names
+## Publishing
+
+Two scripts, each publishing one kind of thing. Neither runs as part of a
+build, and both read their credentials from the environment.
+
+### The extension
+
+```bash
+export VSCE_PAT=...    # Azure DevOps token, Marketplace > Manage scope
+export OVSX_PAT=...    # open-vsx.org/user-settings/tokens
+npm run publish:extension              # both marketplaces
+npm run publish:extension -- vscode    # or one of them
+npm run publish:extension -- openvsx
+```
+
+It publishes the **`.vsix`**, not the working tree, so both marketplaces get
+bit-identical archives. Before uploading anything it checks the version inside
+the archive against the tree, verifies the token belongs to the `ffwf`
+publisher, and fetches the repository URL — a marketplace listing is mostly
+this README's sibling in `packages/vscode/`, and a listing that links to a 404
+can only be fixed by publishing again. `--no-repo-check` skips that last one.
+
+A published version number cannot be reused on either marketplace. Bump it.
+
+### The names
 
 Nothing here is published to npm; see `docs/ARCHITECTURE.md` §9.1 for why. The
 names are still worth holding so nobody else takes them:
 
 ```bash
-PYTHON=/path/to/venv/bin/python scripts/reserve-names.sh            # dry run
-PYTHON=/path/to/venv/bin/python scripts/reserve-names.sh --publish  # for real
+PYTHON=/path/to/venv/bin/python npm run reserve:names            # dry run
+PYTHON=/path/to/venv/bin/python npm run reserve:names -- --publish
 ```
 
-Each placeholder is a README and no code. Read the script's header first: the
-npm organisation `@ffwf` is the reservation that actually matters, it has to be
-created by hand, and both registries are one-way.
+Each placeholder is a README and no code. The npm organisation `@ffwf` is the
+reservation that actually matters and it is already claimed, so nothing under
+`@ffwf/*` needs one; these are the seven unscoped `ffwf-tau*` names plus
+`tau-code`, and two PyPI names. Both registries are one-way — PyPI names cannot
+be released, and npm blocks unpublish after 72 hours.
 
 ## Tab completion
 
