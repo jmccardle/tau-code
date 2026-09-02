@@ -54,7 +54,17 @@
 /* The push to the right is `.tau-status-spacer`'s job now, so the model no
    longer claims it -- two elements with `margin-left: auto` would each take a
    share and split the row. */
-.tau-status-model { font-variant-numeric: tabular-nums; }
+/* A model id can be longer than the sidebar is wide (`qwen36-35B-IQ4_XS`), and
+   the `Sessions` button after it must stay reachable. So this one shrinks and
+   truncates rather than pushing anything off the end; the whole id is in the
+   picker it opens. */
+.tau-status-model {
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tau-status-detail {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -397,7 +407,12 @@
   background: var(--tau-input-bg);
   border-color: var(--tau-border);
 }
+/* A row disabled because a turn is running looked exactly like one that works,
+   so the notice above the list was the only thing saying a click would do
+   nothing. The CURRENT row is excluded: it is disabled for a different reason
+   -- you are already on it -- and dimming it would hide the mark. */
 .tau-session-row:disabled { cursor: default; }
+.tau-session-row:disabled:not(.tau-session-current) { opacity: 0.5; }
 .tau-session-current {
   border-color: var(--tau-accent);
   background: var(--tau-input-bg);

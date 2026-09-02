@@ -733,3 +733,68 @@ no socket: the panel is a `vscode-webview://` document and the transport is
 `postMessage` through the extension host (§2). The web client's fixed 8791 is a
 different program, and a second instance of it would fail to bind rather than
 producing this. The workaround is **Developer: Reload Window**.
+
+## 11. The model picker (0.3.0)
+
+The status bar showed which model was running and offered no way to change it.
+τ has had both verbs since Tier B, so this is entirely a client-side gap:
+`get_models` enumerates the config names, `set_model` installs one by name.
+
+### 11.1 A name is not an id, and neither can be derived from the other
+
+`set_model` takes a config NAME — a key in `~/.tau/config.json`'s `models` map.
+`get_state` reports the running model as an `{id, provider}` projection, which
+is what a name RESOLVED to. In this repository owner's own config `local-llm`
+resolves to `qwen38-27B`. The two strings are unrelated.
+
+So the status bar keeps showing the **id** (that is what is running, and it is
+the only thing τ reports about it), and the picker lists **names**, each with
+the `provider/id` it resolves to underneath. Showing both is the point: a
+reader picking `local-llm` should be able to see it means `qwen38-27B` before
+clicking.
+
+### 11.2 Why "active" is a list and not a row
+
+`get_models` does not flag which entry is active, and τ's own protocol notes say
+why — two config names may alias one model, and a startup `--model provider/id`
+is an ad-hoc model with no config key at all. `activeNames` in
+`packages/ui/src/models.ts` therefore returns every name whose `id` AND
+`provider` match, and the panel renders three different facts:
+
+| matches | what the panel does |
+|---|---|
+| 1 | marks that row `active` |
+| 0 | says the running model has no config entry, and that switching away from it is one-way — `set_model` cannot bring it back |
+| ≥2 | marks all of them, and says which one is active is not something τ reports |
+
+Guessing a single row would be a fabrication in the second and third cases, both
+of which a real config reaches. The provider is part of the comparison because
+the same id served by two providers is two models — τ's notes record that a
+cross-provider switch is where an auth error surfaces.
+
+`context_window` is read off the wire and then dropped. τ assigns every config
+entry the same 128000 today, including the active one, so the numbers carry no
+difference; displaying them would invite a comparison the child does not make.
+
+### 11.3 No capability gate, unlike `@` completion
+
+`@` completion checks the peer's command list for `complete_path` before
+offering anything, because it has to decide before the reader types and a
+silently wrong completion is invisible. The picker does not, because the reader
+clicks and gets an answer: a τ without `get_models` produces the one visible
+sentence `describe` already writes for `METHOD_NOT_FOUND`. One path, and every
+refusal is on screen.
+
+The refusals that matter are τ's, and all are shown verbatim:
+`TURN_STILL_RUNNING` (the rows are disabled while a turn runs, and a line says
+what is waiting), `SESSION_NOT_PERSISTED`, and `INVALID_PARAMS` for an unknown
+name — whose message is the resolver's own, listing every configured name.
+
+### 11.4 `ModelPanel` is split out so it can be rendered
+
+The interesting states are reachable only after an async `get_models`, and this
+repository has no DOM in its test setup. `ModelPicker` makes the calls;
+`ModelPanel` takes `rows`, `active`, `running`, `busy` and `error` as props and
+holds all the markup, so `packages/ui/test/models.test.mjs` renders each state
+from a fixture with `renderToStaticMarkup`. A panel whose appearance can only be
+checked by clicking through it is a panel nothing checks.

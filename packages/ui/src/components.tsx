@@ -20,6 +20,14 @@ import {
   type CommandInfo,
   type Completions,
 } from './completion.js';
+import {
+  activeNames,
+  modelLabel,
+  readActiveModel,
+  readModelRows,
+  type ActiveModel,
+  type ModelRow,
+} from './models.js';
 import { loadCommands, performCommand, PERFORMABLE, type CommandResult } from './commands.js';
 import { LiveMarkdown, Markdown } from './markdown.js';
 import {
@@ -753,6 +761,222 @@ export function SessionPicker({
   );
 }
 
+/* ---------------------------------------------------------- model picker */
+
+export interface ModelPickerProps {
+  client: TauClient | null;
+  /** What `get_state` says is running, or null when that read failed. */
+  active: ActiveModel | null;
+  running: boolean;
+  onClose: () => void;
+  /**
+   * The model `set_model` installed. Its result is the projection tau publishes
+   * after the switch, so it is taken as authoritative and nothing re-reads
+   * `get_state` to confirm it.
+   */
+  onSwitched: (active: ActiveModel) => void;
+}
+
+/**
+ * Switch the model this session uses.
+ *
+ * The list is tau's, not this head's: `get_models` resolves every config name
+ * through the same component `set_model` itself calls, so what is offered here
+ * is what a switch would actually install. This client reads no config file.
+ *
+ * **No capability gate.** `@` completion checks the peer's command list before
+ * offering anything, because it has to decide before the reader types and a
+ * silently wrong completion is invisible. Here the reader clicks and gets an
+ * answer, so a tau without `get_models` produces one visible sentence from
+ * `describe` rather than a control that quietly is not there.
+ *
+ * Switching is refused while a turn runs -- tau's own guard, and the rows say
+ * so rather than failing on the click. A switch that lands takes effect on the
+ * next turn; tau never changes model mid-stream.
+ */
+export function ModelPicker({
+  client,
+  active,
+  running,
+  onClose,
+  onSwitched,
+}: ModelPickerProps): JSX.Element {
+  const [rows, setRows] = useState<ModelRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!client) return;
+    setError(null);
+    try {
+      const result = await client.call('get_models', {});
+      setRows(readModelRows(result.models ?? []));
+    } catch (raw) {
+      setError(describe(raw));
+      setRows([]);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const choose = async (name: string): Promise<void> => {
+    if (!client) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.call('set_model', { name });
+      const installed = readActiveModel(result.model);
+      // A switch tau reported without a model projection is a switch this head
+      // cannot describe. Say so instead of leaving the old name on the bar.
+      if (!installed) {
+        setError('tau switched the model but did not say to what. Reload to read the current one.');
+        return;
+      }
+      onSwitched(installed);
+      onClose();
+    } catch (raw) {
+      setError(describe(raw));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModelPanel
+      rows={rows}
+      active={active}
+      running={running}
+      busy={busy || !client}
+      error={error}
+      onClose={onClose}
+      onReload={() => void load()}
+      onChoose={(name) => void choose(name)}
+    />
+  );
+}
+
+export interface ModelPanelProps {
+  /** The list, or null while `get_models` has not answered yet. */
+  rows: ModelRow[] | null;
+  active: ActiveModel | null;
+  running: boolean;
+  /** A call is in flight, or there is no client to make one with. */
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onReload: () => void;
+  onChoose: (name: string) => void;
+}
+
+/**
+ * What the model picker looks like. Everything, and no calls.
+ *
+ * Split from `ModelPicker` so the markup can be rendered from a fixture. The
+ * interesting states -- a name that matches nothing, two names that match the
+ * same model -- are reachable only after an async load, and a panel whose
+ * appearance can only be checked by clicking through it is a panel nothing
+ * checks.
+ */
+export function ModelPanel({
+  rows,
+  active,
+  running,
+  busy,
+  error,
+  onClose,
+  onReload,
+  onChoose,
+}: ModelPanelProps): JSX.Element {
+  const names = rows ? activeNames(rows, active) : [];
+  const label = modelLabel(active);
+
+  return (
+    <div className="tau-sessions">
+      <div className="tau-sessions-head">
+        <strong>Model</strong>
+        <button className="tau-button tau-button-quiet" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      <div className="tau-sessions-scope">
+        {label ? (
+          <div>
+            Running: <code>{label}</code>
+          </div>
+        ) : (
+          <div>tau did not report a running model.</div>
+        )}
+      </div>
+
+      {/* The three cases are three different facts, and only the first one lets
+          a row be marked. See `activeNames` for why guessing is not on. */}
+      {rows !== null && rows.length > 0 && names.length === 0 ? (
+        <div className="tau-sessions-reason">
+          The running model has no entry in tau&apos;s config, so it was set at startup rather
+          than chosen from this list. Switching away from it is one way: nothing below can
+          bring it back.
+        </div>
+      ) : null}
+      {names.length > 1 ? (
+        <div className="tau-sessions-reason">
+          {names.length} names resolve to the running model. Which of them is active is not
+          something tau reports, so all of them are marked.
+        </div>
+      ) : null}
+
+      <div className="tau-composer-row">
+        <button className="tau-button tau-button-quiet" disabled={busy} onClick={onReload}>
+          Reload
+        </button>
+      </div>
+
+      {running ? (
+        <div className="tau-notice tau-warn">
+          A turn is running. tau will not change model mid-stream, so switching waits.
+        </div>
+      ) : null}
+      {error ? <div className="tau-notice tau-warn">{error}</div> : null}
+
+      {rows === null ? (
+        <div className="tau-notice">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="tau-notice">
+          tau&apos;s config declares no models to switch between. They live in the
+          <code> models </code> map of <code>~/.tau/config.json</code>.
+        </div>
+      ) : (
+        <ul className="tau-session-list">
+          {rows.map((row) => {
+            const current = names.includes(row.name);
+            return (
+              <li key={row.name}>
+                <button
+                  className={`tau-session-row${current ? ' tau-session-current' : ''}`}
+                  disabled={busy || running || current}
+                  onClick={() => onChoose(row.name)}
+                  title={`set_model ${row.name}`}
+                >
+                  <span className="tau-session-title">{row.name}</span>
+                  <span className="tau-session-meta">
+                    {current ? 'active · ' : ''}
+                    {/* The id is what the name RESOLVED to, and it is often a
+                        different string. Showing both is the point. */}
+                    {row.provider ? `${row.provider}/` : ''}
+                    {row.id ?? '(tau reported no id)'}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------- disconnected */
 
 export interface DisconnectedProps {
@@ -802,9 +1026,12 @@ export interface StatusBarProps {
   phase: ConnectionPhase;
   detail: string | null;
   state: ConversationState;
+  /** The running model's id. Not its config name: the two differ, often. */
   model?: string | null;
   onToggleSessions?: () => void;
   sessionsOpen?: boolean;
+  onToggleModels?: () => void;
+  modelsOpen?: boolean;
 }
 
 export function StatusBar({
@@ -814,6 +1041,8 @@ export function StatusBar({
   model,
   onToggleSessions,
   sessionsOpen,
+  onToggleModels,
+  modelsOpen,
 }: StatusBarProps): JSX.Element {
   const label =
     phase === 'ready'
@@ -827,7 +1056,22 @@ export function StatusBar({
       <span>{label}</span>
       {detail ? <span className="tau-status-detail">{detail}</span> : null}
       <span className="tau-status-spacer" />
-      {model ? <span className="tau-status-model">{model}</span> : null}
+      {/* The label is the model ID, because that is what tau reports as
+          running and the config NAME cannot be derived from it. When the read
+          failed there is still a control, named rather than valued: an empty
+          space would be a picker the reader cannot find. */}
+      {onToggleModels ? (
+        <button
+          className="tau-status-button tau-status-model"
+          onClick={onToggleModels}
+          aria-pressed={modelsOpen === true}
+          title="Switch the model this session uses"
+        >
+          {model ?? 'Model'}
+        </button>
+      ) : model ? (
+        <span className="tau-status-model">{model}</span>
+      ) : null}
       {onToggleSessions ? (
         <button
           className="tau-status-button"
@@ -876,9 +1120,12 @@ export function Chat({
   capabilities,
   disconnectedHint,
 }: ChatProps): JSX.Element {
-  const [model, setModel] = useState<string | null>(null);
+  const [model, setModel] = useState<ActiveModel | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  // Two panels, one slot. Both push the transcript down, and opening the second
+  // over the first would leave the reader with two lists and one status bar.
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   // True only while the picker is up because nothing was there to show. Clicking
   // `Sessions` later is a different thing and must not inherit the sentence.
@@ -957,8 +1204,7 @@ export function Chat({
       .call('get_state', {})
       .then((result) => {
         if (cancelled) return;
-        const record = result.model as Record<string, unknown> | null;
-        setModel(record && typeof record['id'] === 'string' ? record['id'] : null);
+        setModel(readActiveModel(result.model));
         setSessionId(typeof result.session_id === 'string' ? result.session_id : null);
       })
       .catch(() => {
@@ -978,9 +1224,22 @@ export function Chat({
         phase={phase}
         detail={detail}
         state={state}
-        model={model}
+        model={model?.id ?? null}
         sessionsOpen={sessionsOpen}
-        {...(phase === 'ready' ? { onToggleSessions: () => setSessionsOpen((open) => !open) } : {})}
+        modelsOpen={modelsOpen}
+        {...(phase === 'ready'
+          ? {
+              onToggleSessions: () => {
+                setModelsOpen(false);
+                setSessionsOpen((open) => !open);
+              },
+              onToggleModels: () => {
+                setSessionsOpen(false);
+                setLanded(false);
+                setModelsOpen((open) => !open);
+              },
+            }
+          : {})}
       />
       <Disconnected phase={phase} detail={detail} {...(disconnectedHint ? { hint: disconnectedHint } : {})} />
       {sessionsOpen ? (
@@ -1000,6 +1259,15 @@ export function Chat({
                 closeLabel: 'Start here',
               }
             : {})}
+        />
+      ) : null}
+      {modelsOpen ? (
+        <ModelPicker
+          client={client}
+          active={model}
+          running={state.running}
+          onClose={() => setModelsOpen(false)}
+          onSwitched={setModel}
         />
       ) : null}
       <Transcript state={state} />

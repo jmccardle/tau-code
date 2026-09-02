@@ -70,12 +70,26 @@ Code is not syntax-highlighted. VS Code publishes theme variables for editor
 chrome but not for token colours, so any palette shipped here would be our
 colours sitting inside your theme.
 
+## Changing the model
+
+The model name in the status bar opens a picker. It lists the models in your
+`~/.tau/config.json`, each with the provider and model id it resolves to, and
+switching one takes effect on your next message — tau never changes model
+mid-answer, so the picker waits while a turn is running.
+
+The status bar shows the model **id**, and the picker lists config **names**.
+Those are different strings: a config entry called `local-llm` can resolve to
+`qwen38-27B`, and neither name can be worked out from the other. The picker
+marks the row you are on when it can tell — if you started tau with a `--model`
+that is not in your config, nothing matches, and it says so, because switching
+away from that one is one way.
+
 ## Settings
 
 | Setting | What it does |
 |---|---|
 | `tau-code.binary` | Path to τ's console script. A bare name is looked up on `PATH`. |
-| `tau-code.model` | Passed to τ as `--model`. Empty uses τ's own default. |
+| `tau-code.model` | Passed to τ as `--model` when the agent starts. The picker changes it afterwards. Empty uses τ's own default. |
 | `tau-code.provider` | Passed to τ as `--provider`. Empty uses τ's own default. |
 | `tau-code.sessionDir` | Where session logs are written. |
 

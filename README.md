@@ -259,6 +259,23 @@ cannot scope a token to a name that does not exist yet. The script stays for the
 next name; a re-run of these fails, because a published version cannot be
 replaced.
 
+## Changing the model
+
+The model in the status bar opens a picker, in the extension and in the web
+client alike. It lists what `get_models` reports — every model name in tau's
+config, each resolved through the same component `set_model` itself calls — and
+a choice takes effect on the next turn. This client reads no config file.
+
+Two things the panel says rather than guesses, both from tau's own protocol
+notes. A config **name** is not a model **id**: `local-llm` can resolve to
+`qwen38-27B`, so the status bar shows the id that is running and the rows show
+the name you would ask for. And `get_models` does not flag which entry is
+active, because two names can alias one model and a startup `--model
+provider/id` has no config key at all — so the panel marks every name that
+matches, and when none does it says the running model cannot be returned to.
+
+See `docs/ARCHITECTURE.md` §11.
+
 ## Tab completion
 
 `/` lists tau's commands, `@` lists files. Tab opens the list and writes the
