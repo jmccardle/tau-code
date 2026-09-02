@@ -21,6 +21,7 @@ import {
   type Completions,
 } from './completion.js';
 import { loadCommands, performCommand, PERFORMABLE, type CommandResult } from './commands.js';
+import { LiveMarkdown, Markdown } from './markdown.js';
 import {
   describe,
   useSubmitter,
@@ -30,15 +31,29 @@ import {
 
 /* ------------------------------------------------------------------ blocks */
 
-function Block({ block }: { block: ContentBlock }): JSX.Element | null {
+/**
+ * One content block.
+ *
+ * `markdown` is a per-ROLE decision, not a global setting. The model writes
+ * Markdown and means it. The user wrote characters into a textarea and meant
+ * those: rendering their message as Markdown would eat the `*` in a filename
+ * and hide the `<attachment>` block that says what was actually sent, which
+ * would make the transcript disagree with the wire. Tool output is neither --
+ * it is a program's stdout, and `tau-pre` already renders it as one.
+ */
+function Block({ block, markdown = false }: { block: ContentBlock; markdown?: boolean }): JSX.Element | null {
   switch (block.type) {
     case 'text':
-      return <div className="tau-text">{block.text}</div>;
+      return markdown ? <Markdown text={block.text} /> : <div className="tau-text">{block.text}</div>;
     case 'thinking':
       return (
         <details className="tau-thinking">
           <summary>Reasoning</summary>
-          <div className="tau-text">{block.thinking}</div>
+          {markdown ? (
+            <Markdown text={block.thinking} />
+          ) : (
+            <div className="tau-text">{block.thinking}</div>
+          )}
         </details>
       );
     case 'image':
@@ -94,7 +109,7 @@ function EntryView({ entry }: { entry: Entry }): JSX.Element {
         <div className="tau-entry tau-entry-assistant">
           <div className="tau-role">Agent</div>
           {entry.blocks.map((block, i) => (
-            <Block key={i} block={block} />
+            <Block key={i} block={block} markdown />
           ))}
         </div>
       );
@@ -191,16 +206,20 @@ export function Transcript({ state }: TranscriptProps): JSX.Element {
       {state.live.length > 0 || state.liveTools.length > 0 ? (
         <div className="tau-entry tau-entry-assistant tau-live">
           <div className="tau-role">Agent</div>
+          {/* Markdown while it streams, not only once the turn ends. A half
+              written fence renders as a code block that grows, which is what
+              the reader expects; switching renderer at `agent_end` would
+              reflow the whole answer at the moment it finished. `LiveMarkdown`
+              rather than `Markdown` because a growing message defeats the memo
+              -- see the measurements in markdown.tsx. */}
           {state.live.map((block, i) =>
             block.kind === 'thinking' ? (
               <details key={i} className="tau-thinking" open>
                 <summary>Reasoning</summary>
-                <div className="tau-text">{block.text}</div>
+                <LiveMarkdown text={block.text} />
               </details>
             ) : (
-              <div key={i} className="tau-text">
-                {block.text}
-              </div>
+              <LiveMarkdown key={i} text={block.text} />
             ),
           )}
           {state.liveTools.map((call) => (
@@ -556,12 +575,32 @@ function attachmentNotice(report: AttachmentReport | null): string | null {
 
 /* ---------------------------------------------------------- session picker */
 
+/**
+ * Has anyone said anything in this session?
+ *
+ * A user message, specifically. A fresh session is not empty on the wire: it
+ * carries the system prompt, and tau's own store adds a `model_change` entry
+ * before a word is typed. Counting messages would call that a conversation.
+ */
+function hasUserMessage(messages: unknown[]): boolean {
+  return readEntries(messages).some((entry) => entry.kind === 'user');
+}
+
 export interface SessionPickerProps {
   client: TauClient | null;
   conversation: Conversation | null;
   currentSessionId: string | null;
   running: boolean;
   onClose(): void;
+  /**
+   * Why the picker is open, when the reader did not open it.
+   *
+   * A panel that lands on a list nobody asked for reads as a lost transcript.
+   * One sentence is the difference between that and an offer.
+   */
+  reason?: string;
+  /** The word on the close button. "Close" when the reader opened this. */
+  closeLabel?: string;
 }
 
 /**
@@ -582,6 +621,8 @@ export function SessionPicker({
   currentSessionId,
   running,
   onClose,
+  reason,
+  closeLabel = 'Close',
 }: SessionPickerProps): JSX.Element {
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [scope, setScope] = useState<SessionScope>({ store: null, cwd: null });
@@ -626,9 +667,11 @@ export function SessionPicker({
       <div className="tau-sessions-head">
         <strong>Sessions</strong>
         <button className="tau-button tau-button-quiet" onClick={onClose}>
-          Close
+          {closeLabel}
         </button>
       </div>
+
+      {reason ? <div className="tau-sessions-reason">{reason}</div> : null}
 
       <div className="tau-sessions-scope">
         {scope.cwd ? (
@@ -674,8 +717,9 @@ export function SessionPicker({
         <div className="tau-notice">Loading…</div>
       ) : rows.length === 0 ? (
         <div className="tau-notice">
-          No sessions in this working directory yet. The one you are in is created when it is
-          first written to.
+          No sessions in this working directory yet. tau writes this one to the store as soon
+          as the agent starts, so it appears here after the next reload whether or not you
+          send anything.
         </div>
       ) : (
         <ul className="tau-session-list">
@@ -836,6 +880,34 @@ export function Chat({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [commands, setCommands] = useState<CommandInfo[]>([]);
+  // True only while the picker is up because nothing was there to show. Clicking
+  // `Sessions` later is a different thing and must not inherit the sentence.
+  const [landed, setLanded] = useState(false);
+  const decided = useRef(false);
+
+  /**
+   * Land on the session picker when this session has nothing in it.
+   *
+   * The agent is started when the panel opens, and tau writes the session to
+   * the store at that moment rather than at the first message -- so a user who
+   * opens the panel four times has four sessions, all empty, and the picker
+   * fills with rows that are indistinguishable from each other. Opening the
+   * panel is not the same act as starting a conversation, and this is what
+   * separates them: an empty session shows the list it belongs to, so the
+   * obvious next click is an existing conversation rather than a fifth blank
+   * one.
+   *
+   * Decided ONCE, on the first pull. Re-deciding would reopen the picker every
+   * time `new_session` empties the transcript, which is the one moment the
+   * reader has already said what they want.
+   */
+  useEffect(() => {
+    if (decided.current || phase !== 'ready' || !state.loaded) return;
+    decided.current = true;
+    if (hasUserMessage(state.messages)) return;
+    setSessionsOpen(true);
+    setLanded(true);
+  }, [phase, state.loaded, state.messages]);
 
   // The vocabulary is per-session: an extension can register commands, and
   // switching sessions can load a different set. Re-read at every session
@@ -917,7 +989,17 @@ export function Chat({
           conversation={conversation ?? null}
           currentSessionId={sessionId}
           running={state.running}
-          onClose={() => setSessionsOpen(false)}
+          onClose={() => {
+            setSessionsOpen(false);
+            setLanded(false);
+          }}
+          {...(landed
+            ? {
+                reason:
+                  'This session is empty. Pick one to carry on with, or dismiss this and start typing here.',
+                closeLabel: 'Start here',
+              }
+            : {})}
         />
       ) : null}
       <Transcript state={state} />

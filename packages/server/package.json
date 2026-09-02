@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Connection server: owns a tau process and serves it to browser clients over WebSocket.",
   "license": "MIT",
   "type": "module",
@@ -16,8 +16,8 @@
     "dev": "node --watch dist/cli.js"
   },
   "dependencies": {
-    "@ffwf/tau-code-protocol": "0.2.0",
-    "@ffwf/tau-code-runner": "0.2.0",
+    "@ffwf/tau-code-protocol": "0.3.0",
+    "@ffwf/tau-code-runner": "0.3.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

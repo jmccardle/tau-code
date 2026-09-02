@@ -164,7 +164,7 @@ To build an installable `.vsix` instead:
 
 ```bash
 npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
-code --install-extension ffwf-tau-code-0.2.0.vsix
+code --install-extension ffwf-tau-code-0.3.0.vsix
 ```
 
 **If you installed 0.1.x, uninstall it first.** The extension ID changed from
@@ -308,6 +308,22 @@ Named here rather than discovered later:
   server process, which does not respawn τ on its own.
 
 `docs/ARCHITECTURE.md` has the detail, including what has to change in τ first.
+
+## About
+
+Built by [FFwF Robotics](https://ffwfrobotics.github.io/) — Fight Fire with Fire
+Robotics — whose stated business is loyal automatons for the inevitable machine
+uprising. Three projects, usable separately or as one stack: **Tectum**, an
+event substrate orchestrated with schema documents; **Tau**, the agent harness
+this repository is a client for; and **JMFTS**, a retrieval appliance fusing
+Matryoshka embeddings, ColBERT late interaction and BM25 into one hybrid search
+on Postgres.
+
+FFwF is [John McCardle](https://ffwf.net/about): a masters in Cyberintelligence
+from the University of South Florida, author of
+[McRogueFace](https://github.com/jmccardle/McRogueFace), a portable Python/C++
+game engine, founder of the Bespoke Robot Society, and president of Kennedy
+Space Center's amateur radio club.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "ffwf-tau-code",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Clients for the tau agent harness: a connection server, a web client, and a VS Code extension.",
   "license": "MIT",
   "//workspaces": "Order matters: npm builds workspaces in this order, and packages/server's build copies packages/web/dist-web into itself, so web has to be built first.",

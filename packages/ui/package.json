@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "React components for a tau head. Transport-agnostic: no host imports.",
   "license": "MIT",
   "type": "module",
@@ -13,19 +13,25 @@
     },
     "./styles.css": "./src/styles.css"
   },
-  "files": ["dist", "src/styles.css"],
+  "files": [
+    "dist",
+    "src/styles.css"
+  ],
   "scripts": {
     "build": "tsc --build",
     "test": "node --test test/"
   },
   "dependencies": {
-    "@ffwf/tau-code-protocol": "0.2.0"
+    "@ffwf/tau-code-protocol": "0.3.0",
+    "react-markdown": "^9.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "peerDependencies": {
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
+    "@types/mdast": "^4.0.4",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "react": "^18.3.1",

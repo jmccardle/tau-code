@@ -598,3 +598,138 @@ the error alone:
   write to every project on the account. Narrow it or revoke it afterwards. τ's
   own releases are unaffected: they use Trusted Publishing from CI and read no
   token from a laptop.
+
+## 10. Rendering the transcript (0.3.0)
+
+### 10.1 Markdown, and who gets it
+
+The model writes Markdown and means it. Until 0.3.0 the transcript showed the
+characters, so a table was a wall of pipes and a fenced block was indented
+prose. `packages/ui/src/markdown.tsx` renders it with `react-markdown` and
+`remark-gfm`.
+
+**Per role, not globally.** The agent's text and its reasoning are Markdown. A
+user message is not: it is shown as the characters that were typed, so a `*` in
+a filename stays a `*` and the `<attachment>` block τ expanded from an `@file`
+stays visible. Tool results are neither — they are a program's stdout and
+`tau-pre` already renders them as one. The rule is that the transcript must not
+disagree with the wire, and only one of the three roles wrote Markdown on
+purpose.
+
+**No HTML string, ever.** `react-markdown` builds a React element tree, so a
+`<script>` in a model's answer cannot become a script node. The alternative —
+a Markdown-to-HTML library plus a sanitiser plus `dangerouslySetInnerHTML` —
+makes the sanitiser the only thing standing between the model and the DOM. The
+webview's CSP stays a second line of defence rather than the first, and the
+browser client, which has no editor to inherit a policy from, gets the same
+guarantee for free.
+
+**Raw HTML is rendered as literal text, not dropped.** This is the one custom
+plugin. Without `rehype-raw`, `react-markdown` discards `html` nodes silently,
+and τ's own attachment vocabulary is `<attachment>` and
+`<reference filename= path= size= reason=>` (FILE-ATTACHMENTS.md §2) — so the
+default would erase, from the transcript, the block that says what was actually
+sent to the model. `literalHtml` converts those nodes to text before they can be
+dropped. `packages/ui/test/markdown.test.mjs` pins both halves: the attachment
+block survives, and `<script>` does not become an element.
+
+**Two things are deliberately absent.** Remote images render as links, because
+the webview's `img-src` allows only the extension's own directory and `data:`,
+so an `<img>` would be a broken-image icon. And code is not syntax-highlighted:
+VS Code publishes theme variables for editor chrome but not for token colours,
+so any palette shipped here would be our colours sitting inside the user's
+theme. Code blocks take the editor font and `--vscode-textCodeBlock-background`.
+
+The library costs **152.6 kB minified, 47.2 kB gzipped**, measured by bundling
+`react-markdown` + `remark-gfm` alone with React external. The webview bundle is
+330.67 kB / 103.45 kB gzipped with it in.
+
+### 10.2 A growing message cannot be re-parsed on every delta
+
+The cost is in the Markdown parse, not in React. Measured with `remark-parse` +
+`remark-gfm` + `remark-rehype` on representative prose — paragraphs, a fenced
+block, a list:
+
+| message | mdast + hast | + React to string |
+|---|---|---|
+| 2 KB | 6.2 ms | 5.9 ms |
+| 8 KB | 15.0 ms | 19.6 ms |
+| 20 KB | 53.8 ms | 66.2 ms |
+
+A 20 KB answer arrives as roughly a thousand deltas. Parsing each one is about a
+minute of blocked main thread on a single message.
+
+The finished transcript above the live block is not the problem: `Markdown`
+memoises on the text, so the messages that stopped changing return a cached
+element even though the whole `Transcript` re-renders on every delta. Only the
+message still growing defeats that, because every delta is a new string.
+
+There is **no incremental parse to reach for**. An unclosed fence earlier in the
+text changes how the tail parses, so the prefix is not stable and a
+parse-only-the-last-paragraph scheme would be wrong exactly when a model is
+writing code.
+
+So `LiveMarkdown` **samples**, and derives the rate from what the last render
+actually cost: the next one is scheduled `cost × 3` later, clamped to
+33–500 ms. A fixed interval is wrong at both ends — 100 ms wastes the thread on
+a short message and still burns half of it on a long one. Timing the previous
+render bounds the parse to about a quarter of the main thread at any length.
+The last value is never dropped: when the deltas stop, the pending text is one
+timer away, and `agent_end` replaces the live block with the durable message
+anyway.
+
+Rejected: rendering the live text as plain and switching to Markdown at
+`agent_end`. It is cheaper and it reflows the entire answer at the one moment
+the reader has started to read it.
+
+### 10.3 The panel lands on the session list
+
+**τ writes a session to its store when the agent starts, not when the first
+message is sent.** Measured: six files in
+`/tmp/.tau-1000/sessions/--home-john-Development-tau-code--`, each 320 bytes and
+two lines — a `session` header and a `model_change` entry — one per time the
+panel was opened. `SessionManager.new_session` creates the file and appends the
+header immediately, and every head shares that path.
+
+The consequence is a picker filling with rows that are indistinguishable from
+each other, because opening the panel is not the same act as starting a
+conversation. `Chat` now separates them: on the first `get_messages` after
+connect, a session with no user message opens the picker instead of an empty
+transcript, with one sentence saying why and a **Start here** button that
+dismisses it.
+
+Three details that each have a wrong version:
+
+- **The test is a user message, not a message count.** A fresh session is not
+  empty on the wire — it carries the system prompt, and τ's store adds a
+  `model_change` entry before a word is typed. Counting messages calls that a
+  conversation.
+- **`ConversationState.loaded` had to exist.** `messages: []` means both "not
+  asked yet" and "an empty session", and those want opposite treatment. The
+  flag separates them rather than leaving whoever renders to guess.
+- **Decided once, on the first pull.** Re-deciding would reopen the picker every
+  time `new_session` empties the transcript — the one moment the reader has
+  already said what they want.
+
+This is a frontend decision about where to land, and it does not stop the empty
+files accumulating. The τ-side fix is to defer the file until the first append,
+which changes `new_session`'s contract for every head (`--continue`, `fork`,
+`list_sessions`, and the TUI's own picker all assume the path exists) and is
+therefore τ's call, not this repository's.
+
+### 10.4 The webview service worker error is VS Code's
+
+"Error loading webview: Could not register service worker" is
+[microsoft/vscode#125993](https://github.com/microsoft/vscode/issues/125993),
+open since 2021 and labelled `upstream`/`chromium`. Chromium fails to register
+the service worker VS Code puts behind the `vscode-webview` scheme — visible in
+the editor's own process arguments as `--service-worker-schemes=vscode-webview`
+— and every webview in that window then fails, Markdown preview and the Jupyter
+panes included. A second editor already running makes it more likely, which is
+why installing into VS Code and VSCodium side by side finds it.
+
+**There is no port involved and nothing here to configure.** The extension opens
+no socket: the panel is a `vscode-webview://` document and the transport is
+`postMessage` through the extension host (§2). The web client's fixed 8791 is a
+different program, and a second instance of it would fail to bind rather than
+producing this. The workaround is **Developer: Reload Window**.

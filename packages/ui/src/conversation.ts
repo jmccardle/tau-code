@@ -49,6 +49,15 @@ export interface LiveToolCall {
 export interface ConversationState {
   /** The authoritative message array from the last `get_messages` pull. */
   messages: unknown[];
+  /**
+   * True once `get_messages` has answered at least once.
+   *
+   * `messages: []` alone cannot be read: it is both "not asked yet" and "an
+   * empty session". Those want opposite treatment on screen -- one waits, the
+   * other is the reason the session picker opens -- so the two are separated
+   * here rather than guessed at by whoever is rendering.
+   */
+  loaded: boolean;
   /** Text and thinking accumulated from deltas during the running turn. */
   live: LiveBlock[];
   /** Tool calls seen this turn, in the order they started. */
@@ -79,6 +88,7 @@ export interface ConversationState {
 
 const EMPTY: ConversationState = {
   messages: [],
+  loaded: false,
   live: [],
   liveTools: [],
   running: false,
@@ -129,7 +139,7 @@ export class Conversation {
   /** Pull the authoritative message array and clear the live buffer. */
   async refresh(): Promise<void> {
     const result = await this.#client.call('get_messages', {});
-    this.#patch({ messages: result.messages ?? [], live: [], liveTools: [] });
+    this.#patch({ messages: result.messages ?? [], loaded: true, live: [], liveTools: [] });
   }
 
   /**

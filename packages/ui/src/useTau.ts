@@ -94,6 +94,7 @@ export function useConversation(conversation: Conversation | null): Conversation
   const empty = useMemo<ConversationState>(
     () => ({
       messages: [],
+      loaded: false,
       live: [],
       liveTools: [],
       running: false,

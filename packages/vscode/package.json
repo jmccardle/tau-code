@@ -3,7 +3,7 @@
   "name": "tau-code",
   "//displayName": "A FOURTH namespace, and the only global one: `name` is scoped by publisher, so `ffwf.tau-code` is ours as soon as we own `ffwf`, but a display name is unique across the entire Marketplace and no publisher prefix applies. `tau` was refused as taken. This one matches every other identifier here -- the repository, the extension name, the .vsix. Open VSX enforces no such rule.",
   "displayName": "tau code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run a tau agent inside VS Code or VSCodium.",
   "license": "MIT",
   "publisher": "ffwf",
@@ -122,9 +122,9 @@
     "package": "npx --yes @vscode/vsce package --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
   },
   "dependencies": {
-    "@ffwf/tau-code-protocol": "0.2.0",
-    "@ffwf/tau-code-runner": "0.2.0",
-    "@ffwf/tau-code-ui": "0.2.0",
+    "@ffwf/tau-code-protocol": "0.3.0",
+    "@ffwf/tau-code-runner": "0.3.0",
+    "@ffwf/tau-code-ui": "0.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
