@@ -570,3 +570,31 @@ them was needed to build a `.vsix`:
   regardless of the order in the file, so the `!dist/**` line at the bottom
   re-included it. Nothing excluded `dist`, so that line was never needed;
   removing it took the archive from 82 KB to 69 KB.
+
+### 9.5 What is claimed, and what it took (2026-09-02)
+
+| Registry | Held | How |
+|---|---|---|
+| npm organisation | `@ffwf` | claimed by hand; covers `@ffwf/*` forever |
+| npm packages | `ffwf-tau`, `-llm`, `-agent-core`, `-coding-agent`, `-jmfts`, `-code`, and `tau-code` | `scripts/reserve-names.sh --publish` |
+| PyPI | `tau-code`, `ffwf-tau-code` | the same script |
+| Visual Studio Marketplace | publisher `ffwf`, extension `ffwf.tau-code` | `scripts/publish-extension.sh` |
+| Open VSX | namespace `ffwf`, extension `ffwf.tau-code` | the same script |
+
+The seven npm placeholders are each published and then deprecated, so npm prints
+the notice on any install. That is the whole point: someone who arrives by a
+typo is told at once rather than left holding an empty package.
+
+Two credential rules cost a failed run each, and neither is discoverable from
+the error alone:
+
+- **npm rejects a CLI publish under 2FA.** A password login is not enough. The
+  publish needs a **granular access token with "bypass 2FA" enabled**, written
+  to `~/.npmrc` as `//registry.npmjs.org/:_authToken=`. `npm login` puts a
+  different token on that same line, which is why the failure reads as a
+  permission problem rather than a missing credential.
+- **PyPI cannot scope a token to a project that does not exist.** The first
+  upload of a new name has to come from an **account-scoped** token, which can
+  write to every project on the account. Narrow it or revoke it afterwards. τ's
+  own releases are unaffected: they use Trusted Publishing from CI and read no
+  token from a laptop.

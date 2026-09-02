@@ -248,11 +248,16 @@ PYTHON=/path/to/venv/bin/python npm run reserve:names            # dry run
 PYTHON=/path/to/venv/bin/python npm run reserve:names -- --publish
 ```
 
-Each placeholder is a README and no code. The npm organisation `@ffwf` is the
-reservation that actually matters and it is already claimed, so nothing under
-`@ffwf/*` needs one; these are the seven unscoped `ffwf-tau*` names plus
-`tau-code`, and two PyPI names. Both registries are one-way — PyPI names cannot
-be released, and npm blocks unpublish after 72 hours.
+Each placeholder is a README and no code, published and then deprecated so npm
+prints the notice on any install.
+
+**This has been run.** All nine names are held, and the npm organisation `@ffwf`
+covers `@ffwf/*` besides. `docs/ARCHITECTURE.md` §9.5 lists what is claimed
+where, and the two credential rules that each cost a failed run: npm needs a
+granular token with 2FA bypass rather than a `npm login` session, and PyPI
+cannot scope a token to a name that does not exist yet. The script stays for the
+next name; a re-run of these fails, because a published version cannot be
+replaced.
 
 ## Tab completion
 

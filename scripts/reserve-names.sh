@@ -20,12 +20,22 @@
 # npm also refuses new names that are too similar to an existing one, so
 # publishing `ffwf-tau-code` blocks its near-misses without further effort.
 #
+# ALREADY RUN. Every name below is claimed; see docs/ARCHITECTURE.md 9.5. A
+# second run fails on the first publish, because a version cannot be replaced.
+# The script is kept for the next name, not for a re-run.
+#
 # CREDENTIALS, for --publish
 #
-#   npm    `npm login` first; `npm whoami` has to answer.
-#   PyPI   an API token, in ~/.pypirc or as TWINE_USERNAME=__token__ and
-#          TWINE_PASSWORD=pypi-... . tau's own releases use Trusted Publishing
-#          from CI and leave no token on this machine, so this needs its own.
+#   npm    A granular access token with "bypass 2FA" enabled, written to
+#          ~/.npmrc as `//registry.npmjs.org/:_authToken=`. `npm login` alone is
+#          NOT enough under 2FA: it puts a different token on that same line and
+#          the registry answers 403 at publish time, which reads as a permission
+#          problem rather than a missing credential.
+#   PyPI   An API token, in ~/.pypirc or as TWINE_USERNAME=__token__ and
+#          TWINE_PASSWORD=pypi-... . For a name that does not exist yet the token
+#          has to be ACCOUNT-scoped -- PyPI cannot scope one to a project that is
+#          not there. Narrow or revoke it afterwards. tau's own releases use
+#          Trusted Publishing from CI and read no token from this machine.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
