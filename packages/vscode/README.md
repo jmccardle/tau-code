@@ -1,4 +1,4 @@
-# tau
+# tau code
 
 Run a [τ](https://github.com/jmccardle/tau) agent inside VS Code or VSCodium.
 

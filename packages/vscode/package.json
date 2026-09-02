@@ -1,7 +1,8 @@
 {
   "//name": "The extension ID is publisher.name, so this pair reads `ffwf.tau-code`. It is not the npm scope -- an extension name may not contain `@` or `/`. The `tau-code.*` setting and command IDs below are a third namespace again, and are deliberately unchanged: renaming them would silently drop a user's settings.",
   "name": "tau-code",
-  "displayName": "tau",
+  "//displayName": "A FOURTH namespace, and the only global one: `name` is scoped by publisher, so `ffwf.tau-code` is ours as soon as we own `ffwf`, but a display name is unique across the entire Marketplace and no publisher prefix applies. `tau` was refused as taken. This one matches every other identifier here -- the repository, the extension name, the .vsix. Open VSX enforces no such rule.",
+  "displayName": "tau code",
   "version": "0.2.0",
   "description": "Run a tau agent inside VS Code or VSCodium.",
   "license": "MIT",

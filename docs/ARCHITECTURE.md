@@ -501,12 +501,23 @@ is ever wanted, the blocker that used to exist is already gone: see 9.3.
 | npm workspace names | `@ffwf/tau-code-*` | `import` statements, `package.json` |
 | VS Code extension ID | `ffwf.tau-code` | the Marketplace, `--install-extension` |
 | Extension settings and commands | `tau-code.*` | a user's `settings.json` |
+| Marketplace display name | `tau code` | the listing title, the editor's extension list |
 
 They look like they should be one string and they are not. An extension name
 may not contain `@` or `/`, so the scope cannot appear in the ID. And the
 settings namespace is the one thing here a user has typed into a file of their
 own, so renaming it would silently drop their configuration — it is left alone
 on purpose.
+
+The display name is the odd one, and it cost a failed publish. It is the only
+name here that is **not scoped by its publisher**: `ffwf.tau-code` is ours the
+moment we own `ffwf`, but a display name is unique across the entire Visual
+Studio Marketplace, so `tau` was refused as taken and owning the publisher did
+nothing about it. Nothing can check this before uploading — the marketplace
+search API ranks results rather than indexing display names, and a check that
+answers "probably free" is worse than no check. Open VSX does not enforce the
+rule at all, so that leg would have succeeded on its own and left the two
+listings under different titles.
 
 The scope `@ffwf` rather than a flat `ffwf-tau-code-*` prefix is the one
 reservation decision. The npm organisation is claimed and covers `@ffwf/*`

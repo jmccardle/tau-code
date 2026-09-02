@@ -25,6 +25,13 @@
 #
 # A published version number cannot be reused. Bump the version rather than
 # trying to replace one.
+#
+# The Visual Studio Marketplace also rejects a `displayName` that any other
+# extension already holds, anywhere on the marketplace -- it is the one field
+# here that is not scoped by publisher, so owning `ffwf` does not help. There is
+# no way to check it before uploading; the server answers "This extension display
+# name is taken". Open VSX does not enforce it, so that leg can succeed while
+# this one fails.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
