@@ -1,10 +1,18 @@
 import { ProtocolVersionError, RpcErrorCode, TauRpcError, type RpcErrorObject } from './errors.js';
 import type { Transport } from './transport.js';
 import { uiMethodsOf } from './capabilities.js';
+import { PROTOCOL_VERSION } from './generated.js';
 import type { Capabilities, CommandName, CommandParams, CommandResult, WireEvent } from './generated.js';
 
-/** The protocol MAJOR.MINOR this client was generated against. */
-export const BUILT_AGAINST = '1.4';
+/**
+ * The protocol MAJOR.MINOR this client was generated against.
+ *
+ * Read off the generated file rather than written here. It used to be a literal,
+ * and a literal is a second copy of a number `npm run generate` already wrote --
+ * it said 1.4 for as long as it took someone to notice tau had moved on, and a
+ * stale version check is worse than none because it passes.
+ */
+export const BUILT_AGAINST: string = PROTOCOL_VERSION;
 
 /**
  * A `compaction_end` notification. It is NOT an `event`: it is its own method

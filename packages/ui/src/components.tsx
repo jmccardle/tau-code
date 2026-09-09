@@ -28,7 +28,13 @@ import {
   type ActiveModel,
   type ModelRow,
 } from './models.js';
-import { loadCommands, performCommand, PERFORMABLE, type CommandResult } from './commands.js';
+import { loadCommands, performCommand, VIEWS, type CommandResult } from './commands.js';
+import { loadPendingRequest, type ExtensionRequest } from './requests.js';
+import { RequestPanel } from './request-panel.js';
+import { TreePanel } from './tree-panel.js';
+import type { FlowStep } from './flows.js';
+import { FlowDialog } from './flow-dialog.js';
+import { ExtensionPanel } from './extension-panel.js';
 import { LiveMarkdown, Markdown } from './markdown.js';
 import {
   describe,
@@ -336,6 +342,27 @@ export interface ComposerProps {
    * "waiting" and "gone" are both unusable and need different words.
    */
   phase?: ConnectionPhase;
+  /**
+   * Text to put in the editor, from somewhere other than the keyboard.
+   *
+   * The tree browser's "ask this differently" is the one producer: it moves the
+   * cursor to a user message's parent and hands the message back here to be
+   * edited. Sent as a prop rather than as an imperative handle so the editor
+   * stays the one owner of what is in it.
+   */
+  draft?: string | null;
+  /** Called once `draft` has been taken, so the same text is not re-applied. */
+  onDraftTaken?: () => void;
+  /**
+   * Called when tau refuses a submission.
+   *
+   * An extension lock is one of the causes, and the refusal is the first moment
+   * this head can know one arrived: a lock is appended by a hook mid-turn and
+   * nothing on the event stream announces it. The caller re-reads
+   * `get_pending_request` so the panel opens instead of leaving the reader with
+   * a sentence about a form they cannot see.
+   */
+  onRefused?: () => void;
 }
 
 /**
@@ -355,6 +382,9 @@ export function Composer({
   pathCompletion = true,
   onCommand,
   phase = 'ready',
+  draft = null,
+  onDraftTaken,
+  onRefused,
 }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
   /**
@@ -371,12 +401,25 @@ export function Composer({
   const [selected, setSelected] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const { submit, abort, error } = useSubmitter(client);
+  useEffect(() => {
+    if (error !== null) onRefused?.();
+  }, [error, onRefused]);
   const area = useRef<HTMLTextAreaElement>(null);
   // Every path lookup is a round trip, and a stale one must not overwrite a
   // newer answer. The counter is the only thing that makes the popup's contents
   // correspond to the cursor as it is NOW rather than as it was two keystrokes
   // ago.
   const lookup = useRef(0);
+
+  // A draft REPLACES what is typed, because it arrives from a gesture the reader
+  // just made in another panel -- appending would leave them editing two
+  // messages at once.
+  useEffect(() => {
+    if (draft === null) return;
+    setText(draft);
+    onDraftTaken?.();
+    requestAnimationFrame(() => area.current?.focus());
+  }, [draft, onDraftTaken]);
 
   const completions = open?.completions ?? null;
 
@@ -424,7 +467,12 @@ export function Composer({
     const baseText = source ?? text;
     const cursor = at ?? node.selectionStart;
 
-    const command = completeCommand(baseText, commands, PERFORMABLE);
+    // Nothing is greyed today: this head performs both of tau's views, drives
+    // every flow through `next_step`, and sends the rest through `submit`. The
+    // set stays a parameter rather than becoming an empty literal, because the
+    // day tau declares a third view this head has no panel for, that name has to
+    // be able to appear greyed rather than falsely offered.
+    const command = completeCommand(baseText, commands, unavailableCommands(commands));
     if (command !== null) {
       setOpen({ completions: command, baseText });
       setSelected(0);
@@ -470,17 +518,22 @@ export function Composer({
     dismiss();
     setNotice(null);
 
-    // A frontend command never reaches `submit`: tau would refuse it with
-    // COMMAND_NOT_SUPPORTED, correctly, because the wire has no screen. This
-    // head performs the ones it can and says why for the rest.
+    // Every `/word` tau knows is dispatched HERE, not through `submit`. A
+    // built-in flow sent with `expand_commands` earns a COMMAND_NOT_SUPPORTED,
+    // correctly -- the wire has no screen to render a step on -- so this head
+    // steps it itself and calls the mutation the step names. A word tau does not
+    // know comes back as `prose` and falls through to the model, which is what
+    // tau would have done with it anyway.
     const span = commandSpan(trimmed);
-    const named = commands.find((c) => c.name === span?.token && c.performer === 'frontend');
+    const named = commands.find((c) => c.name === span?.token);
     if (span && named && onCommand) {
       const args = trimmed.slice(span.end).trim();
       const outcome = await onCommand(named.name, args);
-      if (outcome.notice !== '') setNotice(outcome.notice);
-      if (outcome.kind === 'performed') setText('');
-      return;
+      if (outcome.kind !== 'prose') {
+        if (outcome.kind !== 'cancelled' && outcome.notice !== '') setNotice(outcome.notice);
+        if (outcome.kind === 'performed') setText('');
+        return;
+      }
     }
 
     // Clear only after tau accepts, so a rejected prompt is not lost. Fail
@@ -579,6 +632,24 @@ function attachmentNotice(report: AttachmentReport | null): string | null {
   }
   for (const failure of report.failures) parts.push(`Attachment failed: ${failure}`);
   return parts.length > 0 ? parts.join(' ') : null;
+}
+
+/**
+ * The commands this head cannot perform, for greying in the popup.
+ *
+ * A VIEW is the only kind that can be missing: a flow reaches its mutation over
+ * the wire, and an extension command goes through `submit`. This head has a
+ * panel for both of tau's views, so the set is empty today -- and it is computed
+ * rather than written as `new Set()` so that a third view, declared by a later
+ * tau, appears greyed instead of falsely offered.
+ */
+function unavailableCommands(commands: CommandInfo[]): ReadonlySet<string> {
+  const missing = new Set<string>();
+  for (const command of commands) {
+    if (command.origin !== 'builtin' || command.flow) continue;
+    if (!VIEWS.has(command.name)) missing.add(command.name);
+  }
+  return missing;
 }
 
 /* ---------------------------------------------------------- session picker */
@@ -1032,6 +1103,8 @@ export interface StatusBarProps {
   sessionsOpen?: boolean;
   onToggleModels?: () => void;
   modelsOpen?: boolean;
+  onToggleTree?: () => void;
+  treeOpen?: boolean;
 }
 
 export function StatusBar({
@@ -1043,6 +1116,8 @@ export function StatusBar({
   sessionsOpen,
   onToggleModels,
   modelsOpen,
+  onToggleTree,
+  treeOpen,
 }: StatusBarProps): JSX.Element {
   const label =
     phase === 'ready'
@@ -1071,6 +1146,16 @@ export function StatusBar({
         </button>
       ) : model ? (
         <span className="tau-status-model">{model}</span>
+      ) : null}
+      {onToggleTree ? (
+        <button
+          className="tau-status-button"
+          onClick={onToggleTree}
+          aria-pressed={treeOpen === true}
+          title="Browse and edit the conversation tree"
+        >
+          Tree
+        </button>
       ) : null}
       {onToggleSessions ? (
         <button
@@ -1127,6 +1212,26 @@ export function Chat({
   // over the first would leave the reader with two lists and one status bar.
   const [modelsOpen, setModelsOpen] = useState(false);
   const [commands, setCommands] = useState<CommandInfo[]>([]);
+  const [treeOpen, setTreeOpen] = useState(false);
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
+  const [revised, setRevised] = useState<string | null>(null);
+  /**
+   * The extension request at the cursor, and whether it has been set aside.
+   *
+   * A lock is a TREE NODE, not a modal: it survives the process and refuses
+   * every prompt until it is answered. Re-read at every cursor move -- after a
+   * turn, after a command, after a session change -- because that is the only
+   * place it can appear or vanish.
+   */
+  const [request, setRequest] = useState<ExtensionRequest | null>(null);
+  const [requestDismissed, setRequestDismissed] = useState<string | null>(null);
+  /** Bumped by anything that could have made a request appear. */
+  const [requestPoll, setRequestPoll] = useState(0);
+  /** The flow step waiting for an answer, and the promise it will settle. */
+  const [flowStep, setFlowStep] = useState<{
+    step: FlowStep;
+    settle: (value: unknown | null) => void;
+  } | null>(null);
   // True only while the picker is up because nothing was there to show. Clicking
   // `Sessions` later is a different thing and must not inherit the sentence.
   const [landed, setLanded] = useState(false);
@@ -1188,14 +1293,57 @@ export function Chat({
       if (!client || !conversation) {
         return { kind: 'refused', notice: 'Not connected.' };
       }
-      return performCommand(name, args, {
+      return performCommand(name, args, commands, {
         client,
-        fork: () => conversation.fork(),
+        refresh: () => conversation.refresh(),
         openSessions: () => setSessionsOpen(true),
+        openTree: () => {
+          setSessionsOpen(false);
+          setModelsOpen(false);
+          setTreeOpen(true);
+        },
+        openExtensions: () => {
+          setSessionsOpen(false);
+          setModelsOpen(false);
+          setExtensionsOpen(true);
+        },
+        // One step at a time, and the promise is what the flow loop awaits. A
+        // dialog rather than a second composer: two prompts must never coexist,
+        // and the flow's question is not something to type into the chat box.
+        askStep: (step) =>
+          new Promise<unknown | null>((resolve) => {
+            setFlowStep({
+              step,
+              settle: (value) => {
+                setFlowStep(null);
+                resolve(value);
+              },
+            });
+          }),
       });
     },
-    [client, conversation],
+    [client, conversation, commands],
   );
+
+  // The cursor moved if a turn ended, a command ran, or the session changed.
+  // Each of those is what `state.notice`/`state.cursor`/`state.running` report.
+  useEffect(() => {
+    if (!client || phase !== 'ready') return;
+    let cancelled = false;
+    loadPendingRequest(client)
+      .then((found) => {
+        if (!cancelled) setRequest(found);
+      })
+      .catch(() => {
+        // An older tau has no such verb. A head that cannot ask has no request
+        // to draw, which is the truthful rendering -- and the composer still
+        // reports the refusal if one arrives.
+        if (!cancelled) setRequest(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, phase, state.running, state.notice, state.cursor, requestPoll]);
 
   useEffect(() => {
     if (!client || phase !== 'ready') return;
@@ -1227,6 +1375,7 @@ export function Chat({
         model={model?.id ?? null}
         sessionsOpen={sessionsOpen}
         modelsOpen={modelsOpen}
+        treeOpen={treeOpen}
         {...(phase === 'ready'
           ? {
               onToggleSessions: () => {
@@ -1237,6 +1386,12 @@ export function Chat({
                 setSessionsOpen(false);
                 setLanded(false);
                 setModelsOpen((open) => !open);
+              },
+              onToggleTree: () => {
+                setSessionsOpen(false);
+                setModelsOpen(false);
+                setLanded(false);
+                setTreeOpen((open) => !open);
               },
             }
           : {})}
@@ -1270,7 +1425,58 @@ export function Chat({
           onSwitched={setModel}
         />
       ) : null}
+      {/* A lock refuses every prompt, so it goes ABOVE the transcript rather
+          than below it: a reader who has to scroll to find out why their
+          message bounced has been told nothing in time to act on. */}
+      {request !== null && requestDismissed !== request.entryId ? (
+        <RequestPanel
+          client={client}
+          request={request}
+          onAnswered={async () => {
+            setRequestDismissed(null);
+            await conversation?.refresh();
+          }}
+          onDismiss={() => setRequestDismissed(request.entryId)}
+        />
+      ) : null}
+      {treeOpen ? (
+        <TreePanel
+          client={client}
+          running={state.running}
+          onChanged={() => conversation?.refresh() ?? Promise.resolve()}
+          onRevise={setRevised}
+          onClose={() => setTreeOpen(false)}
+        />
+      ) : null}
+      {extensionsOpen ? (
+        <ExtensionPanel client={client} onClose={() => setExtensionsOpen(false)} />
+      ) : null}
+      {flowStep !== null ? (
+        <FlowDialog
+          client={client}
+          step={flowStep.step}
+          onSubmit={(value) => flowStep.settle(value)}
+          onCancel={() => flowStep.settle(null)}
+        />
+      ) : null}
       <Transcript state={state} />
+      {/* Both notices are tau's own readings, and both say something the
+          transcript cannot: a completion cut off by the output cap reads
+          exactly like one that finished, and a prompt cache that was never
+          consulted is invisible except in the bill. */}
+      {state.truncation ? (
+        <div className="tau-notice tau-warn">
+          The model hit its output cap, so that answer is a PREFIX and not a finished one
+          {state.truncation.droppedToolCalls !== null
+            ? `, and ${state.truncation.droppedToolCalls} tool call${
+                state.truncation.droppedToolCalls === 1 ? '' : 's'
+              } were dropped mid-argument`
+            : ''}
+          . Raise <code>max_tokens</code> for this model in <code>~/.tau/config.json</code>, or ask
+          for less at a time.
+        </div>
+      ) : null}
+      {state.cacheNotice ? <div className="tau-notice tau-warn">{state.cacheNotice}</div> : null}
       <Composer
         // Null once the phase leaves `ready`, which disables Send and changes
         // the placeholder. `useTauConnection` keeps the client object across a
@@ -1283,6 +1489,9 @@ export function Chat({
         commands={commands}
         pathCompletion={pathCompletion}
         onCommand={onCommand}
+        draft={revised}
+        onDraftTaken={() => setRevised(null)}
+        onRefused={() => setRequestPoll((n) => n + 1)}
         {...(enterSubmits === undefined ? {} : { enterSubmits })}
       />
     </div>

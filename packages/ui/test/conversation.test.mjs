@@ -148,3 +148,97 @@ test('a new run clears the previous run end state', () => {
   assert.equal(conv.state.endReason, null);
   assert.equal(conv.state.error, null);
 });
+
+/* ------------------------------------------------- the notices tau computes */
+
+test('a completion cut off by the output cap is reported, and an abort is not', async () => {
+  // The transcript cannot tell a truncated answer from a finished one, so a
+  // head that showed neither turns a visible failure into a silent one. But
+  // this notice tells an operator to raise a cap, and an Escape is not a cap.
+  const client = fakeClient();
+  const conv = new Conversation(client);
+  client.emit({ ...base, type: 'agent_start' });
+  client.emit({ ...base, type: 'message_end', stop_reason: 'length', dropped_tool_calls: 2 });
+  assert.deepEqual(conv.state.truncation, { droppedToolCalls: 2 });
+
+  client.emit({ ...base, type: 'agent_start' });
+  assert.equal(conv.state.truncation, null, 'a new run clears it');
+  client.emit({ ...base, type: 'message_end', stop_reason: 'aborted', dropped_tool_calls: 3 });
+  assert.equal(conv.state.truncation, null);
+  client.emit({ ...base, type: 'message_end', stop_reason: 'stop' });
+  assert.equal(conv.state.truncation, null);
+});
+
+test('null dropped_tool_calls stays null, because none lost is not not-reported', () => {
+  const client = fakeClient();
+  const conv = new Conversation(client);
+  client.emit({ ...base, type: 'message_end', stop_reason: 'length' });
+  assert.deepEqual(conv.state.truncation, { droppedToolCalls: null });
+});
+
+test('a cache notice is shown once, not every turn', async () => {
+  // The condition persists -- a gateway dropping cache_control drops it on every
+  // request -- so tau sends the sentence every turn. Showing it every turn
+  // teaches the reader to stop reading it.
+  const client = fakeClient();
+  const conv = new Conversation(client);
+  const notice = 'This turn read 0 cached tokens; the gateway may be dropping cache_control.';
+
+  client.emit({ ...base, type: 'agent_end', cache_notice: notice });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(conv.state.cacheNotice, notice);
+
+  client.emit({ ...base, type: 'agent_end', cache_notice: notice });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(conv.state.cacheNotice, notice, 'still the same one, not a second');
+
+  const other = 'A different model, a different sentence.';
+  client.emit({ ...base, type: 'agent_end', cache_notice: other });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(conv.state.cacheNotice, other, 'a new sentence is a new finding');
+});
+
+test('no cache notice is the normal case and sets nothing', async () => {
+  const client = fakeClient();
+  const conv = new Conversation(client);
+  client.emit({ ...base, type: 'agent_end' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(conv.state.cacheNotice, null);
+});
+
+/* ------------------------------------------------------------ describe() */
+
+import { describe as describeError } from '../dist/useTau.js';
+import { TauRpcError } from '../../protocol/dist/index.js';
+
+test('tau own refusal sentence is passed through, not replaced by a guess', () => {
+  // This is a fix for a real defect. -32000 was answered with "a turn is
+  // already running", which is ONE of its causes -- an extension lock is
+  // another, and tau sends refusal_reason as the message. The guess told the
+  // reader to wait for a turn that was not running, about a lock they were
+  // never shown.
+  const lock = new TauRpcError('submit', {
+    code: -32000,
+    message: 'gate has stopped this session: a deploy needs sign-off. Run /gate-clear to clear it.',
+    data: { lock: { extension: '/x/gate.py' } },
+  });
+  assert.match(describeError(lock), /gate has stopped this session/);
+  assert.doesNotMatch(describeError(lock), /turn is already running/);
+
+  const busy = new TauRpcError('submit', {
+    code: -32000,
+    message: 'a turn is already running',
+  });
+  assert.equal(describeError(busy), 'a turn is already running');
+});
+
+test('a missing method is the one case this ADDS a sentence, because tau sends none', () => {
+  const missing = new TauRpcError('get_tree', { code: -32601, message: 'Method not found' });
+  assert.match(describeError(missing), /get_tree/);
+  assert.match(describeError(missing), /older than the verb/);
+});
+
+test('a plain error keeps its message', () => {
+  assert.equal(describeError(new Error('socket hung up')), 'socket hung up');
+  assert.equal(describeError('a string'), 'a string');
+});

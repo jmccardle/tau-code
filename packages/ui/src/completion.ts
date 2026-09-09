@@ -51,11 +51,20 @@ export interface Completions {
   total: number;
 }
 
-/** One `get_commands` row. */
+/**
+ * One `get_commands` row, as tau 0.10.0 declares it.
+ *
+ * `performer` is gone; see `commands.ts` for what replaced it and why. `origin`
+ * decides the ORDER here -- built-ins resolve first in tau, so an extension that
+ * registered a built-in's name is unreachable and offering it would advertise a
+ * command the reader cannot run.
+ */
 export interface CommandInfo {
   name: string;
   description: string;
-  performer: string;
+  origin: 'builtin' | 'extension';
+  /** Whether the command declares its arguments, so a form can be built for it. */
+  flow: boolean;
 }
 
 /**
@@ -96,27 +105,27 @@ export function commandSpan(
 export function completeCommand(
   text: string,
   commands: CommandInfo[],
-  performable: ReadonlySet<string>,
+  unavailable: ReadonlySet<string>,
 ): Completions | null {
   const span = commandSpan(text);
   if (span === null) return null;
 
   const seen = new Set<string>();
   const candidates: Candidate[] = [];
-  for (const pass of ['frontend', 'other'] as const) {
+  for (const pass of ['builtin', 'extension'] as const) {
     for (const command of commands) {
-      const isFrontend = command.performer === 'frontend';
-      if ((pass === 'frontend') !== isFrontend) continue;
+      if (command.origin !== pass) continue;
       if (seen.has(command.name)) continue;
       if (!command.name.startsWith(span.token)) continue;
       seen.add(command.name);
       candidates.push({
         value: command.name,
         detail: command.description,
-        // A core (extension-registered) command is performed by tau itself, so
-        // it works over the wire unconditionally. A frontend one only works if
-        // THIS head implements it.
-        available: !isFrontend || performable.has(command.name),
+        // Everything on this list resolves in tau; what varies is whether THIS
+        // head can perform it. A flow reaches its mutation over the wire, an
+        // extension command goes through `submit`, and a view needs a panel
+        // here -- so the only unavailable ones are views this head lacks.
+        available: !unavailable.has(command.name),
       });
     }
   }

@@ -41,6 +41,7 @@ const KNOWN_KEYWORDS = new Set([
   'title',
   'default',
   'minimum',
+  'items',
 ]);
 
 const SCALARS = {
@@ -49,9 +50,9 @@ const SCALARS = {
   number: 'number',
   boolean: 'boolean',
   null: 'null',
-  // tau's schemas never give `items`, so an array's element type is genuinely
-  // unspecified on the wire. `unknown[]` says that; `any[]` would pretend
-  // otherwise and let a consumer index into it unchecked.
+  // The fallback for an array whose schema declares no `items`. Still the
+  // truthful translation for one: `any[]` would pretend otherwise and let a
+  // consumer index into it unchecked.
   array: 'unknown[]',
 };
 
@@ -142,6 +143,18 @@ function typeOf(schema, path, indent) {
   }
 
   if (declared === 'object') return objectType(schema, path, indent);
+
+  // tau's schemas carried no `items` until 0.10.0, and some still do not. An
+  // element schema that declares a `type` is translated; anything else stays
+  // `unknown[]`, which is what the wire actually said.
+  if (declared === 'array') {
+    const itemSchema = schema['items'];
+    if (typeof itemSchema === 'object' && itemSchema !== null && itemSchema['type']) {
+      return `${typeOf(itemSchema, `${path}.items`, indent)}[]`;
+    }
+    return 'unknown[]';
+  }
+
   const scalar = SCALARS[declared];
   if (!scalar) throw new Error(`Unhandled type '${declared}' at ${path}.`);
   return scalar;
@@ -268,10 +281,10 @@ function emit(caps) {
   out.push('/**');
   out.push(' * The full `get_capabilities` result, exactly as the wire declares it.');
   out.push(' *');
-  out.push(' * Its array fields are `unknown[]` because tau\'s schemas carry no `items`.');
-  out.push(' * That is not a gap in this generator -- it is what the wire says. Element');
-  out.push(' * shapes are asserted in hand-written code (`capabilities.ts`), where the');
-  out.push(' * assertion is visible and checked, rather than invented here.');
+  out.push(' * Some of its array fields are typed (e.g. `commands` items in command');
+  out.push(' * schemas have `items`), but the top-level `commands` and `declined`');
+  out.push(' * arrays remain `unknown[]` because they are bare arrays on the wire.');
+  out.push(' * Element shapes for the typed arrays come from the generator now.');
   out.push(' */');
   out.push('export type Capabilities = GetCapabilitiesResult;');
   out.push('');

@@ -84,6 +84,29 @@ export interface ConversationState {
   cursor: string | null;
   /** A short, human-readable note about the last protocol-level surprise. */
   notice: string | null;
+  /**
+   * Why the last completion stopped, when the answer is a PREFIX and not an
+   * answer.
+   *
+   * `stop_reason: "length"` means the output cap ended the completion mid-word.
+   * The transcript alone cannot distinguish that from a model that finished, and
+   * a head that showed neither turns a visible failure into a silent one -- so
+   * this is set on the `message_end` that reports it and shown as a warning.
+   * `aborted` is deliberately NOT reported: this notice tells an operator to
+   * raise a cap, and an Escape is not a cap.
+   */
+  truncation: { droppedToolCalls: number | null } | null;
+  /**
+   * tau's own sentence saying this turn's prompt cache should have been read and
+   * was not.
+   *
+   * Null is the normal case and says nothing was observed -- the cache was read,
+   * the server accounts for no cache, the prompt is under the minimum cacheable
+   * prefix, or a read earlier in this session already proved caching is on.
+   * Shown once per model, because the condition persists and repeating it every
+   * turn would train the reader to ignore it.
+   */
+  cacheNotice: string | null;
 }
 
 const EMPTY: ConversationState = {
@@ -97,6 +120,8 @@ const EMPTY: ConversationState = {
   error: null,
   cursor: null,
   notice: null,
+  truncation: null,
+  cacheNotice: null,
 };
 
 export class Conversation {
@@ -104,6 +129,17 @@ export class Conversation {
   #listeners = new Set<(state: ConversationState) => void>();
   #unsubscribe: Array<() => void> = [];
   #client: TauClient;
+  /**
+   * Cache notices this connection has already shown.
+   *
+   * The condition that produces one persists across turns -- a gateway dropping
+   * `cache_control` drops it on every request -- so tau sends the sentence every
+   * turn, and a head that showed it every turn would teach the reader to stop
+   * reading it. The TUI latches per MODEL; this latches per SENTENCE, which is
+   * the same set in practice (tau's notice names the model it is about) and does
+   * not require this store to know which model is running.
+   */
+  #cacheWarned = new Set<string>();
 
   constructor(client: TauClient) {
     this.#client = client;
@@ -195,6 +231,7 @@ export class Conversation {
           endReason: null,
           error: null,
           notice: null,
+          truncation: null,
         });
         return;
 
@@ -242,12 +279,25 @@ export class Conversation {
         return;
       }
 
+      case 'message_end': {
+        // The wire carries the FACT, not the sentence: a five-value enum is
+        // something a host branches on rather than string-matches. `aborted` is
+        // excluded because this notice tells an operator to raise a cap.
+        if (event.stop_reason !== 'length') return;
+        this.#patch({ truncation: { droppedToolCalls: event.dropped_tool_calls ?? null } });
+        return;
+      }
+
       case 'agent_end': {
+        const cacheNotice = typeof event.cache_notice === 'string' ? event.cache_notice : null;
+        const fresh = cacheNotice !== null && !this.#cacheWarned.has(cacheNotice);
+        if (fresh && cacheNotice !== null) this.#cacheWarned.add(cacheNotice);
         this.#patch({
           running: false,
           endReason: event.end_reason ?? null,
           error: event.error ?? null,
           cursor: event.cursor ?? this.#state.cursor,
+          ...(fresh ? { cacheNotice } : {}),
         });
         // The messages themselves were never pushed. Pull them now.
         void this.refresh().catch((error: unknown) => {
@@ -261,8 +311,8 @@ export class Conversation {
       }
 
       default:
-        // turn_end, message_start, message_end, tool_execution_update carry no
-        // state this view needs. Ignored on purpose, not overlooked.
+        // turn_end, message_start, tool_execution_update carry no state this
+        // view needs. Ignored on purpose, not overlooked.
         return;
     }
   }

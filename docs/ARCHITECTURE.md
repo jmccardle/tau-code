@@ -1,11 +1,15 @@
 # Architecture
 
-**Status: scaffold built 2026-08-31.** Chat works end to end in both hosts. The
-tree browser and the editor integrations are designed for and not built.
+**Status: the tree browser is built (2026-09-09, 0.4.0).** Chat works end to end
+in both hosts, and so does the conversation tree — rows, zones, marks, folds,
+elide, branch and paste, with the TUI's keys. The editor integrations
+(jump-to-edit, diff views) are designed for and not built; §7.1 says what τ still
+discards.
 
 Provenance: every claim about τ's protocol in this document was measured against
-a live τ process in `~/Development/agent-harness-py` at protocol version 1.4.
-Claims about VS Code come from its published API documentation.
+a live τ process in `~/Development/agent-harness-py` at protocol version **1.5**.
+Claims about VS Code come from its published API documentation, and were checked
+in VS Code 1.135.0 and VSCodium 1.98.1 with the built `.vsix` installed.
 
 ---
 
@@ -31,11 +35,15 @@ all shipped. This scaffold adds no verb and changes nothing in τ.
 
 ### 1.2 What is NOT on the wire
 
-Three absences shape everything below.
+**The tree WAS the first absence, and it is closed.** τ 0.9.8 put the five tree
+mutations on the wire and no read of the structure they act on; τ 0.10.1 adds
+`get_tree` and `get_entry`, which is what §7.2 asked for and what this client's
+browser is built on. `docs/VSCODE-HEAD.md` §6 in the τ repository has the whole
+of it, including the part the prediction got wrong: `TreeNode` is enough to DRAW
+a tree and not enough to COLOUR one, so the projection carries the per-node facts
+every zone reads.
 
-**No tree structure.** None of the 20 verbs reads or writes it. `get_messages`
-returns the flat active path. `fork` branches the active path into a new
-session, which is not the same thing as browsing a tree.
+Two absences still shape the sections below.
 
 **No message content on the event stream.** This is deliberate — τ's own rule is
 that nothing unbounded is pushed. Events carry identity, timing, and a bounded
@@ -46,28 +54,40 @@ messages. Section 4 explains what this forces on the UI.
 carries `tool_call_id` and `tool_name` and nothing else. Arguments arrive only
 with the `get_messages` pull at turn end.
 
-### 1.3 Frontend commands
+### 1.3 Commands: three kinds, and no list of names
 
-`submit` with `expand_commands: true` refuses five commands with
-`COMMAND_NOT_SUPPORTED` (-32001): `/tree`, `/fork`, `/extensions`, `/compact`,
-`/resume`. τ identifies what they are and will not silently no-op them, because
-the wire has no screen to push a panel onto. A head implements them itself.
+τ 0.10.0 removed `performer` from `get_commands`. It had zero readers inside τ
+by the time it went, and the fact underneath it was never about who RUNS a
+command: a dispatch produces one of four things, and which one decides who does
+the work. What the wire carries now is two facts that are real — `origin`
+(`builtin` or `extension`, which is where the NAME came from) and `flow`
+(whether the command declares what it takes).
 
-This head implements three, in `packages/ui/src/commands.ts`:
+A pass through this repository reconstructed `performer` from a hardcoded list of
+five names. That list was a copy of τ's `FRONTEND_COMMANDS` with no way to notice
+when τ's changed, which is the drift the capability registry was built to end. It
+is gone. **Nothing in `packages/ui/src/commands.ts` enumerates τ's vocabulary.**
 
-| command | here |
+Three ways a `/word` runs, decided from the wire:
+
+| shape | how it runs here |
 |---|---|
-| `/compact` | the `compact` verb |
-| `/fork` | the `fork` verb |
-| `/resume` | opens the session picker |
-| `/tree` | **not performed** — the tree browser is not built |
-| `/extensions` | **not performed** — there is no extension panel |
+| `flow: true` | stepped through `next_step`; each unbound argument is rendered from its `domain`, and the `ready` names a mutation this client calls by name |
+| a view (`tree`, `extensions`) | opens this head's own panel |
+| everything else | through `submit` with `expand_commands`, which is the one door: the input hooks and the extension lock both sit behind it |
 
-The composer intercepts every frontend command before `submit`, so the two it
-cannot perform produce a sentence saying which head is missing what, rather than
-a -32001 the reader has to decode. Both are still listed in the completion
-popup, greyed: hiding them would say they do not exist, when the truth is
-narrower and more useful.
+An unknown `/word` is none of the three and reaches the model as prose. That is
+τ's rule, not a fallback added here, and the popup says so.
+
+**The flow arm is what makes an extension's command work with no code here.** An
+extension that calls `register_flow` gets a rendered field in this panel, from a
+`next_step` this client has never heard the name of. `/compact`, `/fork`,
+`/model`, `/name` and `/autocompact` arrive through the same arm, and only the
+last is something this file could have anticipated.
+
+Nothing is greyed in the popup today, and the set stays computed rather than
+written as an empty literal: the day τ declares a third view this head has no
+panel for, that name has to be able to appear greyed instead of falsely offered.
 
 ### 1.4 Completion (protocol 1.4)
 
@@ -451,17 +471,27 @@ range)`, `show_diff(change_id)`), never `vscode.diff` calls: VS Code delegates
 to its diff editor, a browser head renders inline, and the TUI renders what it
 can.
 
-### 7.2 Tree verbs
+### 7.2 Tree verbs — **done**, and it took a wider read than predicted
 
-`get_tree`, plus branch and paste. The algebra is already pure in τ's
-`tree_surgery.py`. `commit_branch` and `paste_subtree` live on `TauBackend` —
-inside the Textual TUI — and need to move into the core where every head can
-reach them.
+`commit_branch` and `paste_subtree` moved off `TauBackend` into
+`tau_agent_core.tree_ops` in τ 0.9.8, along with `navigate`,
+`summarize_and_navigate` and `elide_span`. `get_tree` and `get_entry` arrived in
+0.10.1, and §12 below is what this repository built on them.
 
-VS Code's native `TreeView` API is an unexpectedly good fit for the gestures τ's
-tree editor already has: `canSelectMany`, `TreeItemCheckboxState` with
+**The read is wider than `ConversationTree.tree()`**, and that is worth recording
+because the prediction here was that it would not be. `TreeNode` carries id,
+parent, kind, role, preview and is-leaf: enough to draw a tree, and not enough to
+colour one. Every zone in τ's `docs/TREE-EDITOR-MANUAL.md` §7 reads a fact off
+the RAW entry, and no verb hands a raw entry over — so a head with only the shape
+would have to re-derive the fold's boundary from an anchor's position, the tool
+pairing from message bodies it had not pulled, and the copyable kinds from a
+tuple it had copied out of τ's source. `get_tree` carries them per node instead.
+
+VS Code's native `TreeView` API is still an unexpectedly good fit for the
+gestures: `canSelectMany`, `TreeItemCheckboxState` with
 `manageCheckboxStateManually`, and `TreeDragAndDropController` map onto marks,
-selection and paste without a webview.
+selection and paste without a webview. **It was not the option taken**, and the
+reason is §12.1.
 
 ---
 
@@ -798,3 +828,113 @@ repository has no DOM in its test setup. `ModelPicker` makes the calls;
 holds all the markup, so `packages/ui/test/models.test.mjs` renders each state
 from a fixture with `renderToStaticMarkup`. A panel whose appearance can only be
 checked by clicking through it is a panel nothing checks.
+
+---
+
+## 12. The conversation tree browser (0.4.0)
+
+τ's differentiator, and the reason this repository exists. The manual for the
+gesture vocabulary is `docs/TREE-EDITOR-MANUAL.md` in the τ repository; the
+design behind it is `docs/TREE-BROWSER-AS-EDITOR.md`. This section is only what
+is different about drawing it out of process.
+
+### 12.1 A webview, not a native `TreeView`
+
+§7.2's Option C — VS Code's `TreeView` with `canSelectMany`,
+`TreeItemCheckboxState` and `TreeDragAndDropController` — maps onto marks,
+selection and paste well, and is cheaper because the host renders. It loses two
+things, and both of them are the feature.
+
+**The zone colours.** A `TreeItem` has a label, a description, an icon and a
+tooltip. τ's browser paints nine mutually-exclusive zones over the row's text,
+plus a hover underline that turns amber where the pointed-at row's history stops
+being yours. A `TreeItem` cannot express one of them, let alone the priority
+order between them.
+
+**The other host.** A `TreeView` exists in VS Code and nowhere else. This
+repository ships a standalone web client from the same components, and the rule
+that makes that work — `@ffwf/tau-code-ui` is handed a `Transport` and never
+learns which — would have to be broken to put half the feature behind
+`import * as vscode`.
+
+So the browser is `packages/ui/src/tree-panel.tsx`, and both hosts get it.
+Measured in VS Code 1.135.0 and VSCodium 1.98.1 with the built `.vsix`, and in
+headless Chrome against a real 432-entry session with three elides, three branch
+summaries and eight navigates.
+
+### 12.2 The rules are pure and live in `tree.ts`
+
+`packages/ui/src/tree.ts` holds the row planner, the fold reader, the mark
+expansion and the three refusal predicates, with no React in it — the same split
+τ makes between `plan_tree_rows`/`tree_surgery` and the widget, and for the same
+reason: these are the rules, and they are worth testing without a DOM.
+`packages/ui/test/tree.test.mjs` is 32 tests over them.
+
+**Indentation counts turns and forks, and nothing else.** Two rules that compose:
+a user message opens a level and the next user message closes it; a node with two
+or more drawn children indents each of them, and a node with exactly one does
+not. So a hundred linear turns is a hundred rows at depth 0. Measured on the
+432-entry session: **max depth 6**.
+
+Getting this wrong is easy and the tests caught it: the first version made the
+next user message a CHILD of the open turn, which turned twenty linear turns into
+a twenty-deep staircase.
+
+### 12.3 τ decides; this computes the offer
+
+Every gesture ends in a verb that validates against the live session and refuses
+with a sentence. What `tree.ts` computes is the OFFER — which rows can pair,
+what a gesture would cost, which rows to grey — so the reader learns the rule
+from the screen instead of from a refusal after they have finished selecting.
+
+When the two disagree, τ wins and its refusal is shown verbatim, with the panel
+still open on the row the reader was looking at. That is the arrangement τ's own
+browser has: the manual says the validation "runs before any append, twice".
+
+**Nothing here re-derives a fact τ already sends.** `first_kept_id` is the fold's
+boundary, `tool_call_ids`/`tool_call_id` the pairing, `copyable` the paste-source
+rule, `is_system` the carry-across, `estimated_tokens` the readout's number.
+Every one of them is on the node, and a rule that had to infer one would be
+evidence the projection is short a field.
+
+### 12.4 Two reads, because a preview is not a body
+
+`get_tree` carries a one-line `preview` per row precisely so a browser does not
+pull the bodies of rows it is not showing; the detail pane calls `get_entry` for
+the three nodes it draws. That is the pair τ's own browser makes — `tree()` for
+the rows, `entry` for the node it is showing.
+
+`get_messages` cannot serve the pane: it answers for the ACTIVE PATH, and a row
+the reader has moved the browser's cursor onto is very often not on it.
+
+### 12.5 The extension request is a panel, not a modal
+
+τ 0.10.0 replaced `ui.confirm`/`select`/`input` with one persisted tree entry
+carrying a `lock` and an `ask`. **A lock is a tree node**, so it survives the
+process and refuses every prompt until it is answered — a head that did not draw
+it would show a composer that silently rejects everything typed into it.
+
+Drawing a request and opening its ask are ONE step here, where the TUI draws a
+transcript row and opens the ask on a click: a row is clickable and a panel is
+what a request without one would need.
+
+`answer_request` and `get_pending_request` did not exist on the wire when this
+was started. They do now (τ 0.10.1); before them an RPC host could see a lock
+only by being refused by one, and could not release it at all.
+
+### 12.6 What is deliberately not built
+
+Named here rather than discovered later. All five are absences τ's own browser
+has too, except the last.
+
+- **An archive gesture.** Archiving is view state by design and the collapse half
+  exists, but no key marks a branch as done.
+- **Editing the branch plan before committing.** `Ctrl+B` derives the keep/copy
+  split from the marks and commits; you cannot see that split or force a message
+  to be copied.
+- **Summarizing exactly a marked set.** The branch chooser has two modes and
+  neither writes a summary.
+- **A fold header row for a compaction.** The covered rows are struck through and
+  there is no single row to collapse them into.
+- **Drag and drop.** The TUI has no such gesture, so there is nothing to match;
+  `c`/`v` is the whole of copy and paste here as well.

@@ -172,11 +172,16 @@ try {
   check('a bare slash opens the popup', view.open, `${view.rows.length} rows`);
   const names = view.rows.map((r) => r.value);
   check('the vocabulary came from get_commands', names.includes('/compact'), names.join(' '));
+  // Every command tau declares is performable here now: a view opens this
+  // head's own panel, a flow is stepped through `next_step`, and an extension
+  // command goes through `submit`. Nothing is greyed, and the check is that
+  // the two that used to be -- the views -- are offered rather than that the
+  // greying still happens.
   const tree = view.rows.find((r) => r.value === '/tree');
-  check('a command this head cannot perform is greyed, not hidden', tree?.unavailable === true,
+  check('the tree view is offered, not greyed', tree?.unavailable === false,
     tree ? tree.detail : 'no /tree row');
   const compact = view.rows.find((r) => r.value === '/compact');
-  check('a command it CAN perform is offered normally', compact?.unavailable === false);
+  check('a flow is offered normally', compact?.unavailable === false);
 
   // The FIRST Tab applies candidate 0. There is no separate accept step, so the
   // editor always holds what will be sent.

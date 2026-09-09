@@ -6,14 +6,15 @@ connection server, a standalone web client, and a VS Code / VSCodium extension.
 τ itself is not in this repository. This repository talks to it over τ's
 documented JSON-RPC protocol, and spawns it as a child process.
 
-**Status: scaffold.** Chat works end to end, with Tab completion for `/commands`
-and `@files`. The conversation tree browser and the editor integrations are
-designed for but not built. `docs/ARCHITECTURE.md` says what exists, what is
-missing, and why the layering is the way it is.
+**Status: chat and the conversation tree both work end to end**, in the browser
+and in the editor, with Tab completion for `/commands` and `@files`. The editor
+integrations — jump-to-edit, diff views — are designed for but not built:
+`docs/ARCHITECTURE.md` §7.1 says what τ still computes and discards.
 
-Requires τ at **protocol 1.4 or later** for `@file` completion. Everything else
-works against 1.3; the composer says so rather than failing. The τ on PyPI is
-0.9.6, which speaks 1.3.
+Requires τ at **protocol 1.5 or later** (τ 0.10.1) for the tree browser, the
+extension request panel and flow-driven commands. `@file` completion needs 1.4.
+Against an older τ each of those says which verb is missing rather than failing
+blankly, and the chat works regardless.
 
 ## Artifacts
 
@@ -144,7 +145,13 @@ It prints the same authenticated URL the server always prints. Open it.
   listens on (8791), not the one you published. Set `TAU_CODE_TOKEN` to a value
   you choose and build the URL yourself. The token then shows up in
   `docker inspect`.
-- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.9.6` today.
+- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.9.6` today
+  — **which speaks protocol 1.3 and therefore has no tree browser and no
+  extension request panel.** Chat, sessions and the model picker work; open the
+  Tree and the panel says which verb is missing and which τ added it. Build with
+  `--build-arg TAU_SPEC=ffwf-tau==0.10.1` once that release is on PyPI, or with a
+  path to a local checkout. The pin is not bumped here ahead of the upload: a
+  default that does not resolve is a container that cannot be built at all.
 
 `docker build --target verify -t ffwf/tau-code-verify . && docker run --rm
 ffwf/tau-code-verify` starts τ inside the image and reads back its protocol
@@ -164,7 +171,7 @@ To build an installable `.vsix` instead:
 
 ```bash
 npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
-code --install-extension ffwf-tau-code-0.3.0.vsix
+code --install-extension ffwf-tau-code-0.4.0.vsix
 ```
 
 **If you installed 0.1.x, uninstall it first.** The extension ID changed from
@@ -192,8 +199,10 @@ reproduce.
 
 ```bash
 npm run typecheck        # all six packages
-npm test                 # the conversation store and the completion logic
+npm test                 # the store, the completion logic, and the tree rules
 npm run smoke            # spawn tau, negotiate, read state and tools
+npm run smoke:tree       # read a COPY of a real session's tree over the wire,
+                         # and run the row planner and fold reader over it
 npm run smoke:server     # auth, static serving, a WebSocket round trip,
                          # and @file expansion end to end
 
@@ -202,7 +211,18 @@ npm run smoke:browser -- 'http://127.0.0.1:8791/?token=...' shot.png
 
 # ...and drive Tab completion in it -- real key events, real popup, real tau.
 npm run smoke:completion -- 'http://127.0.0.1:8791/?token=...' shot.png
+
+# ...and the tree browser: rows, zones, keys, the detail pane.
+npm run smoke:tree-ui -- 'http://127.0.0.1:8791/?token=...' shot.png
+
+# ...and the flow dialog and the extension panel.
+npm run smoke:panels -- 'http://127.0.0.1:8791/?token=...' shot.png
 ```
+
+`smoke:tree` and `smoke:tree-ui` want a real session to read: point the server's
+`--session-dir` at a directory holding a **copy** of one, filed under the dashed
+form of the working directory (`--home-you-code--`). Both read only — no verb
+that appends is called — so neither can damage what it is pointed at.
 
 `smoke:server` submits one prompt and aborts it immediately, to check that the
 `@file` a user completed actually reaches the model as content. It does that
@@ -276,6 +296,65 @@ matches, and when none does it says the running model cannot be returned to.
 
 See `docs/ARCHITECTURE.md` §11.
 
+## The conversation tree
+
+A τ conversation is a **tree**, not a list. Branching back to an earlier point
+does not delete what came after — it leaves it in place as a sibling and starts
+a new line. Compaction and elide do not delete either; they insert an anchor
+saying where a span was folded out of the model's input. The transcript can only
+show one line through that tree. **Tree** in the status bar, or `/tree`, shows
+the whole thing.
+
+The keys are the τ TUI's, so someone who has used one has used the other:
+
+```
+↵ pick · Space mark · ←→ fold · ^E elide · ^B branch · c copy · v paste · ^D pane · Esc
+```
+
+**Indentation counts turns and forks, not messages.** Your message owns the turn
+it started — the reply and every tool call hang off it — and the next thing you
+asked is that group's *sibling*. A fork indents its branches; a single child does
+not. So a hundred linear turns is a hundred rows at one depth, and a conversation
+that forked three times is a few levels deep whatever its length. Measured on a
+432-entry session: max depth 6.
+
+**Nothing is written while it is open.** Every gesture builds up state in memory;
+one key commits and closes, `Esc` discards all of it. A refusal leaves the
+browser open on the row you were looking at, so you can move and try again.
+
+Two things that read backwards until you have seen them once:
+
+- **An elide's two ends bracket what is KEPT.** Over `[1..6]`, pairing 2 with 4
+  leaves `[2,3,4]` — not `[1,5,6]`. It is the summary-less form of the
+  compaction anchor, and a compaction keeps a tail. The line under the tree says
+  what the key will do before you press it, including whether the conversation
+  moves back.
+- **`Enter` on your own message means "ask this differently".** Continuing below
+  a user message would put two user turns in a row, so the cursor moves to its
+  parent and the message comes back in the composer to be edited. Send it and
+  you have a second branch beside the first, with the original still in the tree.
+
+Marking a row takes its tool group with it — an assistant message and the results
+that answered its calls are one unit to every provider, and a branch carrying one
+without the other is a prefix the API rejects. The count under the tree always
+says `estimate` beside its token figure, because the only measured figure in a
+session is `usage.input_tokens` on one finished message.
+
+`docs/ARCHITECTURE.md` §12 has what is different about drawing this out of
+process, and §12.6 lists the five gestures that are deliberately not built.
+
+## Extension requests
+
+τ 0.10.0 replaced an extension's blocking `confirm`/`select`/`input` dialogs with
+one entry on the conversation tree carrying a lock, a question, or both. **A lock
+is a tree node**, so it survives a restart: open the session again and it is
+still there, still refusing every prompt.
+
+This client draws it above the transcript, as a form when there is something to
+answer and as a sentence when there is not. Three ways out, and it names all
+three: answer it, run the command the extension declared, or branch past it in
+the tree — a lock is read at the cursor, so moving off it clears it.
+
 ## Tab completion
 
 `/` lists tau's commands, `@` lists files. Tab opens the list and writes the
@@ -296,20 +375,28 @@ the other machine, and a browser has no filesystem at all. tau answers from the
 directory its own tools resolve against.
 
 An unknown `/word` is sent to the model as ordinary text. That has always been
-tau's behaviour and it is deliberate; the popup now says so, instead of leaving
-it to be discovered.
+tau's behaviour and it is deliberate; the popup says so, instead of leaving it to
+be discovered.
+
+**A command with arguments gets a form, even one this client has never heard of.**
+tau declares what each command takes; `/model` with no argument opens a picker
+listing the models your config names, read from tau rather than guessed. An
+extension that registers a flow gets the same treatment with no code here — which
+is the whole point of the vocabulary being on the wire.
 
 ## What is deliberately missing
 
 Named here rather than discovered later:
 
-- **The conversation tree browser.** τ's differentiator, and the reason this
-  repository exists. It needs tree verbs on the wire; τ has none today.
 - **Renaming a session.** `set_session_name` is on the wire; the picker lists,
   switches, forks and starts, but does not rename yet.
-- **`/tree` and `/extensions`.** tau resolves both and expects the frontend to
-  perform them. This head does not, so it says which head is missing what. They
-  are listed in the completion popup, greyed.
+- **Editing a branch plan before committing it.** `Ctrl+B` derives the keep/copy
+  split from your marks and commits; you cannot see that split or force a
+  message to be copied. τ's own browser has the same limit.
+- **Summarizing exactly a marked set.** The branch chooser has two modes and
+  neither writes a summary — one mode away, and not built, in either head.
+- **An archive gesture, and a fold header for a compaction.** Both are absences
+  τ's own browser has; `docs/ARCHITECTURE.md` §12.6 lists all five.
 - **Removing an attachment by clicking it.** The tau TUI has a bar of attached
   files with a click-to-remove. Here the `@word` is the only handle: delete it
   from the text.

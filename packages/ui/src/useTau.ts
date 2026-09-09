@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   NO_AGENT,
+  RpcErrorCode,
   TauClient,
   TauRpcError,
   type Capabilities,
@@ -103,6 +104,8 @@ export function useConversation(conversation: Conversation | null): Conversation
       error: null,
       cursor: null,
       notice: null,
+      truncation: null,
+      cacheNotice: null,
     }),
     [],
   );
@@ -189,11 +192,11 @@ export function useSubmitter(client: TauClient | null): Submitter {
           // eleven literal characters, which is a composer that completes a
           // path and then does not attach it.
           //
-          // The composer intercepts every FRONTEND command before it gets here
-          // (a `/tree` sent with expand_commands would earn a -32001), so what
-          // this flag reaches is the extension-registered vocabulary. An
-          // unknown `/word` still falls through to the model as prose, which is
-          // tau's own rule and not a fallback added here.
+          // The composer dispatches every `/word` tau declares before it gets
+          // here -- a flow through `next_step`, a view into this head's own
+          // panel -- so what this flag reaches is an extension command taking
+          // one opaque line. An unknown `/word` still falls through to the model
+          // as prose, which is tau's own rule and not a fallback added here.
           expand_attachments: true,
           expand_commands: true,
         });
@@ -232,26 +235,42 @@ function newSubmissionId(counter: React.MutableRefObject<number>): string {
 /**
  * Turn an error into something a user can act on.
  *
- * The structured RPC codes each mean a specific, recoverable thing, and saying
- * which one it was is the difference between "try again in a moment" and
- * "this will never work".
+ * ## tau's sentence wins
+ *
+ * This used to answer every structured code with a sentence of its own, and one
+ * of them was wrong in a way that mattered. `SUBMISSION_REJECTED` (-32000) was
+ * rendered as "a turn is already running" -- which is ONE of its causes. An
+ * extension lock is another, and tau sends `refusal_reason` as the message: a
+ * finished sentence naming the extension that stopped the session, what it said,
+ * and the way out it declared. Replacing that with a guess told the reader to
+ * wait for a turn that was not running, about a lock they were never shown.
+ *
+ * So a code whose message tau writes is passed through as `raw` -- the peer's
+ * own sentence, without the method name and code `message` prefixes, which is
+ * the form `TauRpcError` kept it in for exactly this. This only ADDS a sentence
+ * where tau's is bare: `METHOD_NOT_FOUND`, which carries no body tau chose, and
+ * where naming the method is the whole of the diagnosis.
+ *
+ * Anything that is not one of tau's own refusals keeps the prefixed `message`,
+ * because there the request that failed is the first thing worth knowing.
  */
+const TAU_WRITES_THE_SENTENCE = new Set([
+  RpcErrorCode.SUBMISSION_REJECTED,
+  RpcErrorCode.COMMAND_NOT_SUPPORTED,
+  RpcErrorCode.TURN_STILL_RUNNING,
+  RpcErrorCode.SESSION_NOT_PERSISTED,
+  RpcErrorCode.INVALID_PARAMS,
+]);
+
 export function describe(raw: unknown): string {
   if (raw instanceof TauRpcError) {
-    switch (raw.code) {
-      case -32000:
-        return 'tau refused the prompt: a turn is already running. Wait for it, or stop it first.';
-      case -32001:
-        return 'That is a command this head has to handle itself; tau will not run it over RPC.';
-      case -32002:
-        return 'The running turn did not stop in time. Nothing was changed. Try again.';
-      case -32004:
-        return 'This session is not persisted, so tau refused to write to it. Start a persisted session.';
-      case -32601:
-        return `tau does not implement '${raw.method}'. If it is a declined verb, its reason says why.`;
-      default:
-        return raw.message;
+    if (raw.code === RpcErrorCode.METHOD_NOT_FOUND) {
+      return (
+        `tau does not implement '${raw.method}'. Either this tau is older than the verb, ` +
+        `or it is a declined verb whose reason says why.`
+      );
     }
+    return TAU_WRITES_THE_SENTENCE.has(raw.code as never) ? raw.raw : raw.message;
   }
   return raw instanceof Error ? raw.message : String(raw);
 }
