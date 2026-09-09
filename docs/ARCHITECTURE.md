@@ -524,6 +524,16 @@ answers that same want in one command and makes the working directory explicit,
 which for an agent is the thing that most needs to be explicit. If the npm path
 is ever wanted, the blocker that used to exist is already gone: see 9.3.
 
+Because nothing here goes to npm, the five packages depend on each other by
+`"*"` and not by version. An exact pin looks tidier and is a trap: it links the
+workspace sibling only while the two numbers happen to agree, and the moment a
+release bumps one of them npm stops linking and starts fetching a version that
+is not in the registry and never will be. That is what `"0.3.0"` pins did after
+the 0.4.0 bump — `npm ci` on a fresh clone failed with `404 Not Found`, and so
+did the image build, which runs `npm ci` in its first stage. A working
+`node_modules` on the machine where the bump happened is why it went unnoticed:
+the symlinks npm had already made stayed valid. `"*"` cannot drift.
+
 ### 9.2 Three namespaces, deliberately not unified
 
 | Namespace | Value | Where it binds |

@@ -10,8 +10,8 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@ffwf/tau-code-protocol": "0.3.0",
-    "@ffwf/tau-code-ui": "0.3.0",
+    "@ffwf/tau-code-protocol": "*",
+    "@ffwf/tau-code-ui": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

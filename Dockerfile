@@ -36,11 +36,16 @@ RUN npm run build
 # -------------------------------------------------------------- runtime stage
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 
-# Which tau. Bump this line when a release adds a verb this client uses.
-# 0.9.6 speaks protocol 1.3: everything works except `@file` completion, which
-# needs complete_path (protocol 1.4, unreleased at the time of writing). The
-# composer says so in the UI rather than failing.
-ARG TAU_SPEC=ffwf-tau==0.9.6
+# Which tau. Bump this line when a release adds a verb this client uses, but
+# never past what PyPI can resolve: a default that does not install is an image
+# nobody can build.
+#
+# 0.10.1 speaks protocol 1.5, which is every verb this client calls -- the
+# conversation tree browser (get_tree, get_entry) and the extension request
+# panel (get_pending_request, answer_request) included. It is what
+# packages/protocol/src/generated.ts is generated from, so this pin and that
+# file agree by construction; `npm run check:protocol` is what proves it.
+ARG TAU_SPEC=ffwf-tau==0.10.1
 
 # The agent's tools resolve against a bind-mounted /work, so the container user
 # has to match the host user who owns it. -o allows a duplicate id; the node

@@ -8,10 +8,11 @@ Run a [τ](https://github.com/jmccardle/tau) agent inside VS Code or VSCodium.
 `tau --mode rpc` as a child process and talks to it over τ's documented
 JSON-RPC protocol. The agent's tools run against the folder you have open.
 
-**Status: scaffold.** Chat works end to end, with Tab completion for
-`/commands` and `@files`. The conversation tree browser and the editor
-integrations are designed for but not built. The list at the bottom of this
-page says what is missing, so you find out here rather than after installing.
+**Status: early.** Chat works end to end, with Tab completion for `/commands`
+and `@files`, a Markdown transcript, a model picker, a session list, and the
+conversation tree browser. The editor integrations — jump-to-edit, diff views —
+are designed for and not built. The list at the bottom of this page says what is
+missing, so you find out here rather than after installing.
 
 ## Requirements
 
@@ -25,6 +26,22 @@ pipx install ffwf-tau        # or: pip install ffwf-tau
 template you can edit.
 
 If `tau` is not on your `PATH`, set `tau-code.binary` to the full path.
+
+### Which τ
+
+Every panel here is gated on what your τ answers to `get_capabilities`, not on a
+version number, so an older one loses a feature rather than failing. What each
+release adds:
+
+| τ | Protocol | What it turns on |
+|---|---|---|
+| 0.9.x | 1.3 | Chat, sessions, the model picker |
+| 0.10.0 | 1.4 | `@file` completion, `/command` flow dialogs, `/extensions` |
+| 0.10.1 | 1.5 | **The conversation tree browser**, and answering extension requests |
+
+A plain `pip install ffwf-tau` gets 0.10.1 and everything works. A panel whose
+verbs are missing says which τ added them and stays out of the way, so an older
+τ you already have loses a feature rather than breaking.
 
 ## Use it
 
@@ -56,8 +73,31 @@ The file list comes from **τ**, not from the editor. That matters over Remote
 SSH or in a devcontainer: τ answers from the directory its own tools resolve
 against, which is where your code actually is.
 
-`@file` completion needs τ at protocol 1.4 or later. Everything else works
-against 1.3, and the composer says which one you have rather than failing.
+`@file` completion needs τ at protocol 1.4 or later (see [Which τ](#which-τ)),
+and the composer says which one you have rather than failing.
+
+## The conversation tree
+
+A τ conversation is a tree, not a list. Branching back to an earlier point does
+not delete what came after — it leaves it in place as a sibling and starts a new
+line. Compaction and elide do not delete either; they insert an anchor saying
+where a span was folded out of the model's input. The transcript can only show
+one line through that tree. **Tree** in the status bar shows the whole thing.
+
+The keys are τ's own TUI's, so knowing one is knowing the other: arrows move,
+Space marks a row, `Ctrl+D` folds the detail pane, Escape closes. The pane
+beside the tree shows what came before the selected node, the node, and what
+came after, and says how many rows it is not drawing rather than implying a
+three-message conversation.
+
+**Nothing is written while the panel is open.** Every gesture builds state in
+memory; a key that commits calls one verb and closes, and Escape discards all of
+it. A refusal is therefore cheap — the panel is still open, on the row you were
+looking at.
+
+This needs τ 0.10.1, which is what `pip install ffwf-tau` gets you. An older one
+answers `METHOD_NOT_FOUND` for the tree read, and the panel says so instead of
+drawing an empty box.
 
 ## How answers render
 
@@ -109,11 +149,6 @@ locally. That split is the one thing a standalone web client cannot reproduce.
 
 ## What is deliberately missing
 
-- **The conversation tree browser.** τ's differentiator, and the reason this
-  project exists. It needs tree verbs on the wire; τ has none today.
-- **`/tree` and `/extensions`.** τ resolves both and expects the client to
-  perform them. This one does not, so it says so. They appear greyed in the
-  completion popup.
 - **Renaming a session.** The picker lists, switches, forks and starts.
 - **Removing an attachment by clicking it.** The `@word` in the text is the
   only handle: delete it.

@@ -121,10 +121,11 @@
     "watch": "node esbuild.mjs --watch",
     "package": "npx --yes @vscode/vsce package --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
   },
+  "//dependencies": "The three @ffwf/* entries are workspace siblings, unpublished by design, so they are ranged `*` rather than pinned -- see `//internal-deps` in the root package.json. Nothing resolves them at install time for a user anyway: esbuild bundles them into dist/extension.js and the .vsix is built --no-dependencies.",
   "dependencies": {
-    "@ffwf/tau-code-protocol": "0.3.0",
-    "@ffwf/tau-code-runner": "0.3.0",
-    "@ffwf/tau-code-ui": "0.3.0",
+    "@ffwf/tau-code-protocol": "*",
+    "@ffwf/tau-code-runner": "*",
+    "@ffwf/tau-code-ui": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -22,7 +22,7 @@
     "test": "node --test test/"
   },
   "dependencies": {
-    "@ffwf/tau-code-protocol": "0.3.0",
+    "@ffwf/tau-code-protocol": "*",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1"
   },

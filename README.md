@@ -11,10 +11,11 @@ and in the editor, with Tab completion for `/commands` and `@files`. The editor
 integrations — jump-to-edit, diff views — are designed for but not built:
 `docs/ARCHITECTURE.md` §7.1 says what τ still computes and discards.
 
-Requires τ at **protocol 1.5 or later** (τ 0.10.1) for the tree browser, the
-extension request panel and flow-driven commands. `@file` completion needs 1.4.
-Against an older τ each of those says which verb is missing rather than failing
-blankly, and the chat works regardless.
+Requires τ at **protocol 1.5** (τ 0.10.1, `pip install ffwf-tau`) for the tree
+browser and the extension request panel. `@file` completion, flow-driven
+commands and `/extensions` need 1.4 (τ 0.10.0). Against an older τ each of those
+says which verb is missing rather than failing blankly, and the chat works
+regardless.
 
 ## Artifacts
 
@@ -145,13 +146,11 @@ It prints the same authenticated URL the server always prints. Open it.
   listens on (8791), not the one you published. Set `TAU_CODE_TOKEN` to a value
   you choose and build the URL yourself. The token then shows up in
   `docker inspect`.
-- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.9.6` today
-  — **which speaks protocol 1.3 and therefore has no tree browser and no
-  extension request panel.** Chat, sessions and the model picker work; open the
-  Tree and the panel says which verb is missing and which τ added it. Build with
-  `--build-arg TAU_SPEC=ffwf-tau==0.10.1` once that release is on PyPI, or with a
-  path to a local checkout. The pin is not bumped here ahead of the upload: a
-  default that does not resolve is a container that cannot be built at all.
+- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.10.1` — the
+  protocol 1.5 release, so the image has every panel including the tree browser.
+  Build with `--build-arg TAU_SPEC=...` to pin another release or a path to a
+  local checkout. Never bump this default past what PyPI can resolve: a default
+  that does not install is a container nobody can build.
 
 `docker build --target verify -t ffwf/tau-code-verify . && docker run --rm
 ffwf/tau-code-verify` starts τ inside the image and reads back its protocol
