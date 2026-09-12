@@ -19,15 +19,16 @@ regardless.
 
 ## Artifacts
 
-Three, and no more:
-
 | Artifact | Build it with | What it is |
 |---|---|---|
 | `ffwf-tau-code-<version>.vsix` | `npm run package:vsix` | The editor extension |
 | `ffwf/tau-code:<version>` | `npm run package:image` | τ and the web client, in one container |
-| this checkout | `npm install && npm run build` | Both of the above, run from source |
+| `ffwf-tau-runtime-<version>-<target>.vsix` | `npm run package:runtime` | An optional CPython with τ in it, per platform |
+| this checkout | `npm install && npm run build` | All of the above, run from source |
 
-`npm run package` builds both artifacts. It publishes nothing.
+`npm run package` builds the first two and publishes nothing. The runtime is
+separate on purpose: it downloads a CPython per target and is the only artifact
+here not built purely from this checkout. See `docs/ARCHITECTURE.md` §14.
 
 ## What is here
 
@@ -39,9 +40,15 @@ Three, and no more:
 | `@ffwf/tau-code-server` | WebSocket server for browser clients | Node |
 | `@ffwf/tau-code-web` | The standalone browser client | browser |
 | `tau-code` (publisher `ffwf`) | The editor extension | VS Code |
+| `tau-runtime` (publisher `ffwf`) | An optional CPython with τ in it | VS Code |
 
 None of these is published to npm. They are workspace packages, and the names
 exist so the imports read the same as they would if they were.
+
+`tau-runtime` is the odd one: it ships no library and imports nothing here. It
+carries a directory of files and answers one question — where they are — which
+is why it can be installed, removed and versioned without touching anything
+else.
 
 The dependency direction is one way. `@ffwf/tau-code-ui` imports no host: it is
 handed a `Transport` and does not learn whether it is a WebSocket or the
@@ -57,6 +64,11 @@ the browser and in the editor.
   ```bash
   export TAU_BIN=/path/to/agent-harness-py/venv/bin/tau
   ```
+
+  **In the editor there is a second option:** install `ffwf.tau-runtime`, an
+  optional companion extension that ships its own CPython with τ installed into
+  it, and nothing needs to be on `PATH` at all. See
+  [Which τ runs](#which-τ-runs).
 
 ## Setup
 
@@ -197,7 +209,7 @@ reproduce.
 ## Verify
 
 ```bash
-npm run typecheck        # all six packages
+npm run typecheck        # every package
 npm test                 # the store, the completion logic, and the tree rules
 npm run smoke            # spawn tau, negotiate, read state and tools
 npm run smoke:tree       # read a COPY of a real session's tree over the wire,
@@ -277,6 +289,65 @@ granular token with 2FA bypass rather than a `npm login` session, and PyPI
 cannot scope a token to a name that does not exist yet. The script stays for the
 next name; a re-run of these fails, because a published version cannot be
 replaced.
+
+## Which τ runs
+
+There can be two: one on `PATH`, and the one inside the optional
+`ffwf.tau-runtime` extension. **The panel never picks between them silently.**
+When both are installed at different versions, a banner above the transcript
+names both and offers the setting:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ Two taus are installed and they are different versions. Running      │
+│ 0.10.1, from the tau runtime extension (linux-x64, Python 3.11.16).  │
+│ Also found 0.10.2, from tau on PATH. The "tau-code.runtime" setting  │
+│ chooses between them.                          [ Choose ]      [ ✕ ] │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+That is not decoration. Every symptom of running the wrong τ — a missing verb,
+a different tool set, a protocol mismatch — points at τ rather than at the
+choice that selected it, which makes it the one thing this client can get wrong
+in a way you cannot see. The output channel says which was chosen and which was
+not, on every start.
+
+The order, and the reasoning, is `docs/ARCHITECTURE.md` §14.3:
+
+1. `tau-code.binary`, when you have set it to something other than `tau`. A
+   path is an instruction: it wins outright, and if it does not work that is an
+   error rather than a reason to run a different τ.
+2. `TAU_BIN`.
+3. The runtime extension, if installed.
+4. `tau` on `PATH`.
+
+`tau-code.runtime` overrides steps 3 and 4:
+
+| | |
+|---|---|
+| `auto` (default) | the runtime extension when installed, otherwise `PATH` |
+| `bundled` | only the runtime extension; refuses to start when absent |
+| `system` | only `PATH` or `tau-code.binary`; ignore the runtime extension |
+
+### Building the runtime
+
+```bash
+npm run package:runtime                                  # this machine's target
+TAU_RUNTIME_TARGETS='linux-x64 darwin-arm64 win32-x64' \
+  npm run package:runtime                                # named targets
+npm run smoke:runtime                                    # drive the built payload
+```
+
+It downloads a CPython from python-build-standalone, installs τ's RPC closure
+into it with `pip --platform`, prunes, and proves the result negotiates
+protocol 1.5 with none of your environment reaching it. Measured on linux-x64:
+78.3 MB extracted, 52.2 MB after pruning, **18.1 MB packaged**. Which τ it
+installs is `tauSpec` in `packages/runtime/package.json`, one copy, and the
+payload's `manifest.json` records what pip actually resolved.
+
+All nine of VS Code's desktop targets build from one Linux machine, because
+nothing here compiles: the only native wheel in the closure is `pydantic-core`,
+and it publishes one for every target.
 
 ## Changing the model
 

@@ -1,0 +1,8 @@
+# The assembled payload and its inputs. Built by scripts/build-payload.mjs, and
+# tens of megabytes per target -- an artifact, never a source.
+runtime/
+runtime.parked/
+payloads/
+.cache/
+dist/
+dist-types/

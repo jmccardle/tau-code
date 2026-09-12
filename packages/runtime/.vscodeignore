@@ -1,0 +1,23 @@
+# What lands in the .vsix. The payload under runtime/ is the POINT of this
+# extension, so unlike packages/vscode nearly all of the archive is data.
+src/**
+scripts/**
+node_modules/**
+dist-types/**
+esbuild.mjs
+tsconfig.json
+tsconfig.tsbuildinfo
+**/*.ts
+**/*.map
+
+# The downloaded interpreter tarballs, and the per-target trees `--all` writes.
+# Both are inputs to runtime/, never part of it, and .cache alone is hundreds of
+# megabytes once every target has been built.
+.cache/**
+payloads/**
+
+# Bytecode belongs to whoever runs the interpreter, not to the archive: a .pyc
+# built here carries this machine's absolute paths in co_filename. The build
+# script already keeps the tree clean; this is the guard for a stray run.
+**/__pycache__/**
+**/*.pyc

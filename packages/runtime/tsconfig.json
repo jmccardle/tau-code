@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Same reasoning as packages/vscode: the source is ESM and esbuild emits
+    // one CommonJS file, so TS has to be told a bundler resolves the imports.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "dist-types",
+    "rootDir": "src",
+    "lib": ["ES2022"],
+    "types": ["node", "vscode"],
+    "emitDeclarationOnly": true
+  },
+  "include": ["src/**/*"],
+  "//references": "None. This extension imports no workspace package -- it reads a manifest off disk and answers with paths. Adding one would couple the payload's shape to the protocol's version for no reason."
+}

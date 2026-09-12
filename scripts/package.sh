@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # Build the release artifacts.
 #
-#   scripts/package.sh          both
-#   scripts/package.sh vsix     the editor extension only
-#   scripts/package.sh image    the container image only
+#   scripts/package.sh           the extension and the image
+#   scripts/package.sh vsix      the editor extension only
+#   scripts/package.sh image     the container image only
+#   scripts/package.sh runtime   the optional bundled runtime, per platform
 #
-# There are exactly two artifacts, plus the checkout itself:
+#   ffwf-tau-code-<version>.vsix              install into VS Code or VSCodium
+#   ffwf/tau-code:<version>                   docker run, serves the web client
+#   ffwf-tau-runtime-<version>-<target>.vsix  a CPython with tau in it
 #
-#   ffwf-tau-code-<version>.vsix   install into VS Code or VSCodium
-#   ffwf/tau-code:<version>        docker run, serves the web client
+# `runtime` is not in the default set, and that is the one asymmetry here worth
+# knowing about. The other two are built from this checkout and nothing else;
+# the runtime downloads an interpreter per target and installs tau from PyPI
+# into it, so it is network-bound, minutes long, and versioned by tau's schedule
+# rather than this repository's. See docs/ARCHITECTURE.md 14.1.
 #
 # The checks run first and the script stops on the first failure. A build that
 # produces an artifact from a tree that does not typecheck is worse than no
@@ -22,8 +28,8 @@ IMAGE="${TAU_CODE_IMAGE:-ffwf/tau-code}"
 
 WHAT="${1:-all}"
 case "$WHAT" in
-  all|vsix|image) ;;
-  *) echo "usage: $0 [all|vsix|image]" >&2; exit 2 ;;
+  all|vsix|image|runtime) ;;
+  *) echo "usage: $0 [all|vsix|image|runtime]" >&2; exit 2 ;;
 esac
 
 say() { printf '\n=== %s\n' "$1"; }
@@ -44,7 +50,7 @@ if [ "$mismatch" -ne 0 ]; then
   echo "Every package must carry the root version. Fix them and run again." >&2
   exit 1
 fi
-echo "  all six packages agree."
+echo "  all $(ls packages/*/package.json | wc -l | tr -d ' ') packages agree."
 
 # -------------------------------------------------------------------- checks
 say "checks"
@@ -68,6 +74,37 @@ if [ "$WHAT" = all ] || [ "$WHAT" = vsix ]; then
   rm -f "ffwf-tau-code-$VERSION.vsix"
   npm run package --workspace packages/vscode
   ls -lh "ffwf-tau-code-$VERSION.vsix"
+fi
+
+# ------------------------------------------------------------------- runtime
+#
+# Deliberately NOT part of `all`. Every other artifact here is built from this
+# checkout; this one downloads a CPython per target from python-build-standalone
+# and installs tau into it, which is network, minutes and hundreds of megabytes
+# on disk. A release that ships a new tau-code without a new runtime is normal:
+# the runtime changes when tau changes, and tau changes on its own schedule.
+if [ "$WHAT" = runtime ]; then
+  say "runtime payload"
+  if [ -n "${TAU_RUNTIME_TARGETS:-}" ]; then
+    for target in $TAU_RUNTIME_TARGETS; do
+      npm run payload --workspace packages/runtime -- --target "$target"
+      npm run package --workspace packages/runtime -- --target "$target"
+    done
+  else
+    # This machine's target only. `--all` is the release build and wants a
+    # deliberate `TAU_RUNTIME_TARGETS='...'`, because nine payloads is a
+    # different kind of afternoon.
+    npm run payload --workspace packages/runtime
+    npm run package --workspace packages/runtime
+  fi
+
+  say "runtime verify"
+  # The payload proved itself during its own build, in isolation. This proves
+  # the OTHER half: that TauProcess drives it through the same code path the
+  # extension uses. Only possible for this machine's target.
+  node scripts/smoke-runtime.mjs
+
+  ls -lh ffwf-tau-runtime-"$VERSION"-*.vsix
 fi
 
 # --------------------------------------------------------------------- image

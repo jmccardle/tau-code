@@ -278,6 +278,20 @@
 }
 .tau-notice.tau-warn { color: var(--tau-warn); }
 
+/* A notice that is a banner rather than a line: it carries buttons, so the text
+   and the controls sit on one row and the text takes the slack. `flex: 0 0 auto`
+   keeps it out of the transcript's scroll -- a banner that scrolls away is one
+   the reader was not shown. */
+.tau-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 8px 0;
+  border: 1px solid var(--tau-border);
+}
+.tau-banner-text { flex: 1 1 auto; }
+
 /* composer -------------------------------------------------------------- */
 
 .tau-composer {

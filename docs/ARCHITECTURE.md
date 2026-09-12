@@ -1006,3 +1006,214 @@ show:
   scaled coordinate system, which cut a hole the right shape and a third too
   big. `mask` on an element with a transform is applied in that element's user
   space; it belongs on an untransformed wrapper.
+
+---
+
+## 14. The bundled runtime (0.5.0)
+
+τ is Python. Every artifact before this one made that the user's problem — the
+extension spawns `tau` and says so when it is not there. `ffwf.tau-runtime` is
+a second, **optional** extension that ships a CPython with τ installed into it,
+so an editor install needs nothing else.
+
+### 14.1 Four artifacts now, and §9.1 said three
+
+§9.1 said "three artifacts, and no more", and this is an amendment to it rather
+than a gap in it. The reasoning there was that a fourth thing to version is a
+cost that has to buy something; what this buys is the editor's equivalent of
+what the container already does for the web client — **the whole instance in
+one install, with no Python on the host**. Same want, different host. What §9.1
+refused was publishing five npm packages so that one of them could be installed
+in a way that still left τ to the user, and that is still refused.
+
+It is a separate extension and not a payload inside `ffwf.tau-code` because the
+cost is not shared. A platform-specific tau code would be nine 18 MB downloads
+where there is now one 170 KB download, paid by every user including those who
+already have a τ. Split, tau code stays universal and small, and only the
+people who want a runtime pay for one.
+
+### 14.2 Optional means `getExtension`, not `extensionDependencies`
+
+`extensionDependencies` is mandatory: declaring it auto-installs the dependency
+and there is no user-facing way to decline. The optional form is to declare
+nothing and look it up at runtime —
+
+```ts
+const rt = vscode.extensions.getExtension<TauRuntimeApi>('ffwf.tau-runtime');
+const api = rt ? await rt.activate() : null;
+```
+
+— which is what `runtime.ts` does. The two consequences worth naming:
+
+- **The paths come from the API, never computed.** `ffwf.tau-runtime` derives
+  them from its own `context.extensionUri` and hands back absolutes. Nothing in
+  tau code knows the payload's shape, so the payload can be restructured
+  without a coordinated release.
+- **Both are `extensionKind: ["workspace"]`.** The agent runs where the code
+  is; over SSH that is the remote host, and VS Code's platform-specific
+  resolution downloads the build matching *it*. A runtime that installed
+  locally while τ spawned remotely would be the wrong architecture's binaries
+  in the wrong place — which is the failure this design most needed to not have.
+
+`activate()` **throws** when the payload is missing or unreadable, rather than
+returning a degraded API. tau code catches that, logs it, and steps to the next
+candidate: an installed-but-broken runtime must not stop a working system τ,
+and must not be silent either.
+
+### 14.3 Two τs is the failure that hides, so it is a banner
+
+Resolution order, and why each step is where it is:
+
+| | Source | Why here |
+|---|---|---|
+| 1 | `tau-code.binary`, when not the default | A path is an instruction. It wins outright, and if it does not work that is an **error** — never a reason to quietly run a different τ. |
+| 2 | `TAU_BIN` | The same instruction from the environment. |
+| 3 | `ffwf.tau-runtime` | Installing it is a deliberate act, so it outranks whatever happens to be on `PATH`. |
+| 4 | `tau` on `PATH` | The behaviour every earlier version had. |
+
+Step 3 above step 4 is the one real judgment call, and it is the one that
+creates the hazard: a user with a dev τ on `PATH` and the runtime installed
+gets the bundled one, which may be older. **Wrong-τ-silently is the worst
+outcome available to this client** — every symptom of it (a missing verb, a
+different tool set, a protocol mismatch) points at τ rather than at the choice
+that selected it.
+
+So resolution is a *value* and not a string: `TauResolution` carries the
+candidate that lost as well as the one that won. When both exist and their
+versions differ, the panel draws a banner naming both and offering the setting.
+A decision that threw its alternatives away could not produce that sentence.
+
+`tau-code.runtime` is `auto` | `bundled` | `system`. `bundled` refuses to start
+when the runtime is absent rather than falling through to `PATH`, because
+"only ever run the one I installed" is a thing a user can mean and silently
+meaning something else is the defect this whole section is about.
+
+Three details the implementation needed:
+
+- **The banner is host knowledge, so it cannot travel on the protocol.** The
+  decision is made before any τ exists, and its subject is the process the
+  protocol would describe. It arrives as a `tau_code/notice` on the same
+  `postMessage` channel, intercepted by `VsCodeTransport` beside
+  `tau_code/process_exit`, which is the existing precedent for exactly this.
+- **It is held until the webview speaks.** Same durability problem as
+  `#stopped` (§ the note on that field): a notice posted during `start()` is
+  posted to a document that has not loaded. It is flushed on the first message
+  the webview sends, which is proof it is listening, and re-armed on restart —
+  which is when the answer can have changed.
+- **`@ffwf/tau-code-ui` still imports no host.** `HostNotice` carries a
+  *label and a command id*, never a callback. The webview posts the id back and
+  the extension host runs it, against an allowlist of the two commands that can
+  appear in a notice. The browser client passes no notices and renders none.
+
+### 14.4 What makes the payload independent
+
+Four properties, each of which was measured rather than assumed.
+
+**Isolated.** Spawned as `python3.11 -I -m tau_coding_agent.cli`. `-I` drops
+`PYTHONPATH`, `PYTHONHOME`, the user site directory **and the working
+directory** from `sys.path`. The last is the one that matters here and it is
+not tidiness: an agent's cwd is the user's project, and without `-I` a
+`pydantic.py` in it is imported instead of the real one. Demonstrated both
+ways in `packages/runtime/README.md`. This is also why the runtime hands over
+an interpreter and arguments rather than the `tau` console script — the script
+pip generates carries an absolute shebang written on the build machine.
+
+**Relocatable.** Every path in `manifest.json` is relative to the payload root,
+and `bin/tau` resolves the interpreter relative to itself through a symlink
+chain. Checked by `smoke-runtime.mjs`, which fails on an absolute path in the
+manifest, and by copying the tree elsewhere and running it under `env -i`.
+This is gobboclippy's SONAME lesson: a bundled runtime that silently resolves
+against the host's works on every machine that builds or tests it, and on no
+machine that installs it.
+
+**Usable on its own.** `pip` ships, and `python3.11 -m pip install` into the
+tree works after relocation — pbs's console scripts use the `#!/bin/sh`
+re-exec form rather than an absolute shebang. That is how a τ extension's
+dependency gets installed, and it is why `pip` is excluded from the pruning
+below even though it is 6.5 MB.
+
+**Honest about what it is.** The manifest records the τ version read back from
+pip's `dist-info` on disk, not the spec that was requested — one copy of the
+number, and it is the one the artifact carries.
+
+### 14.5 Measured: why the payload is the size it is
+
+linux-x64, from the upstream tarball to the shipped `.vsix`:
+
+| | |
+|---|---|
+| `install_only_stripped` extracted | 78.3 MB |
+| after prune | 52.2 MB |
+| packaged `.vsix` | **18.1 MB** |
+
+What the pruning removes, and the two that were not obvious:
+
+- **`libpython3.11.so.1.0`, 21 MB.** python-build-standalone links libpython
+  *statically* into the executable and also ships it as a shared library, for
+  embedders. Nothing in the payload names it. Deleted only after a **byte scan
+  for the SONAME** across every plausible referrer — a scan and not `ldd`,
+  because eight of the nine targets cannot be executed on the machine that
+  builds them, and a check only the host gets is not a check.
+- **Two-thirds of the interpreter, 16 MB of `.vsix`.** `bin/` ships
+  `python3.11` with `python` and `python3` symlinked to it, and **vsce
+  dereferences symlinks**: the first package carried three independent 20.7 MB
+  copies and came to 34.3 MB. Nothing warns about this — the extension works,
+  it is just three times the interpreter. Collapsing `bin/` to one name is what
+  took it to 18.1 MB.
+- Tcl/Tk (9 MB), the test suites, `idlelib`, `include/`, the static library,
+  and `ensurepip/_bundled` — a second copy of pip as wheels.
+- Scripts whose libraries were pruned: `2to3`, `idle3`, `python3-config`. A
+  file that exists, runs and fails is worse than its absence, because absence
+  is a message.
+
+**Stripping is deliberately not done.** Measured: the executable goes 21.7 →
+19.7 MB and libpython 21.0 → 19.8 MB, so the upstream "stripped" asset really
+is stripped of debug info. Against ~4 MB, `strip` on a Mach-O invalidates its
+signature — the hazard gobboclippy's `MacFinalize.cmake` exists to sequence
+around — and a payload that will not load on macOS is a far worse trade.
+
+The build runs entirely on one Linux machine for all nine targets, and that is
+not a convenience. The only compiled thing in τ's rpc closure is
+`pydantic-core`, and it publishes a wheel for every one of them — verified
+individually, `linux-armhf`/`armv7l` included. Nothing here compiles, so
+nothing needs the target's architecture. The build fails on a target with no
+wheel rather than shipping a payload that is missing a module.
+
+### 14.6 Verification runs before the prune, not after
+
+`build-payload.mjs` spawns the assembled interpreter and negotiates
+`get_capabilities` against a throwaway `HOME`, exactly as `docker/verify.mjs`
+does for the image. It runs **before** pruning and again after, and the
+ordering is a bug that was shipped and then found: running the interpreter is
+what creates `__pycache__`, so a verify that ran last left 2.5 MB of bytecode
+in the tree it had just checked, every `.pyc` stamping the build machine's
+absolute paths into `co_filename`. The check was spoiling what it checked.
+`PYTHONDONTWRITEBYTECODE` is set for the same reason; `-I` does not cover it.
+
+`npm run smoke:runtime` is the other half, and covers what the payload's own
+build cannot: that `TauProcess` drives it through the same `baseArgs` path the
+extension uses. Three things break there while typechecking cleanly — an
+absolute path in the manifest, `baseArgs` landing on the wrong side of
+`--mode rpc`, and a wheel resolved for another platform — and all three surface
+as a failed negotiation instead of as somebody's editor saying "tau could not
+start".
+
+### 14.7 Why there is no `web` target
+
+VS Code publishes a `web` platform target, and McRogueFace demonstrates that
+CPython compiles to WebAssembly and runs — a 3.6 MB stdlib in a browser, with
+`MCRF_WASM_PYTHON_HOME` pointing at it. It is deliberately not built here.
+
+McRogueFace works in wasm because everything it needs is *inside* the sandbox:
+sprites, scripts and assets, all `--preload-file`d at link time. τ's entire
+value is the opposite. Its tools read and edit real files, run real
+subprocesses, and reach a real model endpoint. A webview has no filesystem and
+no subprocess; `ms-vscode.wasm-wasi-core` maps WASI onto the workspace
+filesystem API and gets files back, but still has no subprocesses and no
+sockets, so τ's shell tool is dead and `httpx` can only reach CORS-permitting
+endpoints — which excludes the commercial providers, and would put the user's
+API key in the browser besides.
+
+Wasm is the right tool for a self-contained program and the wrong one for an
+agent whose job is to touch the machine. A browser-only τ is a different
+product with a different tool set, not a build flag on this one.

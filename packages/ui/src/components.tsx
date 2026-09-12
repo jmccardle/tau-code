@@ -1171,6 +1171,80 @@ export function StatusBar({
   );
 }
 
+/* ---------------------------------------------------------- host notices */
+
+/**
+ * A sentence from whatever is hosting this client, about something tau cannot
+ * report on its own.
+ *
+ * The case it exists for is two taus installed at different versions: the
+ * decision of which to run is made by the host, before any process exists, so
+ * there is no connection over which tau could mention it. A host with nothing
+ * to say passes none of these, which is the browser client's whole involvement.
+ *
+ * `action` is a LABEL and an id, never a callback, because this module runs in
+ * a browser tab and in a webview and knows about neither. The host is handed
+ * the notice back and decides what running it means.
+ */
+export interface HostNotice {
+  id: string;
+  level: 'info' | 'warn';
+  text: string;
+  action?: { label: string; command: string; argument?: string };
+}
+
+/**
+ * The banner strip, above everything.
+ *
+ * Above, and not in the transcript: a reader who has to scroll to find out that
+ * the agent answering them is not the tau they think it is has been told
+ * nothing in time to act on it -- the same reasoning that puts an extension
+ * request above the transcript rather than below.
+ *
+ * Dismissible, and only in this document: a banner with no way to put it down
+ * is a banner people learn to read past, and the condition it describes is one
+ * the user may have decided is fine. It comes back on restart, because that is
+ * when the answer could have changed.
+ */
+function NoticeStrip({
+  notices,
+  onAction,
+}: {
+  notices: readonly HostNotice[];
+  onAction?: ((notice: HostNotice) => void) | undefined;
+}): JSX.Element | null {
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const live = notices.filter((notice) => !dismissed.has(notice.id));
+  if (live.length === 0) return null;
+
+  return (
+    <>
+      {live.map((notice) => (
+        <div
+          key={notice.id}
+          className={`tau-notice tau-banner${notice.level === 'warn' ? ' tau-warn' : ''}`}
+          role="status"
+        >
+          <span className="tau-banner-text">{notice.text}</span>
+          {notice.action && onAction ? (
+            <button className="tau-status-button" onClick={() => onAction(notice)}>
+              {notice.action.label}
+            </button>
+          ) : null}
+          <button
+            className="tau-status-button"
+            title="Dismiss until the agent restarts"
+            aria-label="Dismiss"
+            onClick={() => setDismissed((was) => new Set(was).add(notice.id))}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
 /* --------------------------------------------------------------- chat app */
 
 export interface ChatProps {
@@ -1192,6 +1266,14 @@ export interface ChatProps {
    * one of those has a command palette.
    */
   disconnectedHint?: string;
+  /**
+   * Sentences from the host about its own decisions -- which tau it chose, and
+   * what else it found. Empty or absent in the browser client, which makes no
+   * such decision: the server is told one binary and spawns it.
+   */
+  notices?: readonly HostNotice[];
+  /** Run a notice's action. The host decides what its `command` means. */
+  onNoticeAction?: (notice: HostNotice) => void;
 }
 
 /** The whole chat head: status, session picker, transcript, composer. */
@@ -1204,6 +1286,8 @@ export function Chat({
   enterSubmits,
   capabilities,
   disconnectedHint,
+  notices,
+  onNoticeAction,
 }: ChatProps): JSX.Element {
   const [model, setModel] = useState<ActiveModel | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -1396,6 +1480,10 @@ export function Chat({
             }
           : {})}
       />
+      {/* First, above the disconnection notice as well: "which tau is this"
+          explains a failure to connect at least as often as it accompanies a
+          working one. */}
+      <NoticeStrip notices={notices ?? []} onAction={onNoticeAction} />
       <Disconnected phase={phase} detail={detail} {...(disconnectedHint ? { hint: disconnectedHint } : {})} />
       {sessionsOpen ? (
         <SessionPicker

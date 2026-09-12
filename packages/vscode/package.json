@@ -59,6 +59,16 @@
         "command": "tau-code.showLog",
         "title": "Show Agent Log",
         "category": "tau"
+      },
+      {
+        "command": "tau-code.chooseRuntime",
+        "title": "Choose Which tau to Run",
+        "category": "tau"
+      },
+      {
+        "command": "tau-code.installRuntime",
+        "title": "Install the Bundled tau Runtime",
+        "category": "tau"
       }
     ],
     "menus": {
@@ -92,10 +102,21 @@
     "configuration": {
       "title": "tau",
       "properties": {
+        "tau-code.runtime": {
+          "type": "string",
+          "enum": ["auto", "bundled", "system"],
+          "default": "auto",
+          "enumDescriptions": [
+            "The bundled runtime extension when it is installed, otherwise tau on PATH.",
+            "Only the bundled runtime extension. Refuses to start when it is absent, rather than running a different tau.",
+            "Only tau on PATH, or whatever tau-code.binary names. The runtime extension is ignored even if installed."
+          ],
+          "markdownDescription": "Which tau to run when more than one is available.\n\n`ffwf.tau-runtime` is a separate, optional extension that ships its own CPython with tau installed into it. When it and a system tau are both present, this decides — and if the two are different versions, the panel says so rather than picking quietly.\n\nA `tau-code.binary` you have set explicitly, or `TAU_BIN`, wins over all three: naming a path is an instruction, and a path that does not work is an error rather than a reason to run something else."
+        },
         "tau-code.binary": {
           "type": "string",
           "default": "tau",
-          "description": "Path to tau's console script. A bare name is looked up on PATH."
+          "markdownDescription": "Path to tau's console script. A bare name is looked up on PATH.\n\nLeave it at `tau` to let `tau-code.runtime` decide. Setting it to anything else overrides that setting entirely, including the bundled runtime."
         },
         "tau-code.model": {
           "type": "string",

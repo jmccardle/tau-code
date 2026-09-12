@@ -4,6 +4,15 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { LineFramer, relayRefusal } from '@ffwf/tau-code-protocol';
 import { TauProcess } from '@ffwf/tau-code-runner';
+import { describe, tauRuntime, versionMismatch } from './runtime.js';
+
+/** A sentence from the host, drawn above the transcript. See `runtime.ts`. */
+interface HostNotice {
+  id: string;
+  level: 'info' | 'warn';
+  text: string;
+  action?: { label: string; command: string; argument?: string };
+}
 
 /** Expand a leading `~` in a configured path. Returns undefined for empty. */
 function expandHome(value: string | undefined): string | undefined {
@@ -51,6 +60,27 @@ export class TauSession implements vscode.Disposable {
    * does.
    */
   #stopped: string | null = null;
+  /**
+   * Settled once `start()` has finished deciding and spawning.
+   *
+   * Resolving which tau to run costs up to two `--version` subprocesses, so
+   * `start()` is asynchronous while the webview it belongs to is already live
+   * and may send. `#toTau` awaits this before doing anything, which turns a
+   * race into a queue -- messages are relayed in the order they arrived, after
+   * the process they are addressed to exists.
+   */
+  #starting: Promise<void> | null = null;
+  /**
+   * Notices waiting for a webview that can hear them.
+   *
+   * Same durability problem `#stopped` solves, and the same shape of answer.
+   * These are computed during `start()`, which finishes before the webview
+   * document has loaded, so posting them immediately posts them to nobody. They
+   * are flushed on the first message the webview sends, which is proof it is
+   * listening.
+   */
+  #notices: HostNotice[] = [];
+  #flushed = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -66,7 +96,7 @@ export class TauSession implements vscode.Disposable {
       localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist-webview')],
     };
     webview.html = this.html();
-    webview.onDidReceiveMessage((message: unknown) => this.#toTau(message));
+    webview.onDidReceiveMessage((message: unknown) => void this.#toTau(message));
   }
 
   /** The directory the agent's tools resolve relative paths against. */
@@ -86,7 +116,13 @@ export class TauSession implements vscode.Disposable {
   }
 
   start(): void {
-    if (this.#proc) return;
+    if (this.#proc || this.#starting) return;
+    this.#starting = this.#start().finally(() => {
+      this.#starting = null;
+    });
+  }
+
+  async #start(): Promise<void> {
     const config = vscode.workspace.getConfiguration('tau-code');
     const model = config.get<string>('model')?.trim();
     const provider = config.get<string>('provider')?.trim();
@@ -112,8 +148,41 @@ export class TauSession implements vscode.Disposable {
       return;
     }
 
+    // Which tau, and what else was there. Both, because picking between two
+    // installed taus without saying so is the one thing this client can get
+    // wrong in a way the user has no way to see.
+    const resolution = await tauRuntime(this.output);
+    this.output.info(`[${this.label}] ${describe(resolution)}`);
+
+    if (!resolution.chosen) {
+      this.#stopped = resolution.problem ?? 'No tau was found.';
+      this.output.error(`Refused to start: ${this.#stopped}`);
+      this.#notices = [
+        {
+          id: 'tau-missing',
+          level: 'warn',
+          text: this.#stopped,
+          action: { label: 'Install the runtime extension', command: 'tau-code.installRuntime' },
+        },
+      ];
+      return;
+    }
+
+    const mismatch = versionMismatch(resolution);
+    this.#notices = mismatch
+      ? [
+          {
+            id: `tau-version-${resolution.chosen.version ?? '?'}-${resolution.other?.version ?? '?'}`,
+            level: 'warn',
+            text: mismatch,
+            action: { label: 'Choose', command: 'tau-code.chooseRuntime' },
+          },
+        ]
+      : [];
+
     const proc = new TauProcess({
-      bin: config.get<string>('binary')?.trim() || 'tau',
+      bin: resolution.chosen.command,
+      ...(resolution.chosen.args.length > 0 ? { baseArgs: resolution.chosen.args } : {}),
       cwd,
       ...(model ? { model } : {}),
       ...(provider ? { provider } : {}),
@@ -158,6 +227,11 @@ export class TauSession implements vscode.Disposable {
       // A fresh page, so the webview's client renegotiates from nothing rather
       // than holding state from a process that no longer exists.
       this.#webview.html = this.html();
+      // A fresh page has heard nothing, so whatever `start()` decides this time
+      // has to be said again. Without this the banner appears once per window
+      // and never after a restart -- which is exactly when a user who has just
+      // installed or removed a tau is looking for it.
+      this.#flushed = false;
       this.start();
     });
   }
@@ -167,7 +241,42 @@ export class TauSession implements vscode.Disposable {
     void this.#stop();
   }
 
-  #toTau(message: unknown): void {
+  async #toTau(message: unknown): Promise<void> {
+    // The webview is live before `start()` has finished choosing a tau, so this
+    // waits rather than refusing something that is about to exist. Awaiting one
+    // shared promise also keeps the order: every message queued here is relayed
+    // in the order it arrived.
+    if (this.#starting) await this.#starting;
+
+    // The first thing the webview sends is proof it is listening, which is the
+    // earliest moment a notice posted to it would actually be seen.
+    if (!this.#flushed) {
+      this.#flushed = true;
+      for (const notice of this.#notices) {
+        void this.#webview.postMessage({
+          jsonrpc: '2.0',
+          method: 'tau_code/notice',
+          params: notice,
+        });
+      }
+    }
+
+    // A notice's button. The webview names a command and the host runs it,
+    // because a webview cannot reach the command palette itself.
+    //
+    // An ALLOWLIST, not a pass-through. The webview runs our code behind a
+    // strict CSP and is not an attacker today, but "the webview may execute any
+    // editor command" is a capability nothing here needs, and the cost of not
+    // granting it is this array.
+    const method =
+      typeof message === 'object' && message !== null
+        ? (message as Record<string, unknown>)['method']
+        : undefined;
+    if (method === 'tau-code.chooseRuntime' || method === 'tau-code.installRuntime') {
+      void vscode.commands.executeCommand(method);
+      return;
+    }
+
     const proc = this.#proc;
     if (!proc || !proc.running) {
       // A request is answered, never dropped: this relay is the only thing that

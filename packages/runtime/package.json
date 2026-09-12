@@ -1,0 +1,60 @@
+{
+  "//name": "The extension ID is publisher.name, so this reads `ffwf.tau-runtime`. It is a SEPARATE extension from `ffwf.tau-code` and not a dependency of it: see docs/ARCHITECTURE.md 14.2 for why optional means `getExtension` at runtime rather than `extensionDependencies`, which is mandatory and auto-installs.",
+  "name": "tau-runtime",
+  "//displayName": "Sits next to `tau code` in the extension list, which is the whole point of the name: a user looking at what they installed can see that the runtime is a second thing they can remove.",
+  "displayName": "tau runtime",
+  "version": "0.4.1",
+  "description": "A self-contained CPython with tau installed into it, for the tau code extension. Optional: tau code uses a system tau when this is absent.",
+  "license": "MIT",
+  "publisher": "ffwf",
+  "private": true,
+  "keywords": ["tau", "agent", "python", "runtime"],
+  "homepage": "https://github.com/jmccardle/tau-code",
+  "repository": { "type": "git", "url": "https://github.com/jmccardle/tau-code.git" },
+  "bugs": { "url": "https://github.com/jmccardle/tau-code/issues" },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["AI", "Other"],
+  "icon": "media/icon.png",
+  "//tauSpec": "Which tau is installed into the shipped interpreter. ONE copy of this number: scripts/build-payload.mjs reads it from here, and the payload's manifest.json records what pip ACTUALLY installed by reading the dist-info back, so the pin and the artifact cannot drift into disagreeing quietly. 0.10.1 is protocol 1.5 -- the same release the container pins and the same one packages/protocol/src/generated.ts was generated from. Bump it with the Dockerfile's TAU_SPEC, not on its own: two artifacts shipping two taus is how a client ends up tested against neither. The `[tui]` extra is deliberately absent -- rpc_mode.py imports tau_agent_core.rpc and tau_coding_agent.headless, neither of which touches Textual, and tau's own pyproject measures the difference at 15 packages / 13 MB against 27 / 31 MB.",
+  "tauSpec": "ffwf-tau-coding-agent==0.10.1",
+  "//extensionKind": "`workspace`, matching ffwf.tau-code. The runtime is spawned wherever the agent runs -- over SSH, in WSL, in a devcontainer -- so a runtime that installed on the laptop while tau ran on the remote would be the wrong architecture's binaries in the wrong place. VS Code's platform-specific resolution downloads the build matching the REMOTE host, which is the one this has to be.",
+  "extensionKind": ["workspace"],
+  "//capabilities": "A payload of files this extension ships, spawned by another extension. It reads nothing from the workspace, so trust does not gate it; it is real files on a real disk, so a virtual workspace has nowhere to put it.",
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": true },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The runtime is a directory of real files that has to be executed, and a virtual workspace has no filesystem to execute it from."
+    }
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "tau-runtime.show",
+        "title": "Show Runtime Info",
+        "category": "tau"
+      },
+      {
+        "command": "tau-runtime.copyPath",
+        "title": "Copy Runtime Interpreter Path",
+        "category": "tau"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "payload": "node scripts/build-payload.mjs",
+    "//package": "--no-dependencies for the same reason ffwf.tau-code passes it: esbuild bundles the entry, and vsce would otherwise walk the workspace-hoisted ../../node_modules. --target is NOT optional here -- a runtime VSIX with no target claims to run everywhere and ships one platform's binaries.",
+    "package": "node scripts/package-vsix.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.0"
+  }
+}

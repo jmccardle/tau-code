@@ -1,4 +1,5 @@
 import type { Transport } from '@ffwf/tau-code-protocol';
+import type { HostNotice } from '@ffwf/tau-code-ui';
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -33,24 +34,41 @@ function api(): VsCodeApi {
 export class VsCodeTransport implements Transport {
   #onMessage: ((message: unknown) => void) | null = null;
   #onClose: ((reason: string) => void) | null = null;
+  #onNotice: ((notice: HostNotice) => void) | null = null;
   #closed = false;
 
   constructor() {
     window.addEventListener('message', (event: MessageEvent) => {
       const data: unknown = event.data;
+      const method =
+        typeof data === 'object' && data !== null
+          ? (data as Record<string, unknown>)['method']
+          : undefined;
+
       // The host reports a dead agent process out of band, because a stdio
       // transport has no close frame to send.
-      if (
-        typeof data === 'object' &&
-        data !== null &&
-        (data as Record<string, unknown>)['method'] === 'tau_code/process_exit'
-      ) {
+      if (method === 'tau_code/process_exit') {
         const params = (data as Record<string, unknown>)['params'] as { reason?: string } | undefined;
         this.#fire(params?.reason ?? 'tau stopped.');
         return;
       }
+
+      // Something the HOST knows and tau does not -- which tau it picked, and
+      // what else it found. It cannot arrive on the protocol channel, because
+      // the process the protocol describes is the subject of the sentence.
+      if (method === 'tau_code/notice') {
+        const params = (data as Record<string, unknown>)['params'] as HostNotice | undefined;
+        if (params) this.#onNotice?.(params);
+        return;
+      }
+
       this.#onMessage?.(data);
     });
+  }
+
+  /** Host sentences for the banner strip. Not part of `Transport`. */
+  onNotice(handler: (notice: HostNotice) => void): void {
+    this.#onNotice = handler;
   }
 
   send(message: unknown): void {

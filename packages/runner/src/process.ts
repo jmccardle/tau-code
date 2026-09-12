@@ -1,8 +1,24 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export interface TauProcessOptions {
-  /** Path to tau's console script. A bare `tau` uses PATH. */
+  /**
+   * The program to run. Usually tau's console script; a bare `tau` uses PATH.
+   *
+   * With `baseArgs` this is a Python interpreter instead, which is how the
+   * bundled runtime is spawned: a console script pip generated carries an
+   * ABSOLUTE shebang written at install time, and the extension it ships inside
+   * is unpacked somewhere else on every machine.
+   */
   bin?: string;
+  /**
+   * Arguments before tau's own, for a `bin` that is not the console script --
+   * `['-I', '-m', 'tau_coding_agent.cli']` against an interpreter.
+   *
+   * Separate from `extraArgs`, which lands AFTER `--mode rpc`, because these
+   * choose the program and those configure it. Reversing either is a command
+   * line tau does not parse.
+   */
+  baseArgs?: string[];
   /** Working directory the agent's tools resolve relative paths against. */
   cwd?: string;
   /** `--model`. Omit to use tau's configured default. */
@@ -70,8 +86,8 @@ export class TauProcess {
   }
 
   get argv(): string[] {
-    const { model, provider, noSession, sessionDir, extraArgs } = this.#options;
-    const args = ['--mode', 'rpc'];
+    const { baseArgs, model, provider, noSession, sessionDir, extraArgs } = this.#options;
+    const args = [...(baseArgs ?? []), '--mode', 'rpc'];
     if (model) args.push('--model', model);
     if (provider) args.push('--provider', provider);
     if (noSession) args.push('--no-session');

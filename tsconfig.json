@@ -1,11 +1,26 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/protocol" },
-    { "path": "packages/runner" },
-    { "path": "packages/ui" },
-    { "path": "packages/server" },
-    { "path": "packages/web" },
-    { "path": "packages/vscode" }
+    {
+      "path": "packages/protocol"
+    },
+    {
+      "path": "packages/runner"
+    },
+    {
+      "path": "packages/ui"
+    },
+    {
+      "path": "packages/server"
+    },
+    {
+      "path": "packages/web"
+    },
+    {
+      "path": "packages/vscode"
+    },
+    {
+      "path": "packages/runtime"
+    }
   ]
 }
