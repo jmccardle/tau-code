@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-server",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Connection server: owns a tau process and serves it to browser clients over WebSocket.",
   "license": "MIT",
   "type": "module",

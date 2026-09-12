@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- U+03C4 from DejaVu Sans Mono Bold Oblique. fill-rule evenodd: any inner ring is a
+       hole, not a second shape. -->
+  <g fill="currentColor" fill-rule="evenodd">
+  <path d="M30.625 116.0H150.875L145.375 144.125H103.5L90.625 210.375Q88.875 219.75 92.625 223.75Q96.5 227.875 107.0 227.875H114.25L108.75 256.0H99.0Q67.5 256.0 58.25 246.0Q49.125 236.25 54.5 208.625L67.0 144.125H25.125Z"/>
+  </g>
+</svg>

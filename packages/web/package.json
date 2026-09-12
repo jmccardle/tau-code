@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-web",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Standalone browser client for tau, served by @ffwf/tau-code-server.",
   "license": "MIT",
   "private": true,

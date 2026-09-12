@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-protocol",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Types and a JSON-RPC 2.0 client for the tau RPC protocol. Isomorphic: no Node and no DOM.",
   "license": "MIT",
   "type": "module",

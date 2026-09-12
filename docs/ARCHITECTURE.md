@@ -1,6 +1,7 @@
 # Architecture
 
-**Status: the tree browser is built (2026-09-09, 0.4.0).** Chat works end to end
+**Status: the tree browser is built (2026-09-09, 0.4.0); the mark is drawn
+(2026-09-12, 0.4.1).** Chat works end to end
 in both hosts, and so does the conversation tree — rows, zones, marks, folds,
 elide, branch and paste, with the TUI's keys. The editor integrations
 (jump-to-edit, diff views) are designed for and not built; §7.1 says what τ still
@@ -948,3 +949,60 @@ has too, except the last.
   there is no single row to collapse them into.
 - **Drag and drop.** The TUI has no such gesture, so there is nothing to match;
   `c`/`v` is the whole of copy and paste here as well.
+
+## 13. The mark (0.4.1)
+
+The extension shipped with a placeholder icon: a tau assembled from rectangles.
+0.4.1 replaces it, and the activity bar icon with it. Nothing else changed.
+
+The mark is the FFwF logo with a letter where the skull was. FFwF's own logo is
+built from public domain hazard symbols — the toxic skull, the flammable flame,
+a gear for the cranium, wrenches for the crossbones — and the tau mark keeps the
+flame and the wrenches. The letter sits higher than the skull did, because a
+letter has no jaw; that is what lets the composition square up inside an icon.
+
+The letter is U+03C4 from DejaVu Sans Mono Oblique, taken from the font's own
+outline rather than drawn to resemble it. A hand-drawn approximation of a
+typeface is the kind of nearly-right that gets noticed and cannot be fixed.
+
+### 13.1 Where the artwork lives
+
+`design/` holds the sources and the two scripts that turn them into the files
+the extension ships. `design/README.md` is the working document; what matters
+here is the split:
+
+- `trace-elements.py` needs the FFwF PNG and the DejaVu fonts. It runs rarely.
+- `build-logo.py` needs neither — it reads the element SVGs — and is what you
+  re-run after moving a number.
+
+`packages/vscode/media/icon.png` (marketplace, 256px) and `media/icon.svg`
+(activity bar, the letter alone in the bold face) are both generated. Editing
+either by hand is editing a build artifact.
+
+The flame and the wrenches are hand-drawn vectors. A machine trace of the
+source PNG is kept beside them and unused: it could only guess at the flame's
+interior and underside, because the skull covers both in the source, and what
+it guessed was one solid mass rather than the separate licks the original has.
+
+### 13.2 What the build refuses to ship
+
+Four checks, each of which caught something that a render at one size does not
+show:
+
+- **Clearance.** The letter must stop before the wrenches start. It is the
+  reason the letter sits where the cranium was rather than where the jaw was.
+- **The gaps must not crumble the flame.** In one ink the letter is ringed by
+  daylight, and a ring wide enough to read is wide enough to cut a lick in two.
+  Cutting one is fine. A sliver is not: at 24px it is a speck of dirt beside the
+  mark. The build rasterises the flame with its holes and fails on any piece
+  under 2% of the total.
+- **Every SVG written must parse.** An undeclared `inkscape:` prefix had made
+  one output malformed, and a renderer that meets one is free to drop the
+  element. The element it dropped was a mask, which does not fail — it draws
+  the wrong picture.
+- **The masked build and the painted layers must render identically.** They
+  exist so one can be edited and the other shipped, which is only true while
+  they agree. This is what caught the mask being read in the flame group's
+  scaled coordinate system, which cut a hole the right shape and a third too
+  big. `mask` on an element with a transform is applied in that element's user
+  space; it belongs on an untransformed wrapper.

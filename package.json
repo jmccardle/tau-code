@@ -1,7 +1,7 @@
 {
   "name": "ffwf-tau-code",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Clients for the tau agent harness: a connection server, a web client, and a VS Code extension.",
   "license": "MIT",
   "//internal-deps": "The five @ffwf/tau-code-* packages depend on each other by `*`, not by version. None of them is published to npm and none is meant to be (ARCHITECTURE 9.1), so a range npm cannot resolve from the registry is the only kind that works: an exact pin links the workspace only while the two numbers happen to agree, and silently becomes an unresolvable registry fetch the moment a release bumps one of them. `*` always matches the sibling on disk. Do not 'correct' these to the current version.",

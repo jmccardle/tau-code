@@ -170,7 +170,7 @@ To build an installable `.vsix` instead:
 
 ```bash
 npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
-code --install-extension ffwf-tau-code-0.4.0.vsix
+code --install-extension ffwf-tau-code-0.4.1.vsix
 ```
 
 **If you installed 0.1.x, uninstall it first.** The extension ID changed from
