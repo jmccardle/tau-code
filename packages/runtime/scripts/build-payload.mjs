@@ -31,7 +31,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -131,8 +131,33 @@ const PRUNE_DIRS = ['test', 'tests', 'idlelib', 'turtledemo', 'lib2to3', 'tkinte
  * `libpython` is excluded from the pattern explicitly. Deleting it is a real
  * saving and a separate, CHECKED step below -- not something a regex should be
  * able to do by accident.
+ *
+ * `sqlite3.` is in here because Tcl ships a `tdbc` driver by that name, and on
+ * POSIX it only ever matched Tcl's copy. On Windows it also matches CPython's
+ * OWN `DLLs/sqlite3.dll`, which `_sqlite3.pyd` links against -- so this
+ * pattern, unguarded, shipped two Windows payloads in which `import sqlite3`
+ * raised. That is why the sweep below asks whether anything still in the
+ * payload names a library before deleting it, instead of trusting the name.
  */
 const TCL_PATTERN = /^(lib)?(tcl|tk|itcl|tdbc|thread|sqlite3\.)/i;
+
+/**
+ * `_tkinter`, the compiled module `tkinter` imports.
+ *
+ * Not covered by either of the two rules above, and shipped broken because of
+ * it: `tkinter` the package is pruned by name in PRUNE_DIRS, the Tcl libraries
+ * are swept by TCL_PATTERN, and this fell between them -- a leading underscore
+ * the pattern does not match, in the extension directory rather than beside
+ * the libraries. Measured on linux-x64, the shipped payload answered
+ * `import _tkinter` with `ImportError: libtcl9.0.so: cannot open shared object
+ * file`, naming a library that had been deleted minutes earlier in the same
+ * build.
+ *
+ * That is the failure `collapseBin` below calls worse than absence: a file
+ * that exists, runs, and fails. `import tkinter` already answered
+ * `ModuleNotFoundError`, which is a message; this answered with a puzzle.
+ */
+const TKINTER_MODULE = /^_tkinter\./;
 
 /**
  * Stripping is deliberately NOT done. Measured on linux-x64: the executable
@@ -184,6 +209,79 @@ function mb(bytes) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+/** Where the wheels went. One expression, used by the build and by the scans. */
+function sitePackagesOf(python, layout) {
+  return layout === 'windows'
+    ? join(python, 'Lib', 'site-packages')
+    : join(python, 'lib', `python${PY_SHORT}`, 'site-packages');
+}
+
+/** A file that can carry the name of a shared library in it. */
+function isBinary(name) {
+  return /\.(dll|pyd|exe|dylib)$/i.test(name) || /\.so($|\.)/.test(name);
+}
+
+/**
+ * Every file in the payload that could NAME a shared library, read into memory
+ * once.
+ *
+ * Read as BYTES rather than asked of the loader. `ldd` and `dumpbin` run or
+ * parse the target's binaries, and eight of the nine targets cannot be run
+ * here; scanning finds the same DT_NEEDED or import-table string in the file
+ * without executing it, so every target gets the same check instead of only
+ * the host getting one.
+ *
+ * The set is the interpreter's executables, its extension modules, its library
+ * directory, and any compiled module a wheel installed. A wheel's `.so` is in
+ * there because the payload is not just CPython: `pydantic_core` is the one
+ * today, and the next dependency to arrive with a native module gets the same
+ * protection without anyone remembering to add it.
+ */
+function referrers(python, layout) {
+  const found = [];
+  const take = (path) => {
+    found.push({ path, bytes: readFileSync(path) });
+  };
+  const files = (dir, filter) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && (!filter || filter(entry.name))) take(join(dir, entry.name));
+    }
+  };
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = join(dir, entry.name);
+      if (entry.isDirectory()) walk(child);
+      else if (entry.isFile() && isBinary(entry.name)) take(child);
+    }
+  };
+
+  if (layout === 'windows') {
+    files(python, isBinary);
+    files(join(python, 'DLLs'));
+  } else {
+    files(join(python, 'bin'));
+    files(join(python, 'lib', `python${PY_SHORT}`, 'lib-dynload'));
+    files(join(python, 'lib'), isBinary);
+  }
+  walk(sitePackagesOf(python, layout));
+  return found;
+}
+
+/**
+ * The first referrer whose bytes contain `name`, or null.
+ *
+ * `ignore` is how a library avoids being kept alive by itself or by the very
+ * files being deleted alongside it -- a symlink chain to the same library, or
+ * libtcl and libtk, which name each other and would otherwise each be the
+ * reason to keep the other.
+ */
+function namedBy(candidates, name, ignore) {
+  const needle = Buffer.from(name, 'ascii');
+  return candidates.find((file) => !ignore(file.path) && file.bytes.includes(needle)) ?? null;
+}
+
 /** Delete every directory named in `names`, at any depth under `root`. */
 function prune(root, names) {
   let removed = 0;
@@ -231,32 +329,23 @@ function dropUnreferencedLibpython(python, layout) {
 
   const libDir = join(python, 'lib');
   if (!existsSync(libDir)) return 0;
-  const shared = readdirSync(libDir).filter((name) => /^libpython.*\.so($|\.)/.test(name));
+  const isLibpython = (name) => /^libpython.*\.so($|\.)/.test(name);
+  const shared = readdirSync(libDir).filter(isLibpython);
   if (shared.length === 0) return 0;
 
-  const referrers = [];
-  const collect = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isFile()) referrers.push(join(dir, entry.name));
-    }
-  };
-  collect(join(python, 'bin'));
-  collect(join(python, 'lib', `python${PY_SHORT}`, 'lib-dynload'));
-  collect(libDir);
+  const candidates = referrers(python, layout);
 
   let freed = 0;
   for (const name of shared) {
     const path = join(libDir, name);
-    const soname = Buffer.from(name, 'ascii');
-    const wanted = referrers.find((file) => {
-      if (file === path) return false;
-      // A symlink chain to the same library is not a referrer either.
-      if (/^libpython.*\.so($|\.)/.test(file.slice(libDir.length + 1))) return false;
-      return readFileSync(file).includes(soname);
-    });
+    // Itself, and a symlink chain to the same library, are not referrers.
+    const wanted = namedBy(
+      candidates,
+      name,
+      (file) => file === path || (dirname(file) === libDir && isLibpython(basename(file))),
+    );
     if (wanted) {
-      say(`  keep    ${name} -- ${relative(python, wanted)} names it`);
+      say(`  keep    ${name} -- ${relative(python, wanted.path)} names it`);
       continue;
     }
     freed += statSync(path).size;
@@ -305,23 +394,79 @@ function collapseBin(python, layout) {
   return freed;
 }
 
-/** Tcl/Tk shared libraries and data, unreachable once `tkinter` is pruned. */
+/**
+ * Everything Tcl/Tk, in the three places it hides, in the order that makes the
+ * third one safe.
+ *
+ * `tkinter` the Python package is pruned by name in PRUNE_DIRS. What that
+ * leaves behind is the module it imports, Tcl's own script tree, and the
+ * shared libraries -- and the order matters twice over.
+ *
+ * `_tkinter` goes FIRST, because while it is on disk it is a referrer, and the
+ * sweep below would keep `libtcl`/`tcl86t.dll` alive for the sake of a module
+ * that is about to be deleted.
+ *
+ * The libraries go LAST and only when nothing left in the payload names them.
+ * Sweeping by name alone is what deleted Windows' `DLLs/sqlite3.dll` out from
+ * under `_sqlite3.pyd`: `sqlite3.` is in TCL_PATTERN for Tcl's `tdbc` driver,
+ * it matched CPython's own library, and two Windows payloads shipped in which
+ * `import sqlite3` raised. A name is a guess about what a file is for; a
+ * referrer is evidence.
+ */
 function dropTcl(python, layout) {
   let freed = 0;
-  const sweep = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (!TCL_PATTERN.test(entry.name)) continue;
-      const path = join(dir, entry.name);
-      freed += entry.isDirectory() ? treeSize(path) : statSync(path).size;
-      rmSync(path, { recursive: true, force: true });
-    }
+  const windows = layout === 'windows';
+
+  const remove = (path) => {
+    if (!existsSync(path)) return 0;
+    const size = statSync(path).isDirectory() ? treeSize(path) : statSync(path).size;
+    rmSync(path, { recursive: true, force: true });
+    return size;
   };
-  if (layout === 'windows') {
-    sweep(join(python, 'tcl'));
-    sweep(join(python, 'DLLs'));
-  } else {
-    sweep(join(python, 'lib'));
+
+  // 1. the module that imports Tcl
+  const moduleDir = windows
+    ? join(python, 'DLLs')
+    : join(python, 'lib', `python${PY_SHORT}`, 'lib-dynload');
+  if (existsSync(moduleDir)) {
+    for (const entry of readdirSync(moduleDir)) {
+      if (!TKINTER_MODULE.test(entry)) continue;
+      freed += remove(join(moduleDir, entry));
+      say(`  drop    ${entry} -- tkinter is pruned and its libraries are going`);
+    }
+  }
+
+  // 2. Tcl's script library. On Windows it is a directory of Tcl extension
+  //    packages -- dde, reg, nmake, tix -- of which the name sweep caught only
+  //    `tcl8.6` and `tk8.6`, leaving 2.2 MB no Python here can reach. On POSIX
+  //    the same trees sit in `lib/` and the sweep in 3 takes them.
+  if (windows) freed += remove(join(python, 'tcl'));
+
+  // 3. the libraries, each one checked
+  const libDir = windows ? join(python, 'DLLs') : join(python, 'lib');
+  if (existsSync(libDir)) {
+    const candidates = referrers(python, layout);
+    for (const entry of readdirSync(libDir, { withFileTypes: true })) {
+      if (!TCL_PATTERN.test(entry.name)) continue;
+      const path = join(libDir, entry.name);
+      // A directory holds data, not exports, and nothing links against one.
+      if (entry.isDirectory()) {
+        freed += remove(path);
+        continue;
+      }
+      const wanted = namedBy(
+        candidates,
+        entry.name,
+        // Itself, and its siblings in this same sweep: libtcl and libtk name
+        // each other, and neither naming the other is a reason to keep either.
+        (file) => file === path || TCL_PATTERN.test(basename(file)),
+      );
+      if (wanted) {
+        say(`  keep    ${entry.name} -- ${relative(python, wanted.path)} names it`);
+        continue;
+      }
+      freed += remove(path);
+    }
   }
   return freed;
 }
@@ -578,10 +723,7 @@ async function build(target, options) {
   const raw = treeSize(python);
 
   // --- tau ------------------------------------------------------------------
-  const sitePackages =
-    spec.layout === 'windows'
-      ? join(python, 'Lib', 'site-packages')
-      : join(python, 'lib', `python${PY_SHORT}`, 'site-packages');
+  const sitePackages = sitePackagesOf(python, spec.layout);
   mkdirSync(sitePackages, { recursive: true });
 
   const pip = process.env.PYTHON ?? 'python3';
@@ -734,8 +876,17 @@ const flagIndex = argv.indexOf('--target');
 const asked = flagIndex >= 0 ? argv[flagIndex + 1] : null;
 
 if (argv.includes('--help') || argv.includes('-h')) {
-  say('usage: build-payload.mjs [--target <vscode-target>] [--all] [--keep-dev]');
+  say('usage: build-payload.mjs [--target <vscode-target>] [--all] [--list] [--keep-dev]');
   say(`targets: ${Object.keys(TARGETS).join(', ')}`);
+  process.exit(0);
+}
+
+// The target list as JSON, on stdout, for something that has to enumerate the
+// targets without being a second place that knows them. `.github/workflows`
+// builds its matrix from this: a target added to TARGETS above is a target CI
+// builds, with no second edit and therefore no way for the two to disagree.
+if (argv.includes('--list')) {
+  process.stdout.write(`${JSON.stringify(Object.keys(TARGETS))}\n`);
   process.exit(0);
 }
 

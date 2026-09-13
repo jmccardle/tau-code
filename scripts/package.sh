@@ -37,20 +37,12 @@ say() { printf '\n=== %s\n' "$1"; }
 # ------------------------------------------------------------------- version
 # Every workspace carries the root version. A mismatch means one artifact would
 # claim a version the others do not have, which is unfixable after release.
+#
+# The check lives in scripts/check-version.mjs rather than here because CI runs
+# the same rule on a tag push, with the tag as a second thing to agree with.
+# Two copies of "what counts as one version" is how they end up disagreeing.
 say "version $VERSION"
-mismatch=0
-for pkg in packages/*/package.json; do
-  have="$(node -p "require('$ROOT/$pkg').version")"
-  if [ "$have" != "$VERSION" ]; then
-    echo "  $pkg is $have, root is $VERSION" >&2
-    mismatch=1
-  fi
-done
-if [ "$mismatch" -ne 0 ]; then
-  echo "Every package must carry the root version. Fix them and run again." >&2
-  exit 1
-fi
-echo "  all $(ls packages/*/package.json | wc -l | tr -d ' ') packages agree."
+node scripts/check-version.mjs
 
 # -------------------------------------------------------------------- checks
 say "checks"

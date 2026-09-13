@@ -252,6 +252,26 @@ of the four that needs a live agent.
 Two scripts, each publishing one kind of thing. Neither runs as part of a
 build, and both read their credentials from the environment.
 
+### Releases
+
+Pushing a `v*` tag builds everything and attaches it to a GitHub release:
+`.github/workflows/release.yml`. One Linux runner produces all ten `.vsix`
+files — the universal `ffwf-tau-code`, and one `ffwf-tau-runtime` per target —
+and the release body is generated from each payload's own `manifest.json`, so
+it states the τ that shipped rather than the one that was asked for. The tag
+has to agree with the tree; `scripts/check-version.mjs` is what makes "HEAD at
+a version tag is the released version" a check rather than a habit.
+
+Running it by hand (**Actions > release > Run workflow**) takes a ref, and the
+ref decides: pick a **branch** and it runs the same checks and the same ten
+builds and creates no release, which is how to find out before tagging; pick a
+**tag** and it makes the release. A dispatch runs the workflow as it exists at
+the ref you pick, so only a tag that already contains this file can be released
+that way — `v0.5.0` predates it and cannot be. Neither path publishes to a
+marketplace:
+that stays the two scripts below, because a published version number cannot be
+reused. `docs/ARCHITECTURE.md` §14.8 has the rest.
+
 ### The extension
 
 ```bash
@@ -342,14 +362,16 @@ npm run smoke:runtime                                    # drive the built paylo
 
 It downloads a CPython from python-build-standalone, installs τ's RPC closure
 into it with `pip --platform`, prunes, and proves the result negotiates
-protocol 1.5 with none of your environment reaching it. Measured on linux-x64:
+protocol 1.6 with none of your environment reaching it. Measured on linux-x64:
 78.3 MB extracted, 52.2 MB after pruning, **18.1 MB packaged**. Which τ it
 installs is `tauSpec` in `packages/runtime/package.json`, one copy, and the
 payload's `manifest.json` records what pip actually resolved.
 
 All nine of VS Code's desktop targets build from one Linux machine, because
 nothing here compiles: the only native wheel in the closure is `pydantic-core`,
-and it publishes one for every target.
+and it publishes one for every target. That is what CI does on a tag — see
+[Releases](#releases) — so building nine by hand is for when you want them
+before there is a tag.
 
 ## Changing the model
 

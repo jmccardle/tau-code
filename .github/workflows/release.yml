@@ -1,0 +1,252 @@
+# Build what a version tag claims, and attach it to a GitHub release.
+#
+# Two of the four artifacts (ARCHITECTURE 14.1) are .vsix files, and those are
+# what this builds: the universal `ffwf.tau-code`, and one `ffwf.tau-runtime`
+# per VS Code desktop target. The container image is deliberately not built
+# here -- an image is pushed to a registry rather than attached to a release,
+# which is a different credential and a different decision.
+#
+# EVERY RUNTIME TARGET IS BUILT ON A LINUX RUNNER, and that is not a shortcut.
+# The payload is a prebuilt interpreter plus wheels; the only compiled thing in
+# tau's RPC closure is pydantic-core, which publishes a wheel for all nine
+# targets. Nothing compiles, so nothing needs a machine of its own
+# architecture, and build-payload.mjs fails on a target rather than shipping a
+# payload missing a module if that ever stops being true. The matrix is for
+# nine readable logs and nine parallel downloads, not for nine architectures.
+#
+# Checks run at tag time rather than on every push, which is how this
+# repository versions: master is a working branch and a version tag is the
+# thing that claims to build clean.
+#
+# `workflow_dispatch` takes a ref, and what it does depends on what that ref
+# is, because the release job asks the ref and not the event. Dispatched on a
+# BRANCH it runs the same checks and the same nine builds and creates no
+# release -- which is how to find out before tagging. Dispatched on a TAG it
+# does create one, which is the only way to give a tag that was already pushed
+# the artifacts it should have had.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Read-only by default. Only the job that creates the release asks for write,
+# and it asks for nothing else.
+permissions:
+  contents: read
+
+# Not cancel-in-progress: a half-built release is worse than a duplicate run.
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  NODE_VERSION: '20'
+  # The version the payloads are built for. `--python-version 311` is passed to
+  # pip explicitly by build-payload.mjs, so this only decides which interpreter
+  # resolves the wheels -- but matching it to the payload keeps the two from
+  # being separately true.
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ---------------------------------------------------------------- checks
+  # Everything that does not need a payload: the version claim, the typecheck,
+  # the tests, and the one .vsix that is the same file on every platform.
+  # Nine payload builds are minutes and gigabytes each, so they are gated on
+  # this rather than racing it.
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: the version this tag claims
+        # On a tag push the tag is a claim about the tree, and this is where it
+        # is made to be true or to fail: HEAD at a version tag IS that release.
+        # Passed by environment rather than interpolated into the shell, so a
+        # tag name cannot become a command.
+        env:
+          EXPECT_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node scripts/check-version.mjs
+
+      - name: which targets exist
+        id: targets
+        # Asked of the build script rather than listed here. A target added to
+        # TARGETS in build-payload.mjs is a target this workflow builds, with
+        # no second edit and so no way for the two to disagree.
+        run: echo "targets=$(node packages/runtime/scripts/build-payload.mjs --list)" >> "$GITHUB_OUTPUT"
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: package tau code
+        run: npm run package --workspace packages/vscode
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-editor
+          path: ffwf-tau-code-*.vsix
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- runtime
+  runtime:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      # Not fail-fast: one bad target should not hide the state of the other
+      # eight, and there is no risk of a partial release from letting them all
+      # report -- the release job `needs` this one and will not run at all.
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.checks.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - run: npm ci
+
+      - name: cache the interpreter tarball
+        uses: actions/cache@v4
+        with:
+          path: packages/runtime/.cache
+          # The CPython release and version are pinned constants inside
+          # build-payload.mjs, so hashing that file is exactly the right key:
+          # changing a pin changes the key and the old tarball is not reused.
+          key: pbs-${{ matrix.target }}-${{ hashFiles('packages/runtime/scripts/build-payload.mjs') }}
+
+      - name: build the extension entry
+        # Only what this job needs. protocol and runner are here for the
+        # linux-x64 smoke test below, which drives the payload through the same
+        # code the extension uses; runtime is the few-kilobyte host bundle that
+        # the .vsix names as its `main`.
+        run: npm run build --workspace packages/protocol --workspace packages/runner --workspace packages/runtime
+
+      - name: build the payload
+        env:
+          TARGET: ${{ matrix.target }}
+        run: node packages/runtime/scripts/build-payload.mjs --target "$TARGET"
+
+      - name: package the runtime
+        env:
+          TARGET: ${{ matrix.target }}
+        run: npm run package --workspace packages/runtime -- --target "$TARGET"
+
+      # --- the host's own target, which is the only one that can be run ------
+      #
+      # Eight of the nine payloads get structural checks and say so. This one
+      # can actually be executed, so it is, twice over: the protocol it speaks
+      # is compared against the committed generated.ts, and TauProcess drives
+      # it end to end. Both need a tau that will start, and tau will not start
+      # without a model in its config -- so this writes a throwaway one naming
+      # an address nothing listens on. Honest, because neither check contacts a
+      # model. build-payload.mjs's own verify() writes the same fixture for the
+      # same reason; they are independent because the checks are.
+      - name: a config that names nothing
+        if: matrix.target == 'linux-x64'
+        run: |
+          mkdir -p "$HOME/.tau"
+          cat > "$HOME/.tau/config.json" <<'JSON'
+          {
+            "models": {
+              "ci-llm": {
+                "backend": "openai",
+                "model": "unused-by-ci",
+                "base_url": "http://127.0.0.1:1/v1",
+                "api_key": "not-needed"
+              }
+            },
+            "default_model": "ci-llm",
+            "system_prompt": "unused"
+          }
+          JSON
+
+      - name: the protocol the shipped tau speaks
+        if: matrix.target == 'linux-x64'
+        # Against the payload, not against a pip install of tau: this proves
+        # generated.ts matches the wire of the exact interpreter being
+        # released, which is the only tau a runtime user will ever run.
+        env:
+          TAU_BIN: ${{ github.workspace }}/packages/runtime/runtime/bin/tau
+        run: npm run check:protocol
+
+      - name: drive the payload the way the extension does
+        if: matrix.target == 'linux-x64'
+        run: node scripts/smoke-runtime.mjs
+
+      # The manifest travels beside the .vsix so the release notes can state
+      # what each payload actually contains without opening a zip. Renamed per
+      # target because every artifact is merged into one directory downstream.
+      - name: keep the manifest
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cp packages/runtime/runtime/manifest.json "manifest-$TARGET.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.target }}
+          path: |
+            ffwf-tau-runtime-*.vsix
+            manifest-*.json
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- release
+  release:
+    needs: [checks, runtime]
+    # The ref decides, not the event. A branch run builds everything and stops
+    # here; a tag is a release whether it was pushed or dispatched by hand.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: write the notes
+        # Refuses if the .vsix files and the manifests do not pair up, or if
+        # the payloads disagree about which tau they carry.
+        run: node scripts/release-notes.mjs dist > dist/NOTES.md
+
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # --verify-tag so a typo cannot create a release pointing at nothing.
+        # No --draft: pushing a version tag is the deliberate gesture in this
+        # repository, and a release that needs a second click to exist would
+        # make the tag stop meaning what it means. Add --draft here if that
+        # ever stops being true.
+        #
+        # A re-run fails because the release already exists, and that is the
+        # right answer: replacing the artifacts under a published version is a
+        # decision, not a retry.
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file dist/NOTES.md \
+            dist/*.vsix

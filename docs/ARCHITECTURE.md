@@ -1191,6 +1191,30 @@ What the pruning removes, and the two that were not obvious:
   file that exists, runs and fails is worse than its absence, because absence
   is a message.
 
+**A name is a guess; a referrer is evidence.** The libpython scan above was the
+careful case and the Tcl sweep beside it was the careless one — matching
+`^(lib)?(tcl|tk|itcl|tdbc|thread|sqlite3\.)` and deleting whatever answered.
+That shipped two defects, both found while wiring up CI (§14.8) and both fixed
+by giving the Tcl sweep the same scan the libpython one already had:
+
+- **`sqlite3.` is in that pattern for Tcl's `tdbc` driver, and on Windows it
+  matched CPython's own `DLLs/sqlite3.dll`** — which `_sqlite3.pyd` links
+  against. Every Windows payload had a broken `import sqlite3`. The sweep now
+  keeps any library another shipped binary still names, and says so:
+  `keep sqlite3.dll -- DLLs/_sqlite3.pyd names it`.
+- **`_tkinter` fell between all three rules** — `tkinter` the package is pruned
+  by name, the libraries by pattern, and the compiled module in between matched
+  neither, so both layouts shipped a module that answered `import _tkinter`
+  with `ImportError: libtcl9.0.so`. It is deleted first now, deliberately:
+  while it exists it is a referrer, and the libraries would be kept for the
+  sake of a module that is about to go.
+
+Order is the whole trick. Remove the consumer, and the libraries become
+unreferenced on their own — which is also why libtcl and libtk, which name each
+other, do not each become the reason to keep the other. Windows additionally
+loses `tcl/`, 2.2 MB of Tcl extension packages (`dde`, `reg`, `nmake`, `tix`)
+that the name sweep never reached.
+
 **Stripping is deliberately not done.** Measured: the executable goes 21.7 →
 19.7 MB and libpython 21.0 → 19.8 MB, so the upstream "stripped" asset really
 is stripped of debug info. Against ~4 MB, `strip` on a Mach-O invalidates its
@@ -1242,3 +1266,65 @@ API key in the browser besides.
 Wasm is the right tool for a self-contained program and the wrong one for an
 agent whose job is to touch the machine. A browser-only τ is a different
 product with a different tool set, not a build flag on this one.
+
+### 14.8 Nine payloads, one runner, and a tag as the trigger
+
+`.github/workflows/release.yml` builds every artifact a version tag claims and
+attaches them to a GitHub release. It exists because nine payloads is a
+different kind of afternoon than one — each is a download, a `pip install` and
+tens of megabytes on disk — and until this workflow there was exactly one built
+payload, `linux-x64`, because that is the machine the release was cut on.
+
+**One Linux runner builds all nine.** This is the load-bearing claim and it is
+the same one §14.4 makes about the payload: nothing in τ's RPC closure
+compiles. The interpreters come prebuilt from python-build-standalone, and the
+one native wheel — `pydantic_core` — publishes for all nine targets, so a cross
+build is a download and a set of wheel tags rather than a compiler. The matrix
+is nine jobs for nine readable logs and nine parallel downloads, not for nine
+architectures. It is `fail-fast: false` on purpose: one broken target should
+report alongside the eight that are fine, and there is no risk of half a
+release from letting them, because the release job `needs` the matrix and does
+not start at all.
+
+**The checks run at tag time, not on every push.** That matches how this
+repository versions — master is a working branch, and a version tag is the
+thing that claims to build clean. `workflow_dispatch` takes a ref, and the
+release job asks the ref rather than the event: dispatched on a branch it runs
+the same checks and the same nine builds and creates nothing, which is how to
+find out before tagging rather than after; dispatched on a tag it releases,
+which is how a tag already pushed can be given the artifacts it should have
+had.
+
+That last one has a limit worth writing down: a dispatch runs the workflow file
+**as it exists at the chosen ref**, so it can only release a tag that already
+contains this workflow. `v0.5.0` does not — it predates it — and no dispatch
+can reach back for it. The way forward for an already-released version is a new
+tag, not a rescue of the old one, which is the same answer this repository
+gives everywhere else: a version tag names a tree, and a tree that has gained
+something is a different version.
+
+**One target can actually be executed, so it is.** `linux-x64` matches the
+runner, and that buys the check nothing else in this repository can make
+routinely: `npm run check:protocol` is run against **the payload's own shim**,
+so `packages/protocol/src/generated.ts` is compared to the wire of the exact
+interpreter being released rather than to a τ that happened to be on a
+developer's `PATH`. `smoke:runtime` follows, for the reason §14.6 gives. The
+other eight get the structural checks and say which ones they are.
+
+Three things are read rather than restated, and each of them is a number that
+was wrong somewhere once. The matrix comes from `build-payload.mjs --list`, so
+a target added to `TARGETS` is a target CI builds with no second edit. The
+version comes from `check-version.mjs`, which proves the seven packages agree
+with the root and — on a tag — that the root is what the tag says; `HEAD` at a
+version tag being the released version is otherwise a convention nothing
+enforces. And the release body comes from `release-notes.mjs` reading each
+payload's `manifest.json`, which records what pip *installed* rather than what
+`tauSpec` *asked for*; it refuses to write notes for a set of payloads that
+disagree about which τ they carry, because §14.3's two-τ failure shipped nine
+times is not something to discover in a changelog.
+
+What is deliberately not here: the container image, which is pushed to a
+registry rather than attached to a release and is therefore a different
+credential and a different decision, and any marketplace publish.
+`scripts/publish-extension.sh` stays a thing a person runs, because §9.4's two
+marketplaces take two tokens and a `vsce publish` cannot be taken back.
