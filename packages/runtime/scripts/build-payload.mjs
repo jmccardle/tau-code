@@ -833,7 +833,14 @@ async function build(target, options) {
     // Headers and the static library exist to BUILD C extensions against this
     // interpreter. Installing a wheel does not, and --only-binary is the rule
     // above besides.
-    for (const dev of ['include', 'share']) {
+    //
+    // `libs` is Windows' half of that same decision and was missing from it:
+    // 756 KB of .lib import libraries, used only at link time, and useless
+    // without the `include` this deletes in the same breath. Half-applied, the
+    // rule left a payload that could not compile an extension and carried the
+    // libraries for doing it anyway. It does not exist on POSIX, so naming it
+    // here costs those targets nothing.
+    for (const dev of ['include', 'share', 'libs']) {
       const path = join(python, dev);
       if (!existsSync(path)) continue;
       removed += treeSize(path);
