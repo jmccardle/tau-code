@@ -21,20 +21,30 @@ import {
 import { VIEWS, loadCommands, performCommand } from '../dist/commands.js';
 
 /**
- * A synthetic vocabulary in tau 0.10.0's shape.
+ * A synthetic vocabulary in tau 0.10.3's shape (protocol 1.6).
  *
- * `performer` is gone; `origin` says where the NAME came from and `flow` says
- * whether the command declares its arguments. Both are what `get_commands`
- * actually sends -- this fixture is not a guess, it mirrors the schema.
+ * `performer` is gone; `origin` says where the NAME came from, `flow` says
+ * whether the command declares its arguments, and `hidden` marks the private
+ * registry name. All three are what `get_commands` actually sends -- this
+ * fixture is not a guess, it mirrors the schema.
+ *
+ * `notes` carries its `ext:` twin because a real one always does: tau mints
+ * `ext:<extension>.<command>` for every extension command and nothing can take
+ * it away. A fixture with only the bare half would have made the popup look
+ * correct while the wire it models says otherwise.
  */
 const COMMANDS = [
-  { name: 'compact', description: 'compact the conversation', origin: 'builtin', flow: true },
-  { name: 'tree', description: 'open the session-tree browser', origin: 'builtin', flow: false },
-  { name: 'fork', description: 'fork this session', origin: 'builtin', flow: true },
-  { name: 'extensions', description: 'list loaded extensions', origin: 'builtin', flow: false },
-  { name: 'model', description: 'switch the model', origin: 'builtin', flow: true },
-  { name: 'notes', description: 'an extension command', origin: 'extension', flow: false },
+  { name: 'compact', description: 'compact the conversation', origin: 'builtin', flow: true, hidden: false },
+  { name: 'tree', description: 'open the session-tree browser', origin: 'builtin', flow: false, hidden: false },
+  { name: 'fork', description: 'fork this session', origin: 'builtin', flow: true, hidden: false },
+  { name: 'extensions', description: 'list loaded extensions', origin: 'builtin', flow: false, hidden: false },
+  { name: 'model', description: 'switch the model', origin: 'builtin', flow: true, hidden: false },
+  { name: 'notes', description: 'an extension command', origin: 'extension', flow: false, hidden: false },
+  { name: 'ext:notebook.notes', description: 'an extension command', origin: 'extension', flow: false, hidden: true },
 ];
+
+/** The rows a reader who has not typed `ext:` should ever see. */
+const SHOWN = COMMANDS.filter((c) => !c.hidden);
 
 const NONE = new Set();
 
@@ -42,7 +52,7 @@ const NONE = new Set();
 
 test('a bare slash offers the whole vocabulary', () => {
   const result = completeCommand('/', COMMANDS, NONE);
-  assert.equal(result.candidates.length, COMMANDS.length);
+  assert.equal(result.candidates.length, SHOWN.length);
   assert.equal(result.token, '');
 });
 
@@ -70,6 +80,33 @@ test('a command this head cannot perform is listed, not hidden', () => {
   assert.equal(byName['tree'], false);
   assert.equal(byName['compact'], true);
   assert.equal(byName['notes'], true);
+});
+
+test('the ext: twin is not offered until ext: is typed', () => {
+  // Both halves run the same command. Showing them together doubles the list
+  // and reads as two features.
+  const bare = completeCommand('/note', COMMANDS, NONE).candidates.map((c) => c.value);
+  assert.deepEqual(bare, ['notes']);
+
+  const asked = completeCommand('/ext:', COMMANDS, NONE).candidates.map((c) => c.value);
+  assert.deepEqual(asked, ['ext:notebook.notes']);
+});
+
+test('a hidden name is filtered for noise, never for reachability', () => {
+  // It resolves in tau like any other name, so it is offered as available once
+  // asked for -- the opposite of the `unavailable` set, which greys a command
+  // this head genuinely cannot perform.
+  const [row] = completeCommand('/ext:notebook', COMMANDS, NONE).candidates;
+  assert.equal(row.value, 'ext:notebook.notes');
+  assert.equal(row.available, true);
+});
+
+test('a tau older than 1.6 sends no hidden, and loses no commands', () => {
+  // MINOR is additive: absent is that tau's real answer -- it marked nothing --
+  // and its popup must behave exactly as it did before the field existed.
+  const old = COMMANDS.filter((c) => !c.hidden).map(({ hidden, ...rest }) => rest);
+  const values = completeCommand('/', old, NONE).candidates.map((c) => c.value);
+  assert.deepEqual(values, old.map((c) => c.name));
 });
 
 test('an unknown slash gives an EMPTY match list, not null', () => {
@@ -116,10 +153,24 @@ test('the span covers the sigil so applying replaces the whole word', () => {
 test('loadCommands reads origin and flow, and refuses a row missing either', async () => {
   const ok = await loadCommands({
     async call() {
+      return {
+        commands: [{ name: 'compact', description: 'd', origin: 'builtin', flow: true, hidden: false }],
+      };
+    },
+  });
+  assert.deepEqual(ok, [
+    { name: 'compact', description: 'd', origin: 'builtin', flow: true, hidden: false },
+  ]);
+
+  // `hidden` is NOT in the required-key list, unlike the three above it: it
+  // arrived in 1.6 and a 1.5 tau is still a tau this client connects to. Absent
+  // reads as false, which is what that tau meant.
+  const older = await loadCommands({
+    async call() {
       return { commands: [{ name: 'compact', description: 'd', origin: 'builtin', flow: true }] };
     },
   });
-  assert.deepEqual(ok, [{ name: 'compact', description: 'd', origin: 'builtin', flow: true }]);
+  assert.equal(older[0].hidden, false);
 
   // Fail Early: a protocol change surfaces here, once, naming the field. The
   // previous pass RECONSTRUCTED the removed `performer` from a hardcoded list

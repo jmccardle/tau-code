@@ -39,7 +39,7 @@ export interface TauRuntimeApi {
   readonly shim: string;
   /** `3.11.13`. */
   readonly pythonVersion: string;
-  /** `0.10.1`, read from the installed dist-info at build time. */
+  /** `0.10.3`, read from the installed dist-info at build time. */
   readonly tauVersion: string;
 }
 

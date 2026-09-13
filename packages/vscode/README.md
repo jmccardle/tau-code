@@ -38,16 +38,22 @@ release adds:
 | 0.9.x | 1.3 | Chat, sessions, the model picker |
 | 0.10.0 | 1.4 | `@file` completion, `/command` flow dialogs, `/extensions` |
 | 0.10.1 | 1.5 | **The conversation tree browser**, and answering extension requests |
+| 0.10.3 | 1.6 | A `/` popup that stops showing every extension command twice |
 
-A plain `pip install ffwf-tau` gets 0.10.1 and everything works. A panel whose
+A plain `pip install ffwf-tau` gets 0.10.3 and everything works. A panel whose
 verbs are missing says which τ added them and stays out of the way, so an older
 τ you already have loses a feature rather than breaking.
 
 ## Use it
 
-1. Open the folder you want the agent to work in. The extension refuses to
-   start without one, because there is no honest working directory for the
-   agent's tools otherwise.
+1. Open the folder you want the agent to work in, and **trust it**. The
+   extension refuses to start without a folder, because there is no honest
+   working directory for the agent's tools otherwise — and VS Code disables
+   this extension entirely in a Restricted Mode window, so in an untrusted
+   folder the τ icon is not there to click. That is the right call: the agent
+   runs shell commands against what it reads. The extension page says so under
+   the shield, and **Manage** in the Restricted Mode banner is where you change
+   your mind.
 2. Click the τ icon in the activity bar, or press `Ctrl+Alt+T` (`Cmd+Alt+T` on
    macOS).
 3. Pick a session to continue, or press **Start here** to use the new one.

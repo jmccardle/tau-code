@@ -13,7 +13,9 @@ integrations — jump-to-edit, diff views — are designed for but not built:
 
 Requires τ at **protocol 1.5** (τ 0.10.1, `pip install ffwf-tau`) for the tree
 browser and the extension request panel. `@file` completion, flow-driven
-commands and `/extensions` need 1.4 (τ 0.10.0). Against an older τ each of those
+commands and `/extensions` need 1.4 (τ 0.10.0). Built and tested against 1.6
+(τ 0.10.3), which is what the bundled runtime ships and what the `/` popup reads
+`hidden` from. Against an older τ each of those
 says which verb is missing rather than failing blankly, and the chat works
 regardless.
 
@@ -158,8 +160,8 @@ It prints the same authenticated URL the server always prints. Open it.
   listens on (8791), not the one you published. Set `TAU_CODE_TOKEN` to a value
   you choose and build the URL yourself. The token then shows up in
   `docker inspect`.
-- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.10.1` — the
-  protocol 1.5 release, so the image has every panel including the tree browser.
+- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.10.3` — the
+  protocol 1.6 release, so the image has every panel including the tree browser.
   Build with `--build-arg TAU_SPEC=...` to pin another release or a path to a
   local checkout. Never bump this default past what PyPI can resolve: a default
   that does not install is a container nobody can build.
@@ -182,7 +184,7 @@ To build an installable `.vsix` instead:
 
 ```bash
 npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
-code --install-extension ffwf-tau-code-0.4.1.vsix
+code --install-extension ffwf-tau-code-0.5.0.vsix
 ```
 
 **If you installed 0.1.x, uninstall it first.** The extension ID changed from
@@ -300,7 +302,7 @@ names both and offers the setting:
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Two taus are installed and they are different versions. Running      │
-│ 0.10.1, from the tau runtime extension (linux-x64, Python 3.11.16).  │
+│ 0.10.3, from the tau runtime extension (linux-x64, Python 3.11.16).  │
 │ Also found 0.10.2, from tau on PATH. The "tau-code.runtime" setting  │
 │ chooses between them.                          [ Choose ]      [ ✕ ] │
 └──────────────────────────────────────────────────────────────────────┘

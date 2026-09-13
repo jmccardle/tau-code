@@ -40,12 +40,16 @@ FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 # never past what PyPI can resolve: a default that does not install is an image
 # nobody can build.
 #
-# 0.10.1 speaks protocol 1.5, which is every verb this client calls -- the
+# 0.10.3 speaks protocol 1.6, which is every verb this client calls -- the
 # conversation tree browser (get_tree, get_entry) and the extension request
 # panel (get_pending_request, answer_request) included. It is what
 # packages/protocol/src/generated.ts is generated from, so this pin and that
 # file agree by construction; `npm run check:protocol` is what proves it.
-ARG TAU_SPEC=ffwf-tau==0.10.1
+#
+# It is also the same release packages/runtime pins. Those two move together:
+# two artifacts shipping two taus is how a client ends up tested against
+# neither.
+ARG TAU_SPEC=ffwf-tau==0.10.3
 
 # The agent's tools resolve against a bind-mounted /work, so the container user
 # has to match the host user who owns it. -o allows a duplicate id; the node

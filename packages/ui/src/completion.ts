@@ -65,6 +65,21 @@ export interface CommandInfo {
   origin: 'builtin' | 'extension';
   /** Whether the command declares its arguments, so a form can be built for it. */
   flow: boolean;
+  /**
+   * A private-registry name -- `ext:<extension>.<command>` (protocol 1.6).
+   *
+   * Every extension command has one and nothing can take it away, so before 1.6
+   * the popup offered BOTH halves of every extension command and the reader saw
+   * `speak` and `ext:pirate.speak` as if they were two things. They are one. The
+   * `ext:` half is the one that cannot be shadowed, so it is worth reaching --
+   * just not worth doubling the list for.
+   *
+   * A tau older than 1.6 does not send the field. False is what it MEANT: there
+   * was no marking, so nothing was marked, and that tau's popup keeps behaving
+   * exactly as it does today rather than losing its extension commands to a
+   * check its wire cannot answer.
+   */
+  hidden: boolean;
 }
 
 /**
@@ -101,6 +116,11 @@ export function commandSpan(
  * Built-ins come first and an extension that registered a built-in's name is
  * dropped, because tau resolves in that order: such a name is unreachable, so
  * offering it would advertise a command the user cannot run.
+ *
+ * A `hidden` name (`ext:pirate.speak`) appears only once `ext:` has been typed.
+ * It resolves like any other name and is never unreachable -- the rule here is
+ * about noise, not about capability, which is why it is a display filter and not
+ * a drop: the reader who wants the unshadowable half asks for it and gets it.
  */
 export function completeCommand(
   text: string,
@@ -110,11 +130,16 @@ export function completeCommand(
   const span = commandSpan(text);
   if (span === null) return null;
 
+  // `ext:` typed is the reader asking for the private registry by name. Until
+  // then the `ext:` half of each extension command is the same command twice.
+  const wantsHidden = span.token.startsWith('ext:');
+
   const seen = new Set<string>();
   const candidates: Candidate[] = [];
   for (const pass of ['builtin', 'extension'] as const) {
     for (const command of commands) {
       if (command.origin !== pass) continue;
+      if (command.hidden && !wantsHidden) continue;
       if (seen.has(command.name)) continue;
       if (!command.name.startsWith(span.token)) continue;
       seen.add(command.name);

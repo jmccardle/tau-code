@@ -82,3 +82,52 @@ test('the reason survives to the client as a sentence, not as a prefix', () => {
   assert.match(error.message, /get_capabilities/);
   assert.equal(error.code, NO_AGENT);
 });
+
+/**
+ * The second way a panel can be left with nothing to read.
+ *
+ * A close that happens before `connect()` is called is emitted to nobody --
+ * `TauClient` is constructed, the transport hands over a close it was already
+ * holding, and the hook subscribes a line later. That is not a race to be
+ * tightened: the reason is a fact about the connection, so what matters is that
+ * the next refusal still carries it. It did not, and the panel read "Cannot
+ * call get_capabilities: the connection is closed." over a log that said tau
+ * had exited with code 0 and could be restarted from the palette.
+ */
+const EXITED = 'tau exited with code 0. Run "tau: Restart Agent" to start it again.';
+
+/** A transport that is already closed by the time the client sees it. */
+function closedTransport(reason) {
+  return {
+    onMessage() {},
+    onClose(handler) {
+      handler(reason);
+    },
+    close() {},
+    send() {
+      throw new Error('nothing should be sent over a closed transport');
+    },
+  };
+}
+
+test('a call after a close is refused with the reason, not with the state', async () => {
+  const client = new TauClient(closedTransport(EXITED));
+  await assert.rejects(
+    () => client.connect(),
+    (error) => {
+      assert.match(error.message, /get_capabilities/);
+      // The sentence the host wrote, intact -- including what to do next.
+      assert.match(error.message, /exited with code 0/);
+      assert.match(error.message, /Restart Agent/);
+      return true;
+    },
+  );
+});
+
+test('a client closed with no reason still says it is closed', async () => {
+  // `close()` from this side supplies its own reason, so the fallback wording
+  // is only reachable by a transport that closes silently. It must still be a
+  // sentence.
+  const client = new TauClient(closedTransport(''));
+  await assert.rejects(() => client.connect(), /Cannot call get_capabilities: the connection is closed\./);
+});

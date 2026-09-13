@@ -1,5 +1,6 @@
 # What lands in the .vsix. The payload under runtime/ is the POINT of this
 # extension, so unlike packages/vscode nearly all of the archive is data.
+.gitignore
 src/**
 scripts/**
 node_modules/**

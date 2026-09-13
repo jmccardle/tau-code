@@ -1,14 +1,15 @@
 # Architecture
 
 **Status: the tree browser is built (2026-09-09, 0.4.0); the mark is drawn
-(2026-09-12, 0.4.1).** Chat works end to end
+(2026-09-12, 0.4.1); the runtime can come along (2026-09-12, 0.5.0).** Chat
+works end to end
 in both hosts, and so does the conversation tree — rows, zones, marks, folds,
 elide, branch and paste, with the TUI's keys. The editor integrations
 (jump-to-edit, diff views) are designed for and not built; §7.1 says what τ still
 discards.
 
 Provenance: every claim about τ's protocol in this document was measured against
-a live τ process in `~/Development/agent-harness-py` at protocol version **1.5**.
+a live τ process in `~/Development/agent-harness-py` at protocol version **1.6**.
 Claims about VS Code come from its published API documentation, and were checked
 in VS Code 1.135.0 and VSCodium 1.98.1 with the built `.vsix` installed.
 
@@ -1111,12 +1112,36 @@ Four properties, each of which was measured rather than assumed.
 
 **Isolated.** Spawned as `python3.11 -I -m tau_coding_agent.cli`. `-I` drops
 `PYTHONPATH`, `PYTHONHOME`, the user site directory **and the working
-directory** from `sys.path`. The last is the one that matters here and it is
-not tidiness: an agent's cwd is the user's project, and without `-I` a
-`pydantic.py` in it is imported instead of the real one. Demonstrated both
-ways in `packages/runtime/README.md`. This is also why the runtime hands over
-an interpreter and arguments rather than the `tau` console script — the script
+directory** from `sys.path`. Two of those are load-bearing, and the user site
+directory turned out to be the worse of them: `~/.local/lib/python3.11/
+site-packages` is on this interpreter's path by default like any other's, and
+a stale `typing_extensions` there shadowed the payload's and surfaced as
+`ImportError: cannot import name 'sentinel'` raised inside a model streaming
+call. The cwd case needs a project with an unluckily-named file; that one is
+machine-wide and permanent. Demonstrated both ways in
+`packages/runtime/README.md`. This is also why the runtime hands over an
+interpreter and arguments rather than the `tau` console script — the script
 pip generates carries an absolute shebang written on the build machine.
+
+**`-I` governs `sys.path`, not the process.** The cwd is left alone, so τ's
+*tools* still resolve against the user's project — `complete_path` from a
+payload spawned in a test project returns that project's files. The two are
+separate knobs and only the import one is closed; a runtime that isolated the
+tools as well would be a different and useless product.
+
+The one seam where τ's runtime and the user's project legitimately meet is a τ
+**extension**, which is project Python that τ imports. This was a real delta
+until τ 0.10.3: a single-file extension's `import helper` could not resolve.
+It is fixed upstream rather than here, and fixed more completely than a
+launcher flag could manage — `_load_one_extension` now puts the module's own
+directory on `sys.path` for the length of its import, so the behaviour no
+longer depends on how the interpreter was started. Worth recording that the
+original reading was wrong in an instructive way: the failure looked like a
+working-directory problem, and it was not. A `pip`-installed `tau` is a console
+script, so `sys.path[0]` is the venv's `bin/` and cwd was never on the path at
+all — the import failed from a system τ too, from every directory. `-I` was
+never what broke it. Against τ 0.10.2 or older it stays broken under both, which
+is why this runtime pins 0.10.3 and not merely "recent enough".
 
 **Relocatable.** Every path in `manifest.json` is relative to the payload root,
 and `bin/tau` resolves the interpreter relative to itself through a symlink

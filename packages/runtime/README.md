@@ -26,10 +26,27 @@ packages and ~18 MB.
 ## It does not touch your Python
 
 The interpreter is spawned with `-I`, so `PYTHONPATH`, `PYTHONHOME`, your user
-site directory and **the working directory** are all off `sys.path`. That last
-one is the point rather than tidiness: an agent's working directory is your
-project, and without `-I` a file called `pydantic.py` in it is imported instead
-of the real one. Verified, both ways:
+site directory and **the working directory** are all off `sys.path`. Two of
+those are load-bearing, and each has a measured failure behind it.
+
+**Your user site directory.** This is the one that bites without a project in
+sight, because `~/.local/lib/python3.11/site-packages` is on every interpreter's
+path by default — including this one:
+
+```console
+$ .../python/bin/python3.11 -c 'import typing_extensions as t; print(t.__file__)'
+/home/you/.local/lib/python3.11/site-packages/typing_extensions.py   # yours
+
+$ .../python/bin/python3.11 -I -c 'import typing_extensions as t; print(t.__file__)'
+.../runtime/python/lib/python3.11/site-packages/typing_extensions.py # ours
+```
+
+An old `typing_extensions` there surfaces as `ImportError: cannot import name
+'sentinel'` raised **inside a model streaming call**, nowhere near its cause.
+
+**The working directory.** An agent's cwd is your project, and the shim runs
+`-m`, which puts cwd on `sys.path[0]`. A file called `pydantic.py` in your
+project would be imported instead of the real one:
 
 ```console
 $ cd a-project-with-a-pydantic.py
@@ -37,8 +54,20 @@ $ .../python/bin/python3.11 -m tau_coding_agent.cli --version
 SHADOWED: the workspace pydantic.py was imported
 
 $ .../bin/tau --version          # the shim, which passes -I
-tau 0.10.1
+tau 0.10.3
 ```
+
+**This isolates τ's own imports, not its tools.** The process's working
+directory is untouched, so `@file` completion, reads, writes and every shell
+command still resolve against your project exactly as a system τ does. `-I`
+governs `sys.path`; cwd is a separate thing, and only the first is closed.
+
+The one place those two legitimately meet is a τ **extension**, which is project
+Python that τ imports. τ 0.10.3 puts the extension's own directory on `sys.path`
+for the length of its import, so a single-file extension's `import helper`
+resolves the same under this runtime as under any other. Against τ 0.10.2 or
+older that import fails — but it failed from a `pip`-installed `tau` too, for a
+different reason, so this runtime is not the thing that broke it.
 
 Nothing here reads or writes anything of yours except the session store and
 config that τ itself uses — the same `~/.tau` the TUI uses, so the two

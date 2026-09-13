@@ -141,6 +141,11 @@ export async function loadCommands(client: TauClient): Promise<CommandInfo[]> {
       description: typeof record['description'] === 'string' ? record['description'] : '',
       origin,
       flow: record['flow'] === true,
+      // Not in the required-key list above: `hidden` arrived in protocol 1.6 and
+      // MINOR is additive, so a 1.5 tau answers without it and must keep working.
+      // Absent is not a missing answer, it is the older tau's actual one -- it
+      // marked nothing, so nothing is marked.
+      hidden: record['hidden'] === true,
     };
   });
 }

@@ -2,6 +2,7 @@
 # a single bundled dist/extension.js plus the webview build, so everything that
 # produced them is dead weight in the .vsix.
 src/**
+test/**
 node_modules/**
 dist-types/**
 esbuild.mjs

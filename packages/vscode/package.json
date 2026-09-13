@@ -3,7 +3,7 @@
   "name": "tau-code",
   "//displayName": "A FOURTH namespace, and the only global one: `name` is scoped by publisher, so `ffwf.tau-code` is ours as soon as we own `ffwf`, but a display name is unique across the entire Marketplace and no publisher prefix applies. `tau` was refused as taken. This one matches every other identifier here -- the repository, the extension name, the .vsix. Open VSX enforces no such rule.",
   "displayName": "tau code",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Run a tau agent inside VS Code or VSCodium.",
   "license": "MIT",
   "publisher": "ffwf",
@@ -18,11 +18,23 @@
   },
   "categories": ["AI", "Other"],
   "icon": "media/icon.png",
+  "//capabilities": "Both were absent, which is not the same as neutral: an undeclared extension is disabled in a Restricted Mode workspace with no sentence saying so. Opening an untrusted folder in VS Code proper therefore showed no tau icon, no command, and nothing in the log -- the extension was never loaded, and the reader had no way to learn that trust was the reason. Declaring `false` changes no behaviour; it supplies the explanation VS Code shows in the trust UI, which is the whole defect.",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "tau runs shell commands and edits files in the open folder, on instructions from a model that read that folder. There is no reduced mode that is still an agent, so this asks for trust rather than pretending to work without it."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "tau is a local process with a working directory. A workspace served from a remote index has no filesystem to be that directory."
+    }
+  },
   "//packaging": "What lands in the .vsix is controlled by .vscodeignore. vsce refuses to accept both that and a `files` property, so there is no `files` here.",
   "main": "./dist/extension.js",
   "//extensionKind": "`workspace` so the agent's tools run where the code is -- over SSH, in WSL, in a devcontainer -- rather than on the laptop. The webview always renders locally regardless, which is the split a standalone web app cannot reproduce.",
   "extensionKind": ["workspace"],
-  "activationEvents": [],
+  "//activationEvents": "One entry, and it is the one VS Code cannot infer. Commands and views are inferred from `contributes` below, so this stayed empty and looked finished. A webview PANEL has no contribution point -- its viewType exists only in code -- so a reopened window restores the `tau` tab, finds no extension awake to deserialize it, and leaves it blank until something else happens to activate us. The serializer in extension.ts was already written for this; without the line it was never called.",
+  "activationEvents": ["onWebviewPanel:tau-code.panel"],
   "contributes": {
     "viewsContainers": {
       "activitybar": [

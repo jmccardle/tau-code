@@ -36,6 +36,18 @@ export class VsCodeTransport implements Transport {
   #onClose: ((reason: string) => void) | null = null;
   #onNotice: ((notice: HostNotice) => void) | null = null;
   #closed = false;
+  /**
+   * A close that arrived before anybody was listening for one.
+   *
+   * The window listener is attached in this constructor, but `onClose` is
+   * registered later, when `TauClient` is built. Anything the host says in
+   * between used to be dropped -- and `tau_code/process_exit` is exactly what
+   * the host says in that window when a restart's OLD process dies while the
+   * NEW page is still booting. The transport marked itself closed, nothing was
+   * told, and `send` then refused every request in silence: `connect()` never
+   * resolved and never rejected, so the panel read "connecting" forever.
+   */
+  #pendingClose: string | null = null;
 
   constructor() {
     window.addEventListener('message', (event: MessageEvent) => {
@@ -72,7 +84,14 @@ export class VsCodeTransport implements Transport {
   }
 
   send(message: unknown): void {
-    if (this.#closed) return;
+    // Throwing, not returning. `TauClient.call` sends inside a Promise executor,
+    // so this rejects that one call with a sentence; swallowing it left the
+    // request pending forever, and a request that never settles is the one
+    // failure a UI cannot render. The host is the only thing that can restart
+    // tau, so there is nothing to retry here and nothing to queue.
+    if (this.#closed) {
+      throw new Error('tau is not running, so nothing can be sent to it.');
+    }
     api().postMessage(message);
   }
 
@@ -82,6 +101,13 @@ export class VsCodeTransport implements Transport {
 
   onClose(handler: (reason: string) => void): void {
     this.#onClose = handler;
+    // Say the thing that was said while nobody was listening. Delivered once:
+    // a close is a fact about the connection, not a message queue.
+    const pending = this.#pendingClose;
+    if (pending !== null) {
+      this.#pendingClose = null;
+      handler(pending);
+    }
   }
 
   close(): void {
@@ -93,6 +119,10 @@ export class VsCodeTransport implements Transport {
   #fire(reason: string): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#onClose?.(reason);
+    if (this.#onClose) {
+      this.#onClose(reason);
+      return;
+    }
+    this.#pendingClose = reason;
   }
 }

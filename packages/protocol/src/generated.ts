@@ -6,12 +6,12 @@
  * reads `get_capabilities`. The wire is the source of truth; nothing here is
  * hand-maintained.
  *
- * Protocol version: 1.5   Dialect: jsonrpc-2.0
+ * Protocol version: 1.6   Dialect: jsonrpc-2.0
  * Commands: 40   Declined: 7   Events: 10
  */
 
 /** The protocol version this file was generated from. */
-export const PROTOCOL_VERSION = "1.5" as const;
+export const PROTOCOL_VERSION = "1.6" as const;
 export const DIALECT = "jsonrpc-2.0" as const;
 
 /** Bounds tau enforces on what a host may SEND. */
@@ -608,6 +608,8 @@ export type GetCommandsResult = {
     origin: "builtin" | "extension";
     /** Whether this command DECLARES what it takes. True means `next_step` will step it and `enumerate_domain` will list its argument's values, so a host can build a form or a completion list for it; false means the command takes one opaque line and there is nothing to ask about. Every built-in flow is true and the two view commands are false; an extension command is true only if it used `register_flow` (docs/EXTENSION-FLOWS.md). */
     flow: boolean;
+    /** True for a private-registry name — `ext:<extension>.<command>`, which every extension command always has and which nothing can take from it (docs/EXTENSION-NAMESPACE.md). It resolves exactly like any other name; it is marked because offering both halves of the same command in one completion list is noise. Show these only once the reader has typed `ext:`. False for every name a reader would type unprompted. */
+    hidden: boolean;
     [key: string]: unknown;
   }[];
   [key: string]: unknown;

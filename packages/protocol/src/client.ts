@@ -78,6 +78,16 @@ export class TauClient {
   };
   #capabilities: Capabilities | null = null;
   #closed = false;
+  /**
+   * Why this connection ended, kept after the `close` event has been emitted.
+   *
+   * A close can happen before anyone is listening for one -- a stdio transport
+   * that learns of a dead process during construction, for instance -- and the
+   * event is then emitted to nobody. The reason is not a message that was
+   * missed, it is a permanent fact about this client, so it is remembered and
+   * every later refusal is phrased with it.
+   */
+  #closedReason: string | null = null;
 
   constructor(transport: Transport) {
     this.#transport = transport;
@@ -136,7 +146,16 @@ export class TauClient {
   /** Send one request and await its response. */
   call<M extends CommandName>(method: M, params: CommandParams<M>): Promise<CommandResult<M>> {
     if (this.#closed) {
-      return Promise.reject(new Error(`Cannot call ${method}: the connection is closed.`));
+      // The reason, not the state. "The connection is closed" is the one thing
+      // the caller can already see; what it cannot see is that tau exited with
+      // code 0 a moment ago and can be restarted from the command palette. A
+      // close that arrived before `connect()` was even called is exactly the
+      // case that reaches here, and it is the case where the reason matters
+      // most, because no pending request exists to carry it instead.
+      // `||`, not `??`: a transport that closes with an empty string has given
+      // no reason, whatever its type says, and a refusal has to be a sentence.
+      const why = this.#closedReason?.trim() || 'the connection is closed.';
+      return Promise.reject(new Error(`Cannot call ${method}: ${why}`));
     }
     const id = this.#nextId++;
     return new Promise<CommandResult<M>>((resolve, reject) => {
@@ -154,6 +173,7 @@ export class TauClient {
   #handleClose(reason: string): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#closedReason = reason;
     for (const [, pending] of this.#pending) {
       pending.reject(new Error(`Connection closed before ${pending.method} answered: ${reason}`));
     }

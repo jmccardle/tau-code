@@ -208,6 +208,17 @@ export class TauSession implements vscode.Disposable {
     void proc.waitForExit().then((exit) => {
       if (this.#disposed) return;
       const how = exit.signal !== null ? `killed by ${exit.signal}` : `exited with code ${exit.code}`;
+      // Only the CURRENT process gets to say the agent is gone. A restart stops
+      // the old one and this handler is still attached to it, so without the
+      // guard the corpse announces its own death onto the page that replaced it
+      // -- and it lands during that page's boot, before the client has attached
+      // anything, where `VsCodeTransport` used to lose it and then refuse to
+      // send. The panel sat on "connecting" until the window was reloaded. The
+      // transport no longer loses a close; this is why one is not sent.
+      if (this.#proc !== proc) {
+        this.output.info(`[${this.label}] the previous tau ${how}.`);
+        return;
+      }
       this.output.warn(`[${this.label}] tau ${how}`);
       // Both: the message reaches a webview that is certainly alive by now, and
       // the record answers anything it sends afterwards.
