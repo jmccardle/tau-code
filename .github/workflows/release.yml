@@ -40,8 +40,18 @@ permissions:
 concurrency:
   group: release-${{ github.ref }}
 
+# Every action here runs on the runner's Node 24. The v4/v5 generation ran on
+# Node 20, which GitHub now force-upgrades and will eventually stop shipping --
+# so those majors are a release that breaks on a date somebody else picks. The
+# majors below are the ones that declare `using: node24` themselves. They want
+# a runner of at least 2.327.1, which every GitHub-hosted runner is.
+#
+# NODE_VERSION is a separate decision from those: it is the Node that runs the
+# build, not the Node that runs the actions. It is 24 to match, but nothing
+# shipped depends on it -- both esbuild bundles pin `target: node18`, so the
+# extension host still gets what it has always got.
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '24'
   # The version the payloads are built for. `--python-version 311` is passed to
   # pip explicitly by build-payload.mjs, so this only decides which interpreter
   # resolves the wheels -- but matching it to the payload keeps the two from
@@ -59,9 +69,9 @@ jobs:
     outputs:
       targets: ${{ steps.targets.outputs.targets }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -91,7 +101,7 @@ jobs:
       - name: package tau code
         run: npm run package --workspace packages/vscode
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix-editor
           path: ffwf-tau-code-*.vsix
@@ -109,21 +119,21 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.checks.outputs.targets) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - run: npm ci
 
       - name: cache the interpreter tarball
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: packages/runtime/.cache
           # The CPython release and version are pinned constants inside
@@ -198,7 +208,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: cp packages/runtime/runtime/manifest.json "manifest-$TARGET.json"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: runtime-${{ matrix.target }}
           path: |
@@ -216,13 +226,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true

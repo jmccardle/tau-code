@@ -22,7 +22,7 @@
     "generate": "node scripts/generate-protocol.mjs",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "tsc --build",
-    "test": "node --test packages/*/test/",
+    "test": "node --test",
     "smoke": "node scripts/smoke.mjs",
     "smoke:tree": "node scripts/smoke-tree.mjs",
     "smoke:server": "node scripts/smoke-server.mjs",
