@@ -11,7 +11,15 @@
 #
 # The container prints an authenticated URL. Open it.
 
-ARG NODE_VERSION=20
+# The Node this image runs, which is a different decision from the Node that
+# builds the .vsix files -- that one is NODE_VERSION in the release workflow,
+# and it is 24 for the actions' sake. This one is 24 because bookworm-slim's
+# node:20 line stops getting security updates when Node 20 leaves maintenance,
+# and an image is a thing a user runs rather than a thing a build throws away.
+#
+# Both stages take it, and they take the same one on purpose: the server that
+# gets built and the server that gets run should not be two Nodes.
+ARG NODE_VERSION=24
 
 # ---------------------------------------------------------------- build stage
 FROM node:${NODE_VERSION}-bookworm-slim AS build

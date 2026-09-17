@@ -1,10 +1,12 @@
 # Build what a version tag claims, and attach it to a GitHub release.
 #
 # Two of the four artifacts (ARCHITECTURE 14.1) are .vsix files, and those are
-# what this builds: the universal `ffwf.tau-code`, and one `ffwf.tau-runtime`
-# per VS Code desktop target. The container image is deliberately not built
-# here -- an image is pushed to a registry rather than attached to a release,
-# which is a different credential and a different decision.
+# what this releases: the universal `ffwf.tau-code`, and one `ffwf.tau-runtime`
+# per VS Code desktop target. The container image is built and proved here but
+# never published -- an image goes to a registry rather than onto a release,
+# which is a different credential and a different decision. Building it costs
+# no credential at all, and is how a Dockerfile that stopped working gets
+# found here instead of by whoever ran `docker build` next.
 #
 # EVERY RUNTIME TARGET IS BUILT ON A LINUX RUNNER, and that is not a shortcut.
 # The payload is a prebuilt interpreter plus wheels; the only compiled thing in
@@ -215,6 +217,41 @@ jobs:
             ffwf-tau-runtime-*.vsix
             manifest-*.json
           if-no-files-found: error
+
+  # ----------------------------------------------------------------- image
+  # The third artifact, built the way `scripts/package.sh image` builds it and
+  # then run, because an image that builds is not the same claim as an image
+  # whose two runtimes can reach each other. .dockerignore excludes every
+  # dist/, so this compiles its own copy from source rather than copying one
+  # in -- a second, independent proof that the tree builds.
+  #
+  # `release` deliberately does NOT `needs` this. The image is not in the
+  # release and never has been (14.1), so a broken Dockerfile should not hold
+  # back .vsix files that contain none of it. It reports red on the run, which
+  # is the whole of what this job is for.
+  #
+  # No --build-arg NODE_VERSION: the Dockerfile's own default is the thing
+  # under test. Passing the workflow's NODE_VERSION would test the image a
+  # release builds and leave the image a user builds unproven, which is
+  # backwards -- they agree today, and this is what would catch the day they
+  # stop.
+  image:
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: build the image
+        run: docker build --target runtime -t ffwf/tau-code:ci .
+
+      - name: build the verifier
+        run: docker build --target verify -t ffwf/tau-code-verify:ci .
+
+      - name: the two runtimes reach each other
+        # Node spawns the Python tau inside the image and reads a protocol
+        # version back off it. No model is contacted; the config the image
+        # writes names an address nothing listens on.
+        run: docker run --rm ffwf/tau-code-verify:ci
 
   # --------------------------------------------------------------- release
   release:

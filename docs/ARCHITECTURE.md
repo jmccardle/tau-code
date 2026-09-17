@@ -1324,8 +1324,49 @@ payload's `manifest.json`, which records what pip *installed* rather than what
 disagree about which τ they carry, because §14.3's two-τ failure shipped nine
 times is not something to discover in a changelog.
 
-What is deliberately not here: the container image, which is pushed to a
-registry rather than attached to a release and is therefore a different
-credential and a different decision, and any marketplace publish.
-`scripts/publish-extension.sh` stays a thing a person runs, because §9.4's two
-marketplaces take two tokens and a `vsce publish` cannot be taken back.
+**The image is built here but not published, and those are two decisions.**
+Publishing needs a registry credential and is therefore a different gesture,
+the same way §9.4's marketplaces are; `scripts/publish-extension.sh` stays a
+thing a person runs, because two marketplaces take two tokens and a `vsce
+publish` cannot be taken back. But *building* needs nothing, and an image that
+has quietly stopped building is otherwise found by whoever next runs
+`scripts/package.sh image` — which is a person, on their own afternoon. So the
+`image` job does what that script does minus the tagging: build the runtime
+stage, build the verify stage, run it. `docker/verify.mjs` is what makes it
+worth a job rather than a lint — it spawns the Python τ from the Node side and
+reads a protocol version back, which is the one question a two-runtime image
+can get wrong in a way nothing else catches.
+
+It is the one job `release` does not `needs`. The image is not in the release
+(§14.1), so a Dockerfile that broke should report red without holding back
+`.vsix` files that contain none of it.
+
+### 14.9 Two Node versions, and neither is the other's default
+
+`NODE_VERSION` in the workflow and `ARG NODE_VERSION` in the `Dockerfile` are
+both 24 and are not the same decision. The workflow's is the Node that *builds*
+the `.vsix` files, and it is 24 because the actions are: GitHub's runners no
+longer ship Node 20, so the `v4`/`v5` action generation is a release that
+breaks on a date somebody else picks. Nothing shipped depends on it — both
+`esbuild.mjs` bundles pin `target: node18`, so the extension host gets what it
+always got.
+
+The `Dockerfile`'s is the Node a *user runs*, for as long as they run the
+image, and it follows the Debian base's support window rather than the runner's.
+The `image` job passes no `--build-arg`, deliberately: the default in the file
+is the thing under test, and overriding it would prove the image a release
+builds while leaving the image a user builds unproven.
+
+**Measured, because it is not free.** The same tree built at both: 384 MB on
+`node:20-bookworm-slim`, 414 MB on `node:24-bookworm-slim`. The base images
+are 200 MB and 230 MB, so the entire 30 MB is the base — nothing this
+repository puts in the image grew by a byte. That is the price of a Node line
+that still gets security updates, paid once per pull.
+
+The one change either forced was in this repository rather than in CI. `npm
+test` was `node --test packages/*/test/`, which hands the runner four
+directories; Node 20 walked them and Node 24 tries to `import` them, so all
+four "tests" failed with `MODULE_NOT_FOUND` and zero tests ran. It is now bare
+`node --test`, which discovers the same 140 tests on both, recursively, and
+picks up a test file added anywhere rather than only in the four directories
+that exist today. `engines` still says `>=20`, because that is still true.
