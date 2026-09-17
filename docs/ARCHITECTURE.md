@@ -2,7 +2,8 @@
 
 **Status: the tree browser is built (2026-09-09, 0.4.0); the mark is drawn
 (2026-09-12, 0.4.1); the runtime can come along (2026-09-12, 0.5.0); a tag
-builds all nine of them (2026-09-13, 0.5.1).** Chat
+builds all nine of them (2026-09-13, 0.5.1); the actions and the image run
+Node 24 (2026-09-17, 0.5.2).** Chat
 works end to end
 in both hosts, and so does the conversation tree — rows, zones, marks, folds,
 elide, branch and paste, with the TUI's keys. The editor integrations

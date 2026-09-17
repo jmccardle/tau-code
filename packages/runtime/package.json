@@ -3,7 +3,7 @@
   "name": "tau-runtime",
   "//displayName": "Sits next to `tau code` in the extension list, which is the whole point of the name: a user looking at what they installed can see that the runtime is a second thing they can remove.",
   "displayName": "tau runtime",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A self-contained CPython with tau installed into it, for the tau code extension. Optional: tau code uses a system tau when this is absent.",
   "license": "MIT",
   "publisher": "ffwf",
