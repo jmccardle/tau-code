@@ -179,7 +179,7 @@ export interface AttachmentCompletion {
   [key: string]: unknown;
 }
 
-/** What `Submit.expand_attachments` did. */
+/** What a submission's `expand_attachments` did. */
 export interface AttachmentReport {
   /** How many `@` references were sent as attachments. */
   expanded: number;
@@ -239,7 +239,7 @@ export interface CommandInfo {
   [key: string]: unknown;
 }
 
-/** An extension command's completion, as RPC's `submit` answer names it. */
+/** An extension command's completion, as `submit`'s answer names it. */
 export interface CommandOutput {
   /** The command that ran, which an input hook may have rewritten. */
   name: string | null;
@@ -799,7 +799,7 @@ export interface Error {
 /** A push for an attached session, numbered per session within an `epoch`. */
 export type Event = EntryOpenEvent | EntryFinalEvent | EntryAppendEvent | AgentEventEvent | ChannelEvent | CursorsEvent | RequestEvent | RequestClosedEvent | UiEvent | CompactionEndEvent;
 
-/** One loaded extension and what it registered, as RPC `get_extension_state` lists it. */
+/** One loaded extension and what it registered, as `get_extension_state` lists it. */
 export interface ExtensionInfo {
   commands: string[];
   content_hash: string;
@@ -813,13 +813,13 @@ export interface ExtensionInfo {
 }
 
 /**
- * An extension request at a cursor, as RPC `get_pending_request` answers it
+ * An extension request at a cursor, as `get_pending_request` answers it
  * (docs/EXTENSION-LOCKS.md).
  */
 export interface ExtensionRequest {
   /** What it asks, or `None` for a bare lock. */
   ask: Ask | null;
-  /** The request entry's id; `AnswerRequest` names it. */
+  /** The request entry's id; `answer_request` names it. */
   entry_id: string;
   extension: string;
   /** The display stem of `extension`. */
@@ -1340,7 +1340,7 @@ export interface ModelChangeEntry {
   [key: string]: unknown;
 }
 
-/** One model the daemon's config defines, as RPC `get_models` lists it. */
+/** One model the config defines, as `get_models` lists it. */
 export interface ModelRecord {
   model: ModelSpec;
   name: string;
@@ -1543,7 +1543,7 @@ export interface Prompt {
   /** Whether this submission's turn may open a blocking dialog. */
   allow_user_input?: boolean;
   /** Free-form origin detail (bus subject, cron id, HTTP request id). */
-  correlation?: Record<string, unknown>;
+  correlation?: Correlation;
   /** The cursor the verb acts at. */
   cursor_id: string;
   /** Self-submission depth floor; submit() may raise it further. */
@@ -1754,22 +1754,23 @@ export interface SessionRow {
   [key: string]: unknown;
 }
 
-/** What universe a listing is: the daemon's store, and `cwd` `None` for every directory. */
+/** What universe a listing is: a store, and the `cwd` it is scoped to, `None` for every one. */
 export interface SessionScope {
   cwd: string | null;
   store: string;
   [key: string]: unknown;
 }
 
-/** A loaded session, as RPC's session tuple names it. */
+/** A session a connection drives (F2). */
 export interface SessionTuple {
-  /** Whether another request can name it; always true here. */
+  /** Whether another call can name `session_id`; false for an in-memory session, which `list_sessions` never shows. */
   addressable: boolean;
-  /** Its head cursor. */
+  /** The cursor the connection drives in it. */
   cursor_id: string;
-  /** The head cursor's leaf. */
+  /** That cursor's leaf. */
   leaf: string | null;
   session_id: string;
+  /** The backend label of the connection's catalog. */
   store: string;
   [key: string]: unknown;
 }
@@ -1930,7 +1931,7 @@ export interface Submit {
   /** Whether this submission's turn may open a blocking dialog. */
   allow_user_input?: boolean;
   /** Free-form origin detail (bus subject, cron id, HTTP request id). */
-  correlation?: Record<string, unknown>;
+  correlation?: Correlation;
   /** The cursor the verb acts at. */
   cursor_id: string;
   /** Self-submission depth floor; submit() may raise it further. */
@@ -2331,7 +2332,7 @@ export type ClientFrame = {
   /** Whether this submission's turn may open a blocking dialog. */
   allow_user_input?: boolean;
   /** Free-form origin detail (bus subject, cron id, HTTP request id). */
-  correlation?: Record<string, unknown>;
+  correlation?: Correlation;
   /** The cursor the verb acts at. */
   cursor_id: string;
   /** Self-submission depth floor; submit() may raise it further. */
@@ -2363,7 +2364,7 @@ export type ClientFrame = {
   /** Whether this submission's turn may open a blocking dialog. */
   allow_user_input?: boolean;
   /** Free-form origin detail (bus subject, cron id, HTTP request id). */
-  correlation?: Record<string, unknown>;
+  correlation?: Correlation;
   /** The cursor the verb acts at. */
   cursor_id: string;
   /** Self-submission depth floor; submit() may raise it further. */
