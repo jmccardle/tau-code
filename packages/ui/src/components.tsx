@@ -739,7 +739,7 @@ export function SessionPicker({
 
       {reason ? <div className="tau-sessions-reason">{reason}</div> : null}
 
-      <div className="tau-composer-row">
+      <div className="tau-composer-row tau-sessions-new">
         <input
           className="tau-sessions-cwd"
           value={newCwd}
@@ -795,7 +795,6 @@ export function SessionPicker({
                         <span className="tau-session-title">{sessionLabel(row)}</span>
                         <span className="tau-session-meta">
                           {current ? 'current · ' : ''}
-                          {row.loaded ? 'open in the daemon · ' : ''}
                           {`${row.message_count} msg · `}
                           {formatWhen(row.modified)}
                         </span>

@@ -37,7 +37,13 @@ import type { FromWebview, HostNotice, ToWebview, WebviewContext } from './webvi
  */
 export class DaemonRelay implements vscode.Disposable {
   #webview: vscode.Webview;
-  #sockets = new Map<number, WebSocket>();
+  /**
+   * Every connection the webview has asked for and not closed. `socket` is
+   * null while the daemon is being found and dialled; frames that arrive then
+   * wait in `queue`, because the webview says `hello` in the same tick it asks
+   * for the connection.
+   */
+  #connections = new Map<number, { socket: WebSocket | null; queue: string[] }>();
   #disposed = false;
   /** Notices from the last daemon lookup, re-sent to a reloaded page. */
   #notices: HostNotice[] = [];
@@ -90,16 +96,22 @@ export class DaemonRelay implements vscode.Disposable {
   #fromWebview(message: FromWebview): void {
     switch (message.tauCode) {
       case 'open':
+        this.#connections.set(message.connection, { socket: null, queue: [] });
         void this.#open(message.connection);
         return;
       case 'frame': {
-        const socket = this.#sockets.get(message.connection);
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify(message.frame));
+        const connection = this.#connections.get(message.connection);
+        const text = JSON.stringify(message.frame);
+        if (connection?.socket?.readyState === WebSocket.OPEN) {
+          connection.socket.send(text);
           return;
         }
-        // A frame for a connection that is not open is a request that would
-        // never be answered. Close that connection, so the client rejects it.
+        if (connection && (connection.socket === null || connection.socket.readyState === WebSocket.CONNECTING)) {
+          connection.queue.push(text);
+          return;
+        }
+        // A frame for a connection that is gone is a request that would never
+        // be answered. Close that connection, so the client rejects it.
         this.#post({
           tauCode: 'closed',
           connection: message.connection,
@@ -108,10 +120,12 @@ export class DaemonRelay implements vscode.Disposable {
         });
         return;
       }
-      case 'close':
-        this.#sockets.get(message.connection)?.close(1000, 'client closed');
-        this.#sockets.delete(message.connection);
+      case 'close': {
+        const connection = this.#connections.get(message.connection);
+        this.#connections.delete(message.connection);
+        connection?.socket?.close(1000, 'client closed');
         return;
+      }
       case 'command':
         void vscode.commands.executeCommand(message.command, ...(message.argument === undefined ? [] : [message.argument]));
         return;
@@ -141,18 +155,22 @@ export class DaemonRelay implements vscode.Disposable {
         ];
         this.#flushNotices();
       }
+      this.#connections.delete(connection);
       this.#post({ tauCode: 'closed', connection, reason, code: CLOSE_NOTHING_TO_DIAL });
       return;
     }
-    if (this.#disposed) return;
+    const entry = this.#connections.get(connection);
+    // The webview gave up on this connection while the daemon was being found.
+    if (this.#disposed || !entry) return;
 
     const socket = new WebSocket(url, { maxPayload: 0 });
-    this.#sockets.set(connection, socket);
+    entry.socket = socket;
     let opened = false;
 
     socket.on('open', () => {
       opened = true;
       this.output.info(`[${this.label}] connection ${connection} open to ${url}`);
+      for (const text of entry.queue.splice(0)) socket.send(text);
     });
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
@@ -172,7 +190,8 @@ export class DaemonRelay implements vscode.Disposable {
       this.output.warn(`[${this.label}] connection ${connection}: ${error.message}`);
     });
     socket.on('close', (code, reasonBuffer) => {
-      this.#sockets.delete(connection);
+      if (this.#connections.get(connection)?.socket !== socket) return; // closed by the webview
+      this.#connections.delete(connection);
       if (!opened) {
         // The address went stale: the daemon stopped since it was found. Ask
         // τ again on the next open, which starts one if none answers.
@@ -231,8 +250,9 @@ export class DaemonRelay implements vscode.Disposable {
   }
 
   #closeAll(reason: string): void {
-    for (const socket of this.#sockets.values()) socket.close(1000, reason);
-    this.#sockets.clear();
+    const connections = [...this.#connections.values()];
+    this.#connections.clear();
+    for (const { socket } of connections) socket?.close(1000, reason);
   }
 
   html(): string {
