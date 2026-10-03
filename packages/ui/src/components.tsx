@@ -106,6 +106,8 @@ function ItemView({ item, writing }: { item: Item; writing: boolean }): JSX.Elem
         <div className="tau-entry tau-entry-assistant">
           <div className="tau-role">Agent</div>
           <Blocks blocks={item.blocks} markdown />
+          {/* A stopped answer is a prefix, and looks finished unless it says so. */}
+          {item.stopReason === 'aborted' ? <div className="tau-muted">Stopped before it finished.</div> : null}
           {item.error ? <div className="tau-notice tau-warn">The model call failed: {item.error}</div> : null}
         </div>
       );
