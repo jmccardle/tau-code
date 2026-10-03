@@ -170,15 +170,11 @@ export function TreePanel({ session, revision, onRevise, onClose, running }: Tre
     void reload();
   }, [reload, revision]);
 
-  /** One backend mutation at this head's cursor, by name. */
-  const call = useCallback(
-    async (method: string, args: Record<string, unknown>): Promise<void> => {
-      if (!session) throw new Error('Not attached to a session.');
-      const { client, session_id, cursor_id } = session.at();
-      await client.request('perform', { session_id, cursor_id, method, arguments: args });
-    },
-    [session],
-  );
+  /** Where every tree edit happens: this session, at this head's cursor. */
+  const at = useCallback(() => {
+    if (!session) throw new Error('Not attached to a session.');
+    return session.at();
+  }, [session]);
 
   // Focus the panel as it opens. Without this the arrow keys do nothing until
   // the reader clicks somewhere they have not been told about, which reads as
@@ -328,17 +324,23 @@ export function TreePanel({ session, revision, onRevise, onClose, running }: Tre
   const navigate = useCallback(
     async (entryId: string, instructions: string | null, summarize: boolean): Promise<void> => {
       if (!session) return;
-      await perform('Moving the cursor', () =>
-        call('navigate_tree', {
-          target_id: entryId,
-          summarize,
-          ...(summarize && instructions !== null && instructions !== '' ? { custom_instructions: instructions } : {}),
-        }),
-      );
+      await perform('Moving the cursor', async () => {
+        const { client, session_id, cursor_id } = at();
+        if (summarize) {
+          await client.request('summarize_and_navigate', {
+            session_id,
+            cursor_id,
+            target_id: entryId,
+            ...(instructions !== null && instructions !== '' ? { custom_instructions: instructions } : {}),
+          });
+        } else {
+          await client.request('navigate', { session_id, cursor_id, target_id: entryId });
+        }
+      });
       setChooser(null);
       onClose();
     },
-    [session, call, perform, onClose],
+    [session, at, perform, onClose],
   );
 
   const commitElide = useCallback(async (): Promise<void> => {
@@ -348,11 +350,15 @@ export function TreePanel({ session, revision, onRevise, onClose, running }: Tre
       return;
     }
     await perform('An elide', () =>
-      call('elide_span', { anchor_id: elide.anchor, first_kept_id: elide.firstKept }),
+      at().client.request('elide_span', {
+        ...ids(at()),
+        anchor_id: elide.anchor,
+        first_kept_id: elide.firstKept,
+      }),
     );
     setMarked(new Set());
     onClose();
-  }, [session, call, elide, perform, onClose]);
+  }, [session, at, elide, perform, onClose]);
 
   const commitBranch = useCallback(
     async (dropContext: boolean): Promise<void> => {
@@ -364,7 +370,8 @@ export function TreePanel({ session, revision, onRevise, onClose, running }: Tre
         return;
       }
       await perform('A branch', () =>
-        call('commit_branch', {
+        at().client.request('commit_branch', {
+          ...ids(at()),
           ids: selectionOrder(rows, marked),
           drop_context: dropContext,
         }),
@@ -373,7 +380,7 @@ export function TreePanel({ session, revision, onRevise, onClose, running }: Tre
       setChooser(null);
       onClose();
     },
-    [session, call, tree, marked, rows, perform, onClose],
+    [session, at, tree, marked, rows, perform, onClose],
   );
 
   const commitPaste = useCallback(async (): Promise<void> => {
@@ -387,9 +394,11 @@ export function TreePanel({ session, revision, onRevise, onClose, running }: Tre
     // the panel stays open on the grown tree rather than closing on a cursor
     // that did not go anywhere. The clipboard survives, so one copy can go to
     // several places.
-    await perform('A paste', () => call('paste_subtree', { source_id: copied, target_id: cursor }));
+    await perform('A paste', () =>
+      at().client.request('paste_subtree', { ...ids(at()), source_id: copied, target_id: cursor }),
+    );
     setNotice('Pasted. The conversation is unchanged — press Enter on the copy to continue from it.');
-  }, [session, call, tree, copied, cursor, perform]);
+  }, [session, at, tree, copied, cursor, perform]);
 
   // ── keys ───────────────────────────────────────────────────────────────────
 
@@ -759,6 +768,11 @@ function detailText(item: Item | null): string {
     case 'marker':
       return item.text ? `${item.label}\n\n${item.text}` : item.label;
   }
+}
+
+/** The session and cursor every tree edit names. */
+function ids(where: { session_id: string; cursor_id: string }): { session_id: string; cursor_id: string } {
+  return { session_id: where.session_id, cursor_id: where.cursor_id };
 }
 
 /* ----------------------------------------------------------------- dialogs */

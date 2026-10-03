@@ -126,9 +126,10 @@ export async function enumerateDomain(
   domain: string,
   options: { query?: string; leaf?: string | null; limit?: number } = {},
 ): Promise<DomainListing> {
-  const { client, session_id } = session.at();
+  const { client, session_id, cursor_id } = session.at();
   const result = await client.request('enumerate_domain', {
     session_id,
+    cursor_id,
     domain,
     ...(options.query === undefined ? {} : { query: options.query }),
     ...(options.leaf === undefined ? {} : { leaf: options.leaf }),

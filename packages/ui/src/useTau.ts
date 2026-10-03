@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { Transport } from '@ffwf/tau-code-protocol';
+import { ServeError, type DispatchedCommand, type Transport } from '@ffwf/tau-code-protocol';
 import { Daemon, messageOf, type DaemonState } from './daemon.js';
 import type { SessionState, SessionStore } from './session.js';
 
@@ -52,10 +52,9 @@ export interface Submitter {
   /**
    * Send text to this head's cursor.
    *
-   * Resolves when the daemon ANSWERS, which for a prompt is when the submission
-   * ENDS -- a turn later. The composer does not wait on it: it clears on send,
-   * and the turn's progress is the session's live view. What the promise
-   * carries is what only the end knows: a refusal, or a command's outcome.
+   * Resolves at ADMISSION, as RPC's submit does: the prompt was taken (and a
+   * `submission_end` with its id will follow once its turn ends), refused with
+   * τ's sentence, or dispatched as a command whose outcome is the answer.
    */
   submit(text: string, target?: SessionStore): Promise<SubmitOutcome>;
   /**
@@ -70,9 +69,9 @@ export interface Submitter {
 }
 
 export type SubmitOutcome =
-  | { kind: 'ended' }
+  | { kind: 'admitted' }
   | { kind: 'refused'; reason: string }
-  | { kind: 'command'; command: Record<string, unknown> }
+  | { kind: 'command'; command: DispatchedCommand }
   | { kind: 'failed'; reason: string };
 
 /**
@@ -104,6 +103,9 @@ export function useSubmitter(session: SessionStore | null): Submitter {
           session_id,
           cursor_id,
           text,
+          // Provenance, as RPC requires it: a person typing into this head.
+          source: 'interactive',
+          submitter: 'human',
           submission_id: submissionId,
           multitask_strategy: 'enqueue',
           // The composer dispatches every `/word` it can before it gets here --
@@ -115,14 +117,15 @@ export function useSubmitter(session: SessionStore | null): Submitter {
           // characters: a composer that completes a path and does not attach it.
           expand_attachments: true,
         });
-        if (!result.accepted) {
-          const reason = result.reason ?? 'τ refused the submission and gave no reason.';
-          setError(reason);
-          return { kind: 'refused', reason };
-        }
-        if (result.command) return { kind: 'command', command: result.command as Record<string, unknown> };
-        return { kind: 'ended' };
+        if (result.dispatched) return { kind: 'command', command: result.dispatched };
+        return { kind: 'admitted' };
       } catch (raw) {
+        // A refusal -- an extension lock, a cursor that will not take it -- is
+        // τ's sentence, carried as the error's message.
+        if (raw instanceof ServeError && raw.code === 'submission_rejected') {
+          setError(raw.detail);
+          return { kind: 'refused', reason: raw.detail };
+        }
         const reason = messageOf(raw);
         setError(reason);
         return { kind: 'failed', reason };

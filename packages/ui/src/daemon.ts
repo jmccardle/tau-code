@@ -209,17 +209,22 @@ export class Daemon {
   /** Create a session in `cwd` (a path on the daemon's machine) and attach to it. */
   async create(cwd: string, model: string | null = null): Promise<SessionStore> {
     const client = this.#require();
-    const created = await client.request('create_session', { cwd, ...(model ? { model } : {}) });
-    return this.open(created.session_id);
+    const opened = await client.request('new_session', { cwd, ...(model ? { model } : {}) });
+    if (opened.cancelled) throw new Error('An extension refused to start a session. Nothing was created.');
+    return this.open(opened.session.session_id);
   }
 
-  /** Copy the current session at `at` into a new one and attach to it. */
+  /**
+   * Copy the current session's path, up to `at` (or this head's cursor's leaf),
+   * into a new session, and attach to it.
+   */
   async fork(at: string | null): Promise<SessionStore> {
-    const client = this.#require();
     const session = this.#state.session;
     if (!session) throw new Error('There is no session to fork.');
-    const forked = await client.request('fork_session', { session_id: session.sessionId, at });
-    return this.open(forked.session_id);
+    const { client, session_id, cursor_id } = session.at();
+    const forked = await client.request('fork', { session_id, cursor_id, at });
+    if (forked.cancelled) throw new Error('An extension refused the fork. Nothing was created.');
+    return this.open(forked.session.session_id);
   }
 
   #require(): ServeClient {
