@@ -11,7 +11,7 @@
  * read-only unless a button is pressed. So it costs no API credits and changes
  * no session.
  *
- *   node scripts/smoke-panels.mjs 'http://127.0.0.1:8791/?token=...' [shot.png]
+ *   node scripts/smoke-panels.mjs 'http://127.0.0.1:8256/' [shot.png]
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

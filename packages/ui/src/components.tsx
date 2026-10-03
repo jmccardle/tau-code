@@ -342,8 +342,11 @@ export interface ComposerProps {
   enterSubmits?: boolean;
   /** The session's vocabulary, for the `/` popup. */
   commands?: readonly CommandInfo[];
-  /** Run a `/command`. Absent means none can be run. */
-  onCommand?: (name: string, args: string) => Promise<CommandResult>;
+  /**
+   * Run a `/command`, in `target` when given (a session just created for it),
+   * else in the attached one. Absent means none can be run.
+   */
+  onCommand?: (name: string, args: string, target?: SessionStore) => Promise<CommandResult>;
   /**
    * Make a session to send to, when there is none.
    *
@@ -470,6 +473,13 @@ export function Composer({
     // Nothing is greyed: every command this session lists reaches the daemon,
     // a flow through `next_step` and the rest through `submit`, and a view this
     // head has no panel for is refused by name when τ asks for it.
+    if (!session && commandSpan(baseText) !== null) {
+      // The vocabulary is a session's: built-ins plus whatever its extensions
+      // registered. With none attached there is no honest list to show, and an
+      // empty popup would claim every command is unknown.
+      setNotice('Commands come from a session. Open one in Sessions, or send this to start one and run it there.');
+      return;
+    }
     const command = completeCommand(baseText, commands, new Set());
     if (command !== null) {
       setOpen({ completions: command, baseText });
@@ -512,22 +522,6 @@ export function Composer({
     dismiss();
     setNotice(null);
 
-    // Every `/word` the session knows is dispatched here: a flow is stepped,
-    // a view is opened, and the rest goes through `submit` with
-    // `expand_commands`. A word τ does not know comes back as `prose` and falls
-    // through to the model, which is what τ would have done with it anyway.
-    const span = commandSpan(trimmed);
-    const named = commands.find((c) => c.name === span?.token);
-    if (span && named && onCommand) {
-      const args = trimmed.slice(span.end).trim();
-      const outcome = await onCommand(named.name, args);
-      if (outcome.kind !== 'prose') {
-        if (outcome.kind !== 'cancelled' && outcome.notice !== '') setNotice(outcome.notice);
-        if (outcome.kind === 'performed') setText('');
-        return;
-      }
-    }
-
     let target = session;
     if (!target) {
       if (!ensureSession) return;
@@ -535,6 +529,25 @@ export function Composer({
         target = await ensureSession();
       } catch (raw) {
         setNotice(`Could not start a session: ${messageOf(raw)}`);
+        return;
+      }
+    }
+
+    // Every `/word` the session knows is dispatched here: a flow is stepped,
+    // a view is opened, and the rest goes through `submit` with
+    // `expand_commands`. A word τ does not know comes back as `prose` and falls
+    // through to the model, which is what τ would have done with it anyway.
+    // The vocabulary is the TARGET's, which is not yet in props when the
+    // session was created a moment ago.
+    const span = commandSpan(trimmed);
+    const vocabulary = target === session ? commands : (target.state.attached?.surface.commands ?? []);
+    const named = vocabulary.find((c) => c.name === span?.token);
+    if (span && named && onCommand) {
+      const args = trimmed.slice(span.end).trim();
+      const outcome = await onCommand(named.name, args, target);
+      if (outcome.kind !== 'prose') {
+        if (outcome.kind !== 'cancelled' && outcome.notice !== '') setNotice(outcome.notice);
+        if (outcome.kind === 'performed') setText('');
         return;
       }
     }
@@ -726,7 +739,7 @@ export function SessionPicker({
 
       <div className="tau-composer-row">
         <input
-          className="tau-input tau-sessions-cwd"
+          className="tau-sessions-cwd"
           value={newCwd}
           onChange={(event) => setNewCwd(event.target.value)}
           placeholder="Working directory on the daemon's machine"
@@ -1360,11 +1373,12 @@ export function Chat({
   }, []);
 
   const onCommand = useCallback(
-    async (name: string, args: string): Promise<CommandResult> => {
-      if (!daemon || !session) return { kind: 'refused', notice: 'Start or open a session first.' };
-      return performCommand(name, args, commands, {
+    async (name: string, args: string, target?: SessionStore): Promise<CommandResult> => {
+      const on = target ?? session;
+      if (!daemon || !on) return { kind: 'refused', notice: 'Start or open a session first.' };
+      return performCommand(name, args, on.state.attached?.surface.commands ?? commands, {
         daemon,
-        session,
+        session: on,
         openSessions: () => setPanel('sessions'),
         openView,
         // One step at a time, and the promise is what the flow loop awaits. A

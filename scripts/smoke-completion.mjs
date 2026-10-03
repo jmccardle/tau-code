@@ -8,7 +8,10 @@
  *
  * Sends no prompt, so it costs no API credits.
  *
- *   node scripts/smoke-completion.mjs 'http://127.0.0.1:8794/?token=...'
+ *   node scripts/smoke-completion.mjs 'http://127.0.0.1:8256/'
+ *
+ * The daemon must have been started in this repository: `@` completion lists
+ * the new session's cwd, and the checks look for this repository's files.
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -161,6 +164,14 @@ try {
       editor: document.querySelector('.tau-input')?.value ?? null,
     })`);
 
+  // A session to work in: the `/` vocabulary and `@` completion are a
+  // session's, and a page opened on a daemon lands on the picker with none.
+  // "New session" starts one in the daemon's own working directory.
+  await evaluate(
+    `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'New session' && !b.disabled)?.click() ?? null`,
+  );
+  await new Promise((r) => setTimeout(r, 1500));
+
   await focusEditor();
 
   // ── slash commands ──────────────────────────────────────────────────
@@ -171,7 +182,7 @@ try {
   let view = JSON.parse(await popup());
   check('a bare slash opens the popup', view.open, `${view.rows.length} rows`);
   const names = view.rows.map((r) => r.value);
-  check('the vocabulary came from get_commands', names.includes('/compact'), names.join(' '));
+  check('the vocabulary came from the session surface', names.includes('/compact'), names.join(' '));
   // Every command tau declares is performable here now: a view opens this
   // head's own panel, a flow is stepped through `next_step`, and an extension
   // command goes through `submit`. Nothing is greyed, and the check is that
@@ -200,7 +211,9 @@ try {
     JSON.stringify(view.editor));
 
   await clear();
-  await type('/comp');
+  // `/compac`, not `/comp`: τ 0.12.0 added `/compare`, and a prefix that two
+  // commands share is the case this check is NOT about.
+  await type('/compac');
   await tab();
   view = JSON.parse(await popup());
   check('a prefix narrows to one candidate', view.rows.length === 1 && view.rows[0].value === '/compact',
@@ -214,7 +227,7 @@ try {
   check('an unknown slash says it will be sent as text', view.empty, view.emptyText);
 
   // ── @filenames ──────────────────────────────────────────────────────
-  console.log('\n=== @file completion (tau complete_path, protocol 1.4) ===');
+  console.log('\n=== @file completion (tau complete_path, in the session cwd) ===');
   await clear();
   await type('look at @');
   await tab();

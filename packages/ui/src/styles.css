@@ -794,3 +794,14 @@
 .tau-entry-marker { border-left: 3px solid var(--tau-muted); font-size: 0.92em; }
 .tau-session-group { margin: 0.6em 0 0.2em; font-size: 0.85em; color: var(--tau-muted); }
 .tau-live-args { display: block; font-size: 0.85em; opacity: 0.8; white-space: pre-wrap; }
+.tau-sessions-cwd {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--tau-fg);
+  background: var(--tau-input-bg);
+  border: 1px solid var(--tau-border);
+  border-radius: 4px;
+  padding: 0.3em 0.5em;
+}
