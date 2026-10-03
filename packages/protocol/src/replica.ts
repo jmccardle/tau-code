@@ -1,7 +1,7 @@
-import type { Attached, CursorState, Event, EventData } from './generated.js';
+import type { Attached, CursorState, Entry, Event } from './generated.js';
 
-/** One session-log entry as the daemon sends it. Only `id` is read here. */
-export type ReplicaEntry = { id: string; [key: string]: unknown };
+/** One session-log entry as the daemon sends it: the generated `Entry` union. */
+export type ReplicaEntry = Entry;
 
 /** What a replica needs from the daemon to resume where it left off. */
 export interface ResumePoint {
@@ -112,13 +112,12 @@ export class Replica {
       case 'entry_open':
       case 'entry_final':
       case 'entry_append': {
-        const data = event.data as EventData[typeof event.kind];
-        const entry = asEntry((data as { entry?: unknown }).entry, `${event.kind} ${event.seq}`);
+        const entry = asEntry(event.data.entry, `${event.kind} ${event.seq}`);
         this.#entries.set(entry.id, entry);
         return 'applied';
       }
       case 'cursors':
-        this.#cursors = [...(event.data as EventData['cursors']).cursors];
+        this.#cursors = [...event.data.cursors];
         return 'applied';
       default:
         return 'passed';
@@ -147,8 +146,7 @@ export class Replica {
         break;
       }
       out.push(entry);
-      const parent = entry['parentId'];
-      current = typeof parent === 'string' ? parent : null;
+      current = entry.parentId;
     }
     out.reverse();
     return { entries: out, missingParent };

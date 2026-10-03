@@ -1,162 +1,141 @@
+import type {
+  Entry,
+  ImageContent,
+  Message,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+} from '@ffwf/tau-code-protocol';
+
 /**
- * Reading tau's message array.
+ * Turning a session's path into what the transcript draws.
  *
- * `get_messages` is typed `unknown[]` on the wire -- tau's schemas carry no
- * `items`, so the element shape genuinely is not declared. These readers narrow
- * it, and they CHECK rather than cast: a message whose shape is not recognized
- * becomes an `unknown` entry the UI renders as "a message this client could not
- * read", instead of a blank space or a crash.
+ * The path is root→leaf entries (`Replica.path`), typed by the schema, so
+ * nothing here checks shapes. What it decides is which entries a reader of the
+ * conversation sees, and as what:
  *
- * Shapes are from tau's own types (`tau_llm/types.py`).
+ * - **Messages** are the conversation: user, agent, tool results, the system
+ *   prompt (folded), and an extension's custom message when it asked to be
+ *   displayed.
+ * - **Compaction, elision and branch summaries** change what the MODEL sees
+ *   from here on, so they are drawn where they happen, with the summary. The
+ *   transcript keeps everything before them: it shows the conversation, and
+ *   the tree browser shows the splice.
+ * - **An incomplete entry** is a message being written, or one that never
+ *   finished. Which, the caller knows (is this cursor running?), so this only
+ *   marks it.
+ * - Bookkeeping (`navigate`, `session_info`, `customEntry`, model and thinking
+ *   changes, foreign entries) has no place in a reading of the conversation and
+ *   is left to the tree browser, which shows every entry.
  */
 
-export interface TextBlock {
-  type: 'text';
-  text: string;
-}
-export interface ThinkingBlock {
-  type: 'thinking';
-  thinking: string;
-}
-export interface ImageBlock {
-  type: 'image';
-  data: string;
-  mime_type: string;
-}
-export interface ToolCallBlock {
-  type: 'toolCall';
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-export type ContentBlock = TextBlock | ThinkingBlock | ImageBlock | ToolCallBlock;
+export type ContentBlock = TextContent | ThinkingContent | ImageContent | ToolCall;
 
-export interface UserEntry {
-  kind: 'user';
-  blocks: ContentBlock[];
-  timestamp: number | null;
-}
-export interface AssistantEntry {
-  kind: 'assistant';
-  blocks: ContentBlock[];
-  timestamp: number | null;
-}
-export interface ToolResultEntry {
-  kind: 'toolResult';
-  toolCallId: string;
-  toolName: string;
-  blocks: ContentBlock[];
-  isError: boolean;
-  /**
-   * The tool's structured detail.
-   *
-   * `ToolResultMessage.details` exists on tau's model and is always `null`
-   * today: `AgentToolResult` -- the type the loop actually carries -- has no
-   * `details` field, so every tool's detail dict is dropped at
-   * `agent_loop.py:_execute_single_tool` before a message is ever built. This
-   * is read here because the slot is real and the day it is populated, the
-   * file-change data for jump-to-edit and diffs arrives through it.
-   */
-  details: Record<string, unknown> | null;
-  timestamp: number | null;
-}
-export interface SystemEntry {
-  kind: 'system';
-  text: string;
-}
-export interface UnknownEntry {
-  kind: 'unknown';
-  raw: unknown;
-}
-
-export type Entry = UserEntry | AssistantEntry | ToolResultEntry | SystemEntry | UnknownEntry;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
-}
-
-function readBlocks(content: unknown): ContentBlock[] {
-  // A user message's content may be a bare string.
-  if (typeof content === 'string') return [{ type: 'text', text: content }];
-  if (!Array.isArray(content)) return [];
-  const blocks: ContentBlock[] = [];
-  for (const item of content) {
-    const record = asRecord(item);
-    if (!record) continue;
-    switch (record['type']) {
-      case 'text':
-        blocks.push({ type: 'text', text: String(record['text'] ?? '') });
-        break;
-      case 'thinking':
-        blocks.push({ type: 'thinking', thinking: String(record['thinking'] ?? '') });
-        break;
-      case 'image':
-        blocks.push({
-          type: 'image',
-          data: String(record['data'] ?? ''),
-          mime_type: String(record['mime_type'] ?? 'application/octet-stream'),
-        });
-        break;
-      case 'toolCall':
-        blocks.push({
-          type: 'toolCall',
-          id: String(record['id'] ?? ''),
-          name: String(record['name'] ?? ''),
-          arguments: asRecord(record['arguments']) ?? {},
-        });
-        break;
-      default:
-        // An unrecognized block kind is skipped, not rendered as noise. MINOR
-        // protocol bumps are additive, so this is expected rather than broken.
-        break;
+export type Item =
+  | { kind: 'user'; id: string; blocks: ContentBlock[] }
+  | { kind: 'assistant'; id: string; blocks: ContentBlock[]; stopReason: string; error: string | null }
+  | {
+      kind: 'toolResult';
+      id: string;
+      toolName: string;
+      blocks: ContentBlock[];
+      isError: boolean;
+      details: Record<string, unknown> | null;
     }
-  }
-  return blocks;
-}
+  | { kind: 'system'; id: string; text: string }
+  | { kind: 'custom'; id: string; customType: string; blocks: ContentBlock[] }
+  | { kind: 'marker'; id: string; label: string; text: string }
+  | { kind: 'incomplete'; id: string; entryType: string; blocks: ContentBlock[] };
 
-function readTimestamp(record: Record<string, unknown>): number | null {
-  const value = record['timestamp'];
-  return typeof value === 'number' ? value : null;
-}
-
-export function readEntry(raw: unknown): Entry {
-  const record = asRecord(raw);
-  if (!record) return { kind: 'unknown', raw };
-
-  switch (record['role']) {
+function messageItem(id: string, message: Message): Item | null {
+  switch (message.role) {
     case 'user':
-      return { kind: 'user', blocks: readBlocks(record['content']), timestamp: readTimestamp(record) };
+      return {
+        kind: 'user',
+        id,
+        blocks: typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content,
+      };
     case 'assistant':
-      return { kind: 'assistant', blocks: readBlocks(record['content']), timestamp: readTimestamp(record) };
+      return {
+        kind: 'assistant',
+        id,
+        blocks: message.content,
+        stopReason: message.stop_reason,
+        error: message.error_message ?? null,
+      };
     case 'toolResult':
       return {
         kind: 'toolResult',
-        toolCallId: String(record['tool_call_id'] ?? ''),
-        toolName: String(record['tool_name'] ?? ''),
-        blocks: readBlocks(record['content']),
-        isError: record['is_error'] === true,
-        details: asRecord(record['details']),
-        timestamp: readTimestamp(record),
+        id,
+        toolName: message.tool_name,
+        blocks: message.content,
+        isError: message.is_error === true,
+        details: message.details ?? null,
       };
-    case 'system': {
-      const blocks = readBlocks(record['content']);
-      const text = blocks
-        .filter((b): b is TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n');
-      return { kind: 'system', text };
-    }
-    default:
-      return { kind: 'unknown', raw };
+    case 'system':
+      return { kind: 'system', id, text: message.content };
+    case 'custom':
+      return message.display ? { kind: 'custom', id, customType: message.customType, blocks: message.content } : null;
   }
 }
 
-export function readEntries(messages: unknown[]): Entry[] {
-  return messages.map(readEntry);
+/** The blocks an unfinished entry carries so far, when it is a message at all. */
+function partialBlocks(entry: Entry): ContentBlock[] {
+  const message = (entry as { message?: unknown }).message;
+  if (typeof message !== 'object' || message === null) return [];
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  return Array.isArray(content) ? (content as ContentBlock[]) : [];
+}
+
+export function itemOf(entry: Entry): Item | null {
+  if (entry.status === 'incomplete') {
+    return { kind: 'incomplete', id: entry.id, entryType: entry.type, blocks: partialBlocks(entry) };
+  }
+  switch (entry.type) {
+    case 'message':
+      return messageItem(entry.id, (entry as Extract<Entry, { type: 'message' }>).message);
+    case 'customMessage':
+      return messageItem(entry.id, (entry as Extract<Entry, { type: 'customMessage' }>).message);
+    case 'compaction': {
+      const compaction = entry as Extract<Entry, { type: 'compaction' }>;
+      return {
+        kind: 'marker',
+        id: entry.id,
+        label: `Compacted ${compaction.tokensBefore.toLocaleString()} tokens. The model reads this summary from here on:`,
+        text: compaction.summary,
+      };
+    }
+    case 'branch_summary':
+      return {
+        kind: 'marker',
+        id: entry.id,
+        label: 'Summary of the branch this one left:',
+        text: (entry as Extract<Entry, { type: 'branch_summary' }>).summary,
+      };
+    case 'elide':
+      return {
+        kind: 'marker',
+        id: entry.id,
+        label: 'Elided: the model no longer reads the span above this point.',
+        text: '',
+      };
+    default:
+      return null;
+  }
+}
+
+export function itemsOf(path: readonly Entry[]): Item[] {
+  const items: Item[] = [];
+  for (const entry of path) {
+    const item = itemOf(entry);
+    if (item) items.push(item);
+  }
+  return items;
 }
 
 /** Flatten a content block list to plain text, for a collapsed preview. */
-export function blocksToText(blocks: ContentBlock[]): string {
+export function blocksToText(blocks: readonly ContentBlock[]): string {
   return blocks
     .map((block) => {
       switch (block.type) {
@@ -171,4 +150,11 @@ export function blocksToText(blocks: ContentBlock[]): string {
       }
     })
     .join('\n');
+}
+
+/** True once the path holds a message the user wrote; an empty session lands on the picker. */
+export function hasUserMessage(path: readonly Entry[]): boolean {
+  return path.some(
+    (entry) => entry.type === 'message' && (entry as Extract<Entry, { type: 'message' }>).message.role === 'user',
+  );
 }

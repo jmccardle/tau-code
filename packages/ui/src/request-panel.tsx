@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { TauClient } from '@ffwf/tau-code-protocol';
 import {
   answerRequest,
   initialValues,
   refusalReason,
   type AskField,
   type ExtensionRequest,
+  type PanelBody,
 } from './requests.js';
-import { describe } from './useTau.js';
+import { messageOf } from './daemon.js';
+import type { SessionStore } from './session.js';
 
 /**
  * The extension request, drawn.
@@ -23,15 +24,15 @@ import { describe } from './useTau.js';
  * a panel is what a request without one would need. So this is the panel.
  */
 export interface RequestPanelProps {
-  client: TauClient | null;
+  session: SessionStore | null;
   request: ExtensionRequest;
-  /** Re-read the transcript and the request after the lock is released. */
-  onAnswered: () => Promise<void> | void;
+  /** Called once the answer is in; the cursor's next state clears the request. */
+  onAnswered: () => void;
   /** Leave it for later. The request comes back at the next cursor move. */
   onDismiss: () => void;
 }
 
-export function RequestPanel({ client, request, onAnswered, onDismiss }: RequestPanelProps): JSX.Element {
+export function RequestPanel({ session, request, onAnswered, onDismiss }: RequestPanelProps): JSX.Element {
   const [values, setValues] = useState<Record<string, unknown>>(() =>
     request.ask === null ? {} : initialValues(request.ask),
   );
@@ -46,23 +47,23 @@ export function RequestPanel({ client, request, onAnswered, onDismiss }: Request
   }, [request.entryId, request.ask]);
 
   const press = async (action: string): Promise<void> => {
-    if (!client) return;
+    if (!session) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await answerRequest(client, request, action, values);
+      const result = await answerRequest(session, request, action, values);
       if (!result.handled) {
         setWarning(
           `${request.extensionName} is not loaded, so nothing ran — the request is answered ` +
             `and the session is unlocked.`,
         );
       }
-      await onAnswered();
+      onAnswered();
     } catch (raw) {
       // tau validated the values against the ask's own declared fields. Nothing
       // was appended and the lock is exactly as it was, so the form stays up
       // with what was typed still in it.
-      setError(describe(raw));
+      setError(messageOf(raw));
     } finally {
       setBusy(false);
     }
@@ -101,7 +102,7 @@ export function RequestPanel({ client, request, onAnswered, onDismiss }: Request
               <button
                 key={action.label}
                 className="tau-button"
-                disabled={busy || !client}
+                disabled={busy || !session}
                 onClick={() => void press(action.label)}
               >
                 {action.label}
@@ -121,44 +122,47 @@ export function RequestPanel({ client, request, onAnswered, onDismiss }: Request
 }
 
 /** The ask's optional body: text, a list, or a table. The same three a panel takes. */
-function AskBody({ body }: { body: Record<string, unknown> }): JSX.Element | null {
-  if (typeof body['text'] === 'string') return <p className="tau-text">{body['text']}</p>;
-  if (Array.isArray(body['list'])) {
-    return (
-      <ul className="tau-request-list">
-        {body['list'].map((item, index) => (
-          <li key={index}>{String(item)}</li>
-        ))}
-      </ul>
-    );
-  }
-  if (Array.isArray(body['table'])) {
-    return (
-      <table className="tau-request-table">
-        <tbody>
-          {body['table'].map((row, index) => (
-            <tr key={index}>
-              {(Array.isArray(row) ? row : [row]).map((cell, column) => (
-                <td key={column}>{String(cell)}</td>
+export function AskBody({ body }: { body: PanelBody }): JSX.Element {
+  switch (body.kind) {
+    case 'text':
+      return <p className="tau-text">{body.text}</p>;
+    case 'list':
+      return (
+        <ul className="tau-request-list">
+          {body.items.map((item, index) => (
+            <li key={index}>{item}</li>
+          ))}
+        </ul>
+      );
+    case 'table':
+      return (
+        <table className="tau-request-table">
+          <thead>
+            <tr>
+              {body.columns.map((column) => (
+                <th key={column}>{column}</th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    );
+          </thead>
+          <tbody>
+            {body.rows.map((row, index) => (
+              <tr key={index}>
+                {row.map((cell, column) => (
+                  <td key={column}>{cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
   }
-  return null;
 }
 
 /**
- * One field, by its declared kind.
- *
- * A kind this head does not know reaches `readField` as a TypeError rather than
- * arriving here as a blank space -- the check is up there so the whole panel
- * says it cannot draw the form, instead of drawing one that silently omits a
- * field the extension is waiting on.
+ * One field, by its declared kind. The kinds are the schema's closed set, so a
+ * kind this head cannot draw is a build error, not a blank space.
  */
-function Field({
+export function Field({
   field,
   value,
   onChange,
@@ -170,7 +174,7 @@ function Field({
   const id = `tau-ask-${field.name}`;
   return (
     <label className="tau-request-field" htmlFor={id}>
-      <span className="tau-request-label">{field.label}</span>
+      <span className="tau-request-label">{field.label ?? field.name}</span>
       {field.kind === 'confirm' ? (
         <input id={id} type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
       ) : field.kind === 'number' ? (

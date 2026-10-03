@@ -1,4 +1,5 @@
-import type { TauClient } from '@ffwf/tau-code-protocol';
+import type { TreeResult } from '@ffwf/tau-code-protocol';
+import type { SessionStore } from './session.js';
 
 /**
  * The conversation tree: rows, zones and the plans a gesture would commit.
@@ -9,9 +10,10 @@ import type { TauClient } from '@ffwf/tau-code-protocol';
  *
  * ## What this computes, and what tau decides
  *
- * tau owns the algebra. `navigate`, `elide_span`, `commit_branch`,
- * `paste_subtree` and `summarize_and_navigate` are verbs, each of which
- * validates against the live session and refuses with a sentence. This module
+ * tau owns the algebra. `navigate_tree` (with or without a summary),
+ * `elide_span`, `commit_branch` and `paste_subtree` are backend operations this
+ * head reaches through `perform`, each of which validates against the live
+ * session and refuses with a sentence. This module
  * computes the OFFER -- which rows can pair, what a gesture would cost, which
  * rows to grey -- so the reader learns the rule from the screen instead of from
  * a refusal after they have finished selecting.
@@ -30,7 +32,13 @@ import type { TauClient } from '@ffwf/tau-code-protocol';
  * worth adding.
  */
 
-/** One node of `get_tree`, in this client's casing. */
+/**
+ * One row of `get_tree`, in this client's casing.
+ *
+ * `isCursor` is the wire's `is_leaf`: the row this head's cursor sits on. The
+ * tree is asked for AT a cursor, because a session has several and each has
+ * its own leaf.
+ */
 export interface TreeNode {
   entryId: string;
   parentId: string | null;
@@ -56,39 +64,31 @@ export interface Tree {
 }
 
 /** Read `get_tree` into the model below. */
-export function treeOf(result: {
-  nodes: readonly Record<string, unknown>[];
-  cursor: string | null;
-  count: number;
-}): Tree {
+export function treeOf(result: TreeResult): Tree {
   if (result.nodes.length !== result.count) {
     throw new TypeError(
-      `get_tree() said count ${result.count} and sent ${result.nodes.length} nodes. ` +
+      `get_tree said count ${result.count} and sent ${result.nodes.length} nodes. ` +
         `The tree is the answer, so a short one is not a shorter answer -- it is a different tree.`,
     );
   }
-  const nodes = result.nodes.map((raw, index) => {
-    for (const key of ['entry_id', 'parent_id', 'kind', 'preview', 'is_cursor'] as const) {
-      if (!(key in raw)) throw new TypeError(`get_tree().nodes[${index}] has no '${key}'.`);
-    }
-    const calls = raw['tool_call_ids'];
-    return {
-      entryId: String(raw['entry_id']),
-      parentId: raw['parent_id'] === null ? null : String(raw['parent_id']),
-      kind: String(raw['kind']),
-      role: raw['role'] === null || raw['role'] === undefined ? null : String(raw['role']),
-      preview: String(raw['preview']),
-      isCursor: raw['is_cursor'] === true,
-      timestamp: typeof raw['timestamp'] === 'number' ? raw['timestamp'] : null,
-      firstKeptId: typeof raw['first_kept_id'] === 'string' ? raw['first_kept_id'] : null,
-      fromId: typeof raw['from_id'] === 'string' ? raw['from_id'] : null,
-      isSystem: raw['is_system'] === true,
-      toolCallIds: Array.isArray(calls) ? calls.map(String) : [],
-      toolCallId: typeof raw['tool_call_id'] === 'string' ? raw['tool_call_id'] : null,
-      copyable: raw['copyable'] === true,
-      estimatedTokens: typeof raw['estimated_tokens'] === 'number' ? raw['estimated_tokens'] : 0,
-    } satisfies TreeNode;
-  });
+  const nodes = result.nodes.map(
+    (row): TreeNode => ({
+      entryId: row.entry_id,
+      parentId: row.parent_id,
+      kind: row.kind,
+      role: row.role,
+      preview: row.preview,
+      isCursor: row.is_leaf,
+      timestamp: row.timestamp,
+      firstKeptId: row.first_kept_id,
+      fromId: row.from_id,
+      isSystem: row.is_system,
+      toolCallIds: row.tool_call_ids,
+      toolCallId: row.tool_call_id,
+      copyable: row.copyable,
+      estimatedTokens: row.estimated_tokens,
+    }),
+  );
 
   const byId = new Map(nodes.map((node) => [node.entryId, node]));
   const childrenOf = new Map<string | null, string[]>();
@@ -97,13 +97,13 @@ export function treeOf(result: {
     if (siblings) siblings.push(node.entryId);
     else childrenOf.set(node.parentId, [node.entryId]);
   }
-  return { nodes, byId, childrenOf, cursor: result.cursor };
+  return { nodes, byId, childrenOf, cursor: result.leaf };
 }
 
-/** Fetch and read the tree in one call. */
-export async function loadTree(client: TauClient): Promise<Tree> {
-  const result = await client.call('get_tree', {});
-  return treeOf(result as unknown as Parameters<typeof treeOf>[0]);
+/** Fetch and read the tree at this head's cursor. */
+export async function loadTree(session: SessionStore): Promise<Tree> {
+  const { client, session_id, cursor_id } = session.at();
+  return treeOf(await client.request('get_tree', { session_id, cursor_id }));
 }
 
 // ── rows ─────────────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ import {
   treeOf,
 } from '../dist/tree.js';
 
-/** One node in `get_tree`'s wire shape, with tau's defaults. */
+/** One row in `get_tree`'s wire shape (`TreeRow`), with tau's defaults. */
 function node(entry_id, parent_id, over = {}) {
   return {
     entry_id,
@@ -39,7 +39,7 @@ function node(entry_id, parent_id, over = {}) {
     kind: 'message',
     role: null,
     preview: entry_id,
-    is_cursor: false,
+    is_leaf: false,
     timestamp: Number(entry_id.replace(/\D/g, '')) || 0,
     first_kept_id: null,
     from_id: null,
@@ -53,7 +53,7 @@ function node(entry_id, parent_id, over = {}) {
 }
 
 function build(nodes, cursor) {
-  return treeOf({ nodes, cursor, count: nodes.length });
+  return treeOf({ nodes, leaf: cursor, count: nodes.length });
 }
 
 /**
@@ -67,8 +67,8 @@ function linear(cursor = 'e5') {
       node('e2', 'e1', { role: 'user' }),
       node('e3', 'e2', { role: 'assistant', tool_call_ids: ['c1'] }),
       node('e4', 'e3', { role: 'toolResult', tool_call_id: 'c1' }),
-      node('e5', 'e4', { role: 'assistant', is_cursor: cursor === 'e5' }),
-      node('e6', 'e5', { role: 'user', is_cursor: cursor === 'e6' }),
+      node('e5', 'e4', { role: 'assistant', is_leaf: cursor === 'e5' }),
+      node('e6', 'e5', { role: 'user', is_leaf: cursor === 'e6' }),
     ],
     cursor,
   );
@@ -79,16 +79,8 @@ function linear(cursor = 'e5') {
 test('a count that disagrees with the node list is refused, not trusted', () => {
   // The shape IS the answer, so a short tree is not a shorter answer -- it is a
   // different tree, and every rule below would be computed against it silently.
-  assert.throws(() => treeOf({ nodes: [node('e1', null)], cursor: 'e1', count: 9 }), /different tree/);
+  assert.throws(() => treeOf({ nodes: [node('e1', null)], leaf: 'e1', count: 9 }), /different tree/);
 });
-
-test('a node missing a declared key throws naming it', () => {
-  const bad = node('e1', null);
-  delete bad.is_cursor;
-  assert.throws(() => treeOf({ nodes: [bad], cursor: 'e1', count: 1 }), /has no 'is_cursor'/);
-});
-
-/* ------------------------------------------------------------------- rows */
 
 test('a run of turns is a run of rows at one depth, not a staircase', () => {
   // The rule most likely to surprise: indentation counts turns and forks, and
@@ -157,7 +149,7 @@ test('a navigate that is the cursor, or a real fork point, keeps its row', () =>
   // navigate with two children is a branch point, so hiding it would draw two
   // branches as one run.
   const asCursor = build(
-    [node('e1', null, { role: 'user' }), node('e2', 'e1', { kind: 'navigate', is_cursor: true })],
+    [node('e1', null, { role: 'user' }), node('e2', 'e1', { kind: 'navigate', is_leaf: true })],
     'e2',
   );
   assert.ok(planRows(asCursor).some((row) => row.node.entryId === 'e2'));
@@ -213,7 +205,7 @@ test('the fold is read off first_kept_id, and carries the system prompt across',
       node('e2', 'e1', { role: 'user' }),
       node('e3', 'e2', { role: 'assistant' }),
       node('e4', 'e3', { role: 'user' }),
-      node('e5', 'e4', { kind: 'elide', copyable: false, first_kept_id: 'e4', is_cursor: true }),
+      node('e5', 'e4', { kind: 'elide', copyable: false, first_kept_id: 'e4', is_leaf: true }),
     ],
     'e5',
   );
@@ -229,7 +221,7 @@ test('covered is empty when the cursor is not the anchor', () => {
       node('e1', null, { role: 'user' }),
       node('e2', 'e1', { role: 'assistant' }),
       node('e3', 'e2', { kind: 'elide', copyable: false, first_kept_id: 'e2' }),
-      node('e4', 'e3', { role: 'user', is_cursor: true }),
+      node('e4', 'e3', { role: 'user', is_leaf: true }),
     ],
     'e4',
   );
@@ -326,7 +318,7 @@ test('two rows on different branches cannot pair, and say so', () => {
     [
       node('e1', null, { role: 'user' }),
       node('e2', 'e1', { role: 'assistant' }),
-      node('e3', 'e1', { role: 'assistant', is_cursor: true }),
+      node('e3', 'e1', { role: 'assistant', is_leaf: true }),
     ],
     'e3',
   );
@@ -342,7 +334,7 @@ test('an elide that would hide nothing is refused by name', () => {
   const tree = build(
     [
       node('e1', null, { role: 'system', is_system: true }),
-      node('e2', 'e1', { role: 'user', is_cursor: true }),
+      node('e2', 'e1', { role: 'user', is_leaf: true }),
     ],
     'e2',
   );
@@ -432,6 +424,6 @@ test('Enter on your own message means ask it differently, not continue below it'
 });
 
 test('the first entry has no parent, so there is nothing to fork from', () => {
-  const tree = build([node('e1', null, { role: 'user', is_cursor: true })], 'e1');
+  const tree = build([node('e1', null, { role: 'user', is_leaf: true })], 'e1');
   assert.equal(enterMeaning(tree, 'e1'), 'no-parent');
 });

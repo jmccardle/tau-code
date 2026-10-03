@@ -1,6 +1,6 @@
 export * from './commands.js';
 export * from './completion.js';
-export * from './conversation.js';
+export * from './daemon.js';
 export * from './extension-panel.js';
 export * from './flow-dialog.js';
 export * from './flows.js';
@@ -9,6 +9,7 @@ export * from './messages.js';
 export * from './models.js';
 export * from './request-panel.js';
 export * from './requests.js';
+export * from './session.js';
 export * from './sessions.js';
 export * from './tree.js';
 export * from './tree-panel.js';

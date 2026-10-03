@@ -1,21 +1,24 @@
-import type { TauClient } from '@ffwf/tau-code-protocol';
+import type { CommandInfo } from '@ffwf/tau-code-protocol';
+import type { SessionStore } from './session.js';
 
 /**
  * Tab completion for the composer: `/commands` and `@files`.
  *
  * Two sources, for one reason each.
  *
- * **`/command` is computed HERE**, from `get_commands`. The whole vocabulary is
- * already on the wire -- name, description and performer -- and the matching
+ * **`/command` is computed HERE**, from the attached session's `surface.commands`.
+ * The whole vocabulary is already on the wire -- name, description, origin and
+ * flow -- and the matching
  * rule is a case-sensitive prefix test on the first word, which is what tau's
  * own `resolve_command` does with the finished line. Asking tau to filter a
  * list it already handed over would be a round trip for nothing.
  *
- * **`@file` is computed BY TAU**, through `complete_path` (protocol 1.4). This
- * client cannot do it: a browser has no filesystem at all, and the VS Code
- * extension host does have one but under Remote SSH or a devcontainer it is the
- * wrong machine's. tau answers from the working directory the agent's own tools
- * resolve against, which is the only answer that cannot be wrong.
+ * **`@file` is computed BY TAU**, through `complete_path`. This client cannot do
+ * it: a browser has no filesystem at all, and the VS Code extension host does
+ * have one but under Remote SSH or a devcontainer it is the wrong machine's.
+ * The daemon answers from the session's cwd on its own machine -- the directory
+ * the agent's tools resolve against, which is the only answer that cannot be
+ * wrong.
  *
  * The two share the return type below so the popup does not care which it is
  * showing, and neither does the key handler.
@@ -52,35 +55,15 @@ export interface Completions {
 }
 
 /**
- * One `get_commands` row, as tau 0.10.0 declares it.
+ * One command in the session's vocabulary, as `surface.commands` lists it.
  *
- * `performer` is gone; see `commands.ts` for what replaced it and why. `origin`
- * decides the ORDER here -- built-ins resolve first in tau, so an extension that
- * registered a built-in's name is unreachable and offering it would advertise a
- * command the reader cannot run.
+ * `origin` decides the ORDER here -- built-ins resolve first in τ, so an
+ * extension that registered a built-in's name is unreachable and offering it
+ * would advertise a command the reader cannot run. `hidden` marks the
+ * private-registry half of an extension command (`ext:<extension>.<command>`):
+ * the same command as its public name, shown only once `ext:` is typed.
  */
-export interface CommandInfo {
-  name: string;
-  description: string;
-  origin: 'builtin' | 'extension';
-  /** Whether the command declares its arguments, so a form can be built for it. */
-  flow: boolean;
-  /**
-   * A private-registry name -- `ext:<extension>.<command>` (protocol 1.6).
-   *
-   * Every extension command has one and nothing can take it away, so before 1.6
-   * the popup offered BOTH halves of every extension command and the reader saw
-   * `speak` and `ext:pirate.speak` as if they were two things. They are one. The
-   * `ext:` half is the one that cannot be shadowed, so it is worth reaching --
-   * just not worth doubling the list for.
-   *
-   * A tau older than 1.6 does not send the field. False is what it MEANT: there
-   * was no marking, so nothing was marked, and that tau's popup keeps behaving
-   * exactly as it does today rather than losing its extension commands to a
-   * check its wire cannot answer.
-   */
-  hidden: boolean;
-}
+export type { CommandInfo };
 
 /**
  * The `/…` at the start of the line, or null.
@@ -124,7 +107,7 @@ export function commandSpan(
  */
 export function completeCommand(
   text: string,
-  commands: CommandInfo[],
+  commands: readonly CommandInfo[],
   unavailable: ReadonlySet<string>,
 ): Completions | null {
   const span = commandSpan(text);
@@ -170,7 +153,7 @@ export function completeCommand(
 }
 
 /**
- * Ask tau for the paths matching the `@…` the cursor is inside.
+ * Ask τ for the paths matching the `@…` the caret (`offset`) is inside.
  *
  * Returns null when the cursor is not inside a reference at all -- which is a
  * different answer from a reference that matches no file, and the caller must
@@ -178,49 +161,20 @@ export function completeCommand(
  * no file" warning.
  */
 export async function completePath(
-  client: TauClient,
+  session: SessionStore,
   text: string,
-  cursor: number,
+  offset: number,
 ): Promise<Completions | null> {
-  const result = await client.call('complete_path', { text, cursor });
-  const completion = result.completion;
-  if (completion === null || typeof completion !== 'object') return null;
-
-  const record = completion as Record<string, unknown>;
-  // Check before narrowing, the same discipline `capabilities.ts` uses on the
-  // arrays tau's schemas leave unrefined: a protocol change surfaces here, once,
-  // with a message naming the field, instead of as `undefined` in the popup.
-  for (const key of ['start', 'end', 'token', 'matches', 'total']) {
-    if (!(key in record)) {
-      throw new TypeError(`complete_path().completion has no '${key}'.`);
-    }
-  }
-  if (!Array.isArray(record['matches'])) {
-    throw new TypeError('complete_path().completion.matches is not an array.');
-  }
-
-  const candidates: Candidate[] = record['matches'].map((entry, index) => {
-    if (typeof entry !== 'object' || entry === null) {
-      throw new TypeError(`complete_path().completion.matches[${index}] is not an object.`);
-    }
-    const match = entry as Record<string, unknown>;
-    if (typeof match['name'] !== 'string') {
-      throw new TypeError(`complete_path().completion.matches[${index}] has no string 'name'.`);
-    }
-    return {
-      value: match['name'],
-      detail: typeof match['detail'] === 'string' ? match['detail'] : '',
-      available: true,
-    };
-  });
-
+  const { client, session_id } = session.at();
+  const { completion } = await client.request('complete_path', { session_id, text, offset });
+  if (completion === null) return null;
   return {
     kind: 'path',
-    start: Number(record['start']),
-    end: Number(record['end']),
-    token: String(record['token']),
-    candidates,
-    total: Number(record['total']),
+    start: completion.start,
+    end: completion.end,
+    token: completion.token,
+    candidates: completion.matches.map((match) => ({ value: match.name, detail: match.detail, available: true })),
+    total: completion.total,
   };
 }
 

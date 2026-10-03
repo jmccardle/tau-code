@@ -4,7 +4,9 @@ import {
   type CursorState,
   type Event,
   type ReplicaEntry,
+  type FormSpec,
   type ServeClient,
+  type UiEventData,
 } from '@ffwf/tau-code-protocol';
 
 /**
@@ -34,7 +36,7 @@ import {
  * `--connect` included, then sees and extends one conversation. A parallel
  * turn is a cursor this head opens on purpose (`openCursor`), never something
  * that happens because a prompt arrived while another was running -- a busy
- * cursor queues the prompt as a follow-up instead.
+ * cursor queues the prompt (`enqueue`) instead.
  */
 
 export type BlockKind = 'text' | 'thinking';
@@ -78,14 +80,13 @@ export interface Live {
 /** An extension's form, opened by a `request` event and closed by `request_closed`. */
 export interface OpenForm {
   requestId: string;
-  spec: Record<string, unknown>;
+  spec: FormSpec;
 }
 
 /** An extension's display call: a notification, a status line, a panel. */
 export interface UiCall {
   seq: number;
-  op: string;
-  data: Record<string, unknown>;
+  data: UiEventData;
 }
 
 export interface SessionState {
@@ -220,10 +221,7 @@ export class SessionStore {
 
   #take(attached: Attached, cursorId: string): void {
     this.#replica.applyAttached(attached);
-    const forms = (attached.requests ?? []).map((form) => ({
-      requestId: String(form.request_id),
-      spec: form.spec as Record<string, unknown>,
-    }));
+    const forms = attached.requests.map((form) => ({ requestId: form.request_id, spec: form.spec }));
     this.#patch({ loaded: true, failure: null, attached, cursorId, forms, ...this.#derived(cursorId) });
   }
 
@@ -279,7 +277,7 @@ export class SessionStore {
         this.#patch({
           forms: [
             ...this.#state.forms.filter((form) => form.requestId !== String(data['request_id'])),
-            { requestId: String(data['request_id']), spec: data['spec'] as Record<string, unknown> },
+            { requestId: String(data['request_id']), spec: data['spec'] as FormSpec },
           ],
         });
         return;
@@ -287,7 +285,7 @@ export class SessionStore {
         this.#patch({ forms: this.#state.forms.filter((form) => form.requestId !== String(data['request_id'])) });
         return;
       case 'ui':
-        this.#patch({ ui: [...this.#state.ui, { seq: event.seq, op: String(data['op']), data }].slice(-UI_KEPT) });
+        this.#patch({ ui: [...this.#state.ui, { seq: event.seq, data: event.data }].slice(-UI_KEPT) });
         return;
       default:
         return;
@@ -405,6 +403,18 @@ export class SessionStore {
     // cursor is driven from now, and drawn once the event lands.
     this.#patch({ cursorId, live: NO_LIVE, ...this.#derived(cursorId) });
     return cursorId;
+  }
+
+  /**
+   * Re-read the session's surface -- commands, extensions, load errors -- after
+   * something changed it (an extension enabled, disabled or reloaded). The
+   * surface rides in `attach`'s answer and is not pushed, so this is the read.
+   */
+  async describe(): Promise<void> {
+    const { client } = this.at();
+    const surface = await client.request('describe', { session_id: this.sessionId });
+    const attached = this.#state.attached;
+    if (attached) this.#patch({ attached: { ...attached, surface } });
   }
 
   get client(): ServeClient | null {

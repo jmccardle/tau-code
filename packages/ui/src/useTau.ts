@@ -8,7 +8,7 @@ export interface DaemonHandle {
   state: DaemonState;
 }
 
-const NOT_STARTED: DaemonState = { phase: 'connecting', detail: null, needsToken: false, session: null };
+const NOT_STARTED: DaemonState = { phase: 'connecting', detail: null, needsToken: false, session: null, hello: null };
 
 /**
  * Build a `Daemon` for this head and keep its state in React.
@@ -57,7 +57,12 @@ export interface Submitter {
    * and the turn's progress is the session's live view. What the promise
    * carries is what only the end knows: a refusal, or a command's outcome.
    */
-  submit(text: string): Promise<SubmitOutcome>;
+  submit(text: string, target?: SessionStore): Promise<SubmitOutcome>;
+  /**
+   * The id of the last submission this head sent, so its `submission_start`
+   * attachment report can be told apart from another head's.
+   */
+  lastSubmissionId: string | null;
   abort(): Promise<void>;
   /** The last submission error, in words the user can act on. */
   error: string | null;
@@ -75,28 +80,32 @@ export type SubmitOutcome =
  *
  * ## A busy cursor queues, it does not refuse
  *
- * `multitask_strategy: "follow_up"`: a prompt sent while this cursor runs a
- * turn waits for that turn and then runs, which is what a person typing a
- * second thought expects. It replaces `reject`, which made the chat box bounce
+ * `multitask_strategy: "enqueue"`: a prompt sent while this cursor runs a
+ * turn waits for that turn and then runs as its own, which is what a person
+ * typing a second thought expects. It replaces `reject`, which made the chat box bounce
  * the second message. A parallel turn is a different act -- a cursor of its
  * own -- and is asked for, not inferred.
  */
 export function useSubmitter(session: SessionStore | null): Submitter {
   const [error, setError] = useState<string | null>(null);
+  const [lastSubmissionId, setLastSubmissionId] = useState<string | null>(null);
   const counter = useRef(0);
 
   const submit = useCallback(
-    async (text: string): Promise<SubmitOutcome> => {
+    async (text: string, target?: SessionStore): Promise<SubmitOutcome> => {
       setError(null);
       try {
-        if (!session) throw new Error('Not attached to a session.');
-        const { client, session_id, cursor_id } = session.at();
+        const to = target ?? session;
+        if (!to) throw new Error('Not attached to a session.');
+        const { client, session_id, cursor_id } = to.at();
+        const submissionId = newSubmissionId(counter);
+        setLastSubmissionId(submissionId);
         const result = await client.request('submit', {
           session_id,
           cursor_id,
           text,
-          submission_id: newSubmissionId(counter),
-          multitask_strategy: 'follow_up',
+          submission_id: submissionId,
+          multitask_strategy: 'enqueue',
           // The composer dispatches every `/word` it can before it gets here --
           // a flow through `next_step`, a view into this head's own panel -- so
           // what this reaches is an extension command taking one opaque line,
@@ -133,7 +142,10 @@ export function useSubmitter(session: SessionStore | null): Submitter {
   }, [session]);
 
   const clearError = useCallback(() => setError(null), []);
-  return useMemo(() => ({ submit, abort, error, clearError }), [submit, abort, error, clearError]);
+  return useMemo(
+    () => ({ submit, abort, error, clearError, lastSubmissionId }),
+    [submit, abort, error, clearError, lastSubmissionId],
+  );
 }
 
 function newSubmissionId(counter: React.MutableRefObject<number>): string {

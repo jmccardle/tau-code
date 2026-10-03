@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { TauClient } from '@ffwf/tau-code-protocol';
-import { readEntry, type Entry } from './messages.js';
-import { describe } from './useTau.js';
+import { itemOf, blocksToText, type Item } from './messages.js';
+import { messageOf as describe } from './daemon.js';
+import type { SessionStore } from './session.js';
 import {
   branchRefusal,
   commonAncestor,
@@ -123,9 +123,12 @@ type Chooser =
   | null;
 
 export interface TreePanelProps {
-  client: TauClient | null;
-  /** Re-read the transcript after a mutation moved the cursor. */
-  onChanged: () => Promise<void> | void;
+  session: SessionStore | null;
+  /**
+   * The replica's revision. The tree is re-read when it moves, because another
+   * head on this session -- the TUI, a second tab -- can change it too.
+   */
+  revision: number;
   /** Put a user message back in the composer, for the "ask this differently" case. */
   onRevise?: (text: string) => void;
   onClose: () => void;
@@ -133,7 +136,7 @@ export interface TreePanelProps {
   running: boolean;
 }
 
-export function TreePanel({ client, onChanged, onRevise, onClose, running }: TreePanelProps): JSX.Element {
+export function TreePanel({ session, revision, onRevise, onClose, running }: TreePanelProps): JSX.Element {
   const [tree, setTree] = useState<Tree | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -150,9 +153,9 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
   const list = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async (): Promise<Tree | null> => {
-    if (!client) return null;
+    if (!session) return null;
     try {
-      const loaded = await loadTree(client);
+      const loaded = await loadTree(session);
       setTree(loaded);
       setError(null);
       setCursor((current) => (current !== null && loaded.byId.has(current) ? current : loaded.cursor));
@@ -161,11 +164,21 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
       setError(describe(raw));
       return null;
     }
-  }, [client]);
+  }, [session]);
 
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, revision]);
+
+  /** One backend mutation at this head's cursor, by name. */
+  const call = useCallback(
+    async (method: string, args: Record<string, unknown>): Promise<void> => {
+      if (!session) throw new Error('Not attached to a session.');
+      const { client, session_id, cursor_id } = session.at();
+      await client.request('perform', { session_id, cursor_id, method, arguments: args });
+    },
+    [session],
+  );
 
   // Focus the panel as it opens. Without this the arrow keys do nothing until
   // the reader clicks somewhere they have not been told about, which reads as
@@ -300,7 +313,6 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
       setNotice(null);
       try {
         await run();
-        await onChanged();
         await reload();
       } catch (raw) {
         // tau's refusal, verbatim. It validated against the live session, which
@@ -310,44 +322,41 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
         setBusy(false);
       }
     },
-    [running, onChanged, reload],
+    [running, reload],
   );
 
   const navigate = useCallback(
     async (entryId: string, instructions: string | null, summarize: boolean): Promise<void> => {
-      if (!client) return;
-      await perform('Moving the cursor', async () => {
-        if (summarize) {
-          await client.call('summarize_and_navigate', {
-            target_id: entryId,
-            ...(instructions === null || instructions === '' ? {} : { custom_instructions: instructions }),
-          });
-        } else {
-          await client.call('navigate', { target_id: entryId });
-        }
-      });
+      if (!session) return;
+      await perform('Moving the cursor', () =>
+        call('navigate_tree', {
+          target_id: entryId,
+          summarize,
+          ...(summarize && instructions !== null && instructions !== '' ? { custom_instructions: instructions } : {}),
+        }),
+      );
       setChooser(null);
       onClose();
     },
-    [client, perform, onClose],
+    [session, call, perform, onClose],
   );
 
   const commitElide = useCallback(async (): Promise<void> => {
-    if (!client || elide === null) return;
+    if (!session || elide === null) return;
     if ('refusal' in elide) {
       setNotice(elide.refusal);
       return;
     }
     await perform('An elide', () =>
-      client.call('elide_span', { anchor_id: elide.anchor, first_kept_id: elide.firstKept }),
+      call('elide_span', { anchor_id: elide.anchor, first_kept_id: elide.firstKept }),
     );
     setMarked(new Set());
     onClose();
-  }, [client, elide, perform, onClose]);
+  }, [session, call, elide, perform, onClose]);
 
   const commitBranch = useCallback(
     async (dropContext: boolean): Promise<void> => {
-      if (!client || tree === null) return;
+      if (!session || tree === null) return;
       const refusal = branchRefusal(tree, marked);
       if (refusal !== null) {
         setNotice(refusal);
@@ -355,7 +364,7 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
         return;
       }
       await perform('A branch', () =>
-        client.call('commit_branch', {
+        call('commit_branch', {
           ids: selectionOrder(rows, marked),
           drop_context: dropContext,
         }),
@@ -364,11 +373,11 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
       setChooser(null);
       onClose();
     },
-    [client, tree, marked, rows, perform, onClose],
+    [session, call, tree, marked, rows, perform, onClose],
   );
 
   const commitPaste = useCallback(async (): Promise<void> => {
-    if (!client || tree === null || copied === null || cursor === null) return;
+    if (!session || tree === null || copied === null || cursor === null) return;
     const refusal = pasteRefusal(tree, copied, cursor);
     if (refusal !== null) {
       setNotice(refusal);
@@ -378,9 +387,9 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
     // the panel stays open on the grown tree rather than closing on a cursor
     // that did not go anywhere. The clipboard survives, so one copy can go to
     // several places.
-    await perform('A paste', () => client.call('paste_subtree', { source_id: copied, target_id: cursor }));
+    await perform('A paste', () => call('paste_subtree', { source_id: copied, target_id: cursor }));
     setNotice('Pasted. The conversation is unchanged — press Enter on the copy to continue from it.');
-  }, [client, tree, copied, cursor, perform]);
+  }, [session, call, tree, copied, cursor, perform]);
 
   // ── keys ───────────────────────────────────────────────────────────────────
 
@@ -496,17 +505,14 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
   /** "Ask this differently": the message comes back in the composer to be edited. */
   const openRevise = useCallback(
     async (entryId: string): Promise<void> => {
-      if (!client) return;
-      try {
-        const result = await client.call('get_entry', { entry_id: entryId });
-        const entry = readEntry((result.entry as Record<string, unknown>)['message']);
-        const text = entry.kind === 'user' ? entry.blocks.map((b) => ('text' in b ? b.text : '')).join('') : '';
-        setChooser({ kind: 'revise', entryId, text });
-      } catch (raw) {
-        setNotice(describe(raw));
-      }
+      if (!session) return;
+      const entry = session.replica.entries.get(entryId);
+      const item = entry ? itemOf(entry) : null;
+      const text =
+        item?.kind === 'user' ? item.blocks.map((block) => (block.type === 'text' ? block.text : '')).join('') : '';
+      setChooser({ kind: 'revise', entryId, text });
     },
-    [client],
+    [session],
   );
 
   // ── the offer line ─────────────────────────────────────────────────────────
@@ -611,7 +617,7 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
             ▸ detail pane hidden — ctrl+D, or click here, to show it
           </button>
         ) : (
-          <DetailPane client={client} tree={tree} entryId={cursor} />
+          <DetailPane session={session} tree={tree} entryId={cursor} />
         )}
       </div>
 
@@ -674,22 +680,19 @@ export function TreePanel({ client, onChanged, onRevise, onClose, running }: Tre
  * Three nodes, and it states what it is not drawing. A pane showing three boxes
  * without saying "12 earlier" implies a three-message conversation.
  *
- * The bodies come from `get_entry`, one call per node -- which is why `get_tree`
- * carries a one-line preview per row rather than a message: a browser should not
- * pull the bodies of rows it is not showing.
+ * The bodies come from this head's replica of the session, which holds every
+ * entry in full -- `get_tree` carries only a one-line preview per row, and the
+ * pane reads the three it shows from what is already here.
  */
 function DetailPane({
-  client,
+  session,
   tree,
   entryId,
 }: {
-  client: TauClient | null;
+  session: SessionStore | null;
   tree: Tree | null;
   entryId: string | null;
 }): JSX.Element {
-  const [bodies, setBodies] = useState<Record<string, Entry>>({});
-  const [failed, setFailed] = useState<string | null>(null);
-
   const around = useMemo(() => {
     if (tree === null || entryId === null) return { previous: null, next: null, laterSiblings: 0, earlier: 0 };
     const node = tree.byId.get(entryId);
@@ -703,45 +706,23 @@ function DetailPane({
     };
   }, [tree, entryId]);
 
-  useEffect(() => {
-    if (!client) return;
-    const wanted = [around.previous, entryId, around.next].filter((id): id is string => id !== null);
-    let cancelled = false;
-    void Promise.all(
-      wanted.map(async (id) => {
-        const result = await client.call('get_entry', { entry_id: id });
-        return [id, readEntry((result.entry as Record<string, unknown>)['message'])] as const;
-      }),
-    )
-      .then((pairs) => {
-        if (cancelled) return;
-        setBodies(Object.fromEntries(pairs));
-        setFailed(null);
-      })
-      .catch((raw: unknown) => {
-        if (!cancelled) setFailed(describe(raw));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, entryId, around.previous, around.next]);
-
   if (entryId === null) return <div className="tau-tree-pane tau-muted">Nothing selected.</div>;
 
   const box = (id: string | null, label: string): JSX.Element | null => {
     if (id === null) return null;
-    const entry = bodies[id];
+    const entry = session?.replica.entries.get(id);
     return (
       <div className={`tau-tree-detail tau-tree-detail-${label}`}>
         <div className="tau-tree-detail-label">{label}</div>
-        <pre className="tau-pre">{entry === undefined ? '…' : detailText(entry)}</pre>
+        <pre className="tau-pre">
+          {entry === undefined ? 'This view does not hold that entry yet.' : detailText(itemOf(entry))}
+        </pre>
       </div>
     );
   };
 
   return (
     <div className="tau-tree-pane">
-      {failed ? <div className="tau-notice tau-warn">{failed}</div> : null}
       {around.earlier > 0 ? <div className="tau-muted">⋯ {around.earlier} earlier</div> : null}
       {box(around.previous, 'previous')}
       {box(entryId, 'selected')}
@@ -756,11 +737,12 @@ function DetailPane({
 }
 
 /** One entry as text. A node with no message says which bookkeeping kind it is. */
-function detailText(entry: Entry): string {
-  switch (entry.kind) {
+function detailText(item: Item | null): string {
+  if (item === null) return 'This entry carries no message — it is a record of a change to the conversation.';
+  switch (item.kind) {
     case 'user':
     case 'assistant':
-      return entry.blocks
+      return item.blocks
         .map((block) => {
           if (block.type === 'text') return block.text;
           if (block.type === 'thinking') return `[reasoning]\n${block.thinking}`;
@@ -769,11 +751,13 @@ function detailText(entry: Entry): string {
         })
         .join('\n\n');
     case 'toolResult':
-      return entry.blocks.map((block) => ('text' in block ? block.text : '[block]')).join('\n');
+    case 'custom':
+    case 'incomplete':
+      return blocksToText(item.blocks);
     case 'system':
-      return entry.text;
-    default:
-      return 'This entry carries no message — it is a record of a change to the conversation.';
+      return item.text;
+    case 'marker':
+      return item.text ? `${item.label}\n\n${item.text}` : item.label;
   }
 }
 

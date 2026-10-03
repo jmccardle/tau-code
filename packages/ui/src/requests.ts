@@ -1,4 +1,5 @@
-import type { TauClient } from '@ffwf/tau-code-protocol';
+import type { Ask, ExtensionRequest as WireRequest, FormField, PanelBody } from '@ffwf/tau-code-protocol';
+import type { SessionStore } from './session.js';
 
 /**
  * The extension request: a lock, an ask, or both.
@@ -24,39 +25,28 @@ import type { TauClient } from '@ffwf/tau-code-protocol';
  * ## Three ways out, all of them ordinary
  *
  * Answer the ask; run the `release` command the request names; or branch to the
- * parent node in the tree browser. The third is why this panel and that one
+ * parent node in the tree browser.
+ *
+ * ## Where it comes from
+ *
+ * Each cursor's state carries the request at its leaf (`CursorState.request`),
+ * computed by the daemon with the same code `get_pending_request` used, and
+ * re-sent whenever a cursor moves. So the panel appears and vanishes with the
+ * cursor, and nothing here asks for it. The third is why this panel and that one
  * belong in the same head: navigating past the request clears it, because a lock
  * is read AT THE CURSOR and never by walking ancestry.
  */
 
-/** One field of an ask, as `validate_ask_spec` normalized it. */
-export interface AskField {
-  name: string;
-  kind: 'text' | 'number' | 'confirm' | 'select' | 'multiselect';
-  label: string;
-  default?: unknown;
-  options?: string[];
-}
+export type { Ask, FormField as AskField, PanelBody };
 
-export interface AskAction {
-  label: string;
-  command: string;
-}
-
-export interface Ask {
-  title: string;
-  body: Record<string, unknown> | null;
-  fields: AskField[];
-  actions: AskAction[];
-}
-
+/** The request at a cursor, in this head's casing. */
 export interface ExtensionRequest {
   entryId: string;
   extension: string;
   extensionName: string;
   /** The extension's own one line. */
   sentence: string;
-  /** tau's framing of the four states. Sent rather than derived here. */
+  /** τ's framing of the four states. Sent rather than derived here. */
   label: string;
   lock: boolean;
   ask: Ask | null;
@@ -64,70 +54,16 @@ export interface ExtensionRequest {
   release: string | null;
 }
 
-const FIELD_KINDS = new Set(['text', 'number', 'confirm', 'select', 'multiselect']);
-
-function readField(raw: unknown, index: number): AskField {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new TypeError(`get_pending_request().request.ask.fields[${index}] is not an object.`);
-  }
-  const record = raw as Record<string, unknown>;
-  const kind = String(record['kind'] ?? 'text');
-  if (!FIELD_KINDS.has(kind)) {
-    throw new TypeError(
-      `get_pending_request().request.ask.fields[${index}].kind is '${kind}', which this head cannot render.`,
-    );
-  }
-  const options = record['options'];
+export function requestOf(wire: WireRequest): ExtensionRequest {
   return {
-    name: String(record['name']),
-    kind: kind as AskField['kind'],
-    label: typeof record['label'] === 'string' ? record['label'] : String(record['name']),
-    ...(record['default'] === undefined ? {} : { default: record['default'] }),
-    ...(Array.isArray(options) ? { options: options.map(String) } : {}),
-  };
-}
-
-function readAsk(raw: unknown): Ask | null {
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw !== 'object') throw new TypeError('get_pending_request().request.ask is not an object.');
-  const record = raw as Record<string, unknown>;
-  const fields = record['fields'];
-  const actions = record['actions'];
-  if (!Array.isArray(actions) || actions.length === 0) {
-    // An ask with no action is a notification, and tau refuses to build one, so
-    // seeing it here means the entry was written by something other than the API.
-    throw new TypeError('get_pending_request().request.ask declares no actions.');
-  }
-  return {
-    title: typeof record['title'] === 'string' ? record['title'] : 'Request',
-    body: typeof record['body'] === 'object' && record['body'] !== null ? (record['body'] as Record<string, unknown>) : null,
-    fields: Array.isArray(fields) ? fields.map(readField) : [],
-    actions: actions.map((entry, index) => {
-      if (typeof entry !== 'object' || entry === null) {
-        throw new TypeError(`get_pending_request().request.ask.actions[${index}] is not an object.`);
-      }
-      const action = entry as Record<string, unknown>;
-      return { label: String(action['label']), command: String(action['command']) };
-    }),
-  };
-}
-
-/** Read the request at the cursor, or null. Null is the ordinary answer. */
-export async function loadPendingRequest(client: TauClient): Promise<ExtensionRequest | null> {
-  const result = await client.call('get_pending_request', {});
-  const raw = result.request;
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw !== 'object') throw new TypeError('get_pending_request().request is not an object.');
-  const record = raw as Record<string, unknown>;
-  return {
-    entryId: String(record['entry_id']),
-    extension: String(record['extension']),
-    extensionName: String(record['extension_name']),
-    sentence: String(record['sentence']),
-    label: String(record['label']),
-    lock: record['lock'] === true,
-    ask: readAsk(record['ask']),
-    release: typeof record['release'] === 'string' ? record['release'] : null,
+    entryId: wire.entry_id,
+    extension: wire.extension,
+    extensionName: wire.extension_name,
+    sentence: wire.sentence,
+    label: wire.label,
+    lock: wire.lock,
+    ask: wire.ask,
+    release: wire.release,
   };
 }
 
@@ -160,20 +96,13 @@ export function refusalReason(request: ExtensionRequest): string {
  * become a session nobody can continue.
  */
 export async function answerRequest(
-  client: TauClient,
+  session: SessionStore,
   request: ExtensionRequest,
   action: string,
   values: Record<string, unknown>,
 ): Promise<{ handled: boolean; output: string | null }> {
-  const result = await client.call('answer_request', {
-    request_id: request.entryId,
-    action,
-    values,
-  });
-  return {
-    handled: result.handled === true,
-    output: typeof result.output === 'string' ? result.output : null,
-  };
+  const { client, session_id, cursor_id } = session.at();
+  return client.request('answer_request', { session_id, cursor_id, request_id: request.entryId, action, values });
 }
 
 /**
@@ -184,7 +113,7 @@ export async function answerRequest(
  * a cancellation: a form with one optional-in-practice box has to be
  * submittable.
  */
-export function initialValues(ask: Ask): Record<string, unknown> {
+export function initialValues(ask: { readonly fields: readonly FormField[] }): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const field of ask.fields) {
     if (field.default !== undefined) {

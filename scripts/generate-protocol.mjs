@@ -59,6 +59,9 @@ const KNOWN_KEYWORDS = new Set([
   'title',
   'default',
   'minimum',
+  // A string's shape. TypeScript has no type for it, so it is a runtime claim
+  // the daemon checks; it is read past, the way `minimum` is.
+  'pattern',
   // τ's annotations: which result a request answers, which data an event kind carries.
   'x-result',
   'x-data',
@@ -132,6 +135,11 @@ function refName(ref, path) {
 }
 
 function typeOf(schema, path, indent) {
+  // Boolean schemas: `true` admits anything, `false` admits nothing. τ uses
+  // `false` to forbid a property -- a finished entry has no `status` -- which
+  // TypeScript says as `never`, so an object carrying it fails to narrow there.
+  if (schema === true) return 'unknown';
+  if (schema === false) return 'never';
   if (typeof schema !== 'object' || schema === null) {
     throw new Error(`Schema at ${path} is not an object.`);
   }
@@ -198,7 +206,7 @@ function objectType(schema, path, indent) {
   const lines = [];
   for (const name of names) {
     const sub = properties[name];
-    if (sub.description) lines.push(`${pad}/** ${collapse(sub.description)} */`);
+    if (sub && sub.description) lines.push(`${pad}/** ${collapse(sub.description)} */`);
     const optional = required.has(name) ? '' : '?';
     lines.push(`${pad}${quoteKey(name)}${optional}: ${typeOf(sub, `${path}.${name}`, indent + 1)};`);
   }
@@ -275,7 +283,10 @@ function emit(schema) {
   if (!Array.isArray(frames)) throw new Error('ClientFrame is not a oneOf.');
   frames.forEach((frame, i) => {
     const target = frame.$ref ? defs[refName(frame.$ref, `ClientFrame.oneOf[${i}]`)] : frame;
-    const tag = target.properties?.type?.enum?.[0] ?? target.allOf?.map((part) => part.$ref && defs[refName(part.$ref, 'ClientFrame')]?.properties?.type?.enum?.[0]).find(Boolean);
+    const pinned = (schema) => schema?.properties?.type?.const ?? schema?.properties?.type?.enum?.[0];
+    const tag =
+      pinned(target) ??
+      target.allOf?.map((part) => part.$ref && pinned(defs[refName(part.$ref, 'ClientFrame')])).find(Boolean);
     if (!tag) throw new Error(`ClientFrame.oneOf[${i}] has no type tag.`);
     if (!annotated.has(tag)) {
       throw new Error(

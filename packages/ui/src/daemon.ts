@@ -4,6 +4,7 @@ import {
   ProtocolVersionError,
   ServeClient,
   ServeError,
+  type HelloResult,
   type Transport,
 } from '@ffwf/tau-code-protocol';
 import { SessionStore } from './session.js';
@@ -45,6 +46,8 @@ export interface DaemonState {
   needsToken: boolean;
   /** The session this head is attached to, or null before one is chosen. */
   session: SessionStore | null;
+  /** The daemon's answer to `hello`: its version, pid and cwd. Null before one. */
+  hello: HelloResult | null;
 }
 
 export interface DaemonOptions {
@@ -65,7 +68,7 @@ const RETRY_MAX_MS = 10_000;
 
 export class Daemon {
   #options: DaemonOptions;
-  #state: DaemonState = { phase: 'connecting', detail: null, needsToken: false, session: null };
+  #state: DaemonState = { phase: 'connecting', detail: null, needsToken: false, session: null, hello: null };
   #listeners = new Set<(state: DaemonState) => void>();
   #client: ServeClient | null = null;
   #retryMs = RETRY_FIRST_MS;
@@ -131,8 +134,9 @@ export class Daemon {
     this.#client = client;
     client.on('close', (reason, code) => this.#closed(client, reason, code));
 
+    let hello: HelloResult;
     try {
-      await client.hello(this.#options.client, this.#options.token);
+      hello = await client.hello(this.#options.client, this.#options.token);
     } catch (error) {
       if (client.closed && !(error instanceof ProtocolVersionError)) return; // #closed handles it
       if (error instanceof ServeError && error.code === 'unauthorized') {
@@ -157,7 +161,7 @@ export class Daemon {
         session.fail(messageOf(error));
       }
     }
-    this.#patch({ phase: 'ready', detail: null, needsToken: false });
+    this.#patch({ phase: 'ready', detail: null, needsToken: false, hello });
   }
 
   #closed(client: ServeClient, reason: string, code: number | null): void {
@@ -203,10 +207,10 @@ export class Daemon {
   }
 
   /** Create a session in `cwd` (a path on the daemon's machine) and attach to it. */
-  async create(cwd: string): Promise<SessionStore> {
+  async create(cwd: string, model: string | null = null): Promise<SessionStore> {
     const client = this.#require();
-    const created = await client.request('create_session', { cwd });
-    return this.open(sessionIdOf(created, 'create_session'));
+    const created = await client.request('create_session', { cwd, ...(model ? { model } : {}) });
+    return this.open(created.session_id);
   }
 
   /** Copy the current session at `at` into a new one and attach to it. */
@@ -215,7 +219,7 @@ export class Daemon {
     const session = this.#state.session;
     if (!session) throw new Error('There is no session to fork.');
     const forked = await client.request('fork_session', { session_id: session.sessionId, at });
-    return this.open(sessionIdOf(forked, 'fork_session'));
+    return this.open(forked.session_id);
   }
 
   #require(): ServeClient {
@@ -223,12 +227,6 @@ export class Daemon {
     if (!client) throw new Error(this.#state.detail ?? 'Not connected to tau serve.');
     return client;
   }
-}
-
-function sessionIdOf(result: unknown, request: string): string {
-  const id = (result as { session_id?: unknown } | null)?.session_id;
-  if (typeof id !== 'string') throw new Error(`${request} answered without a session_id.`);
-  return id;
 }
 
 export function messageOf(error: unknown): string {

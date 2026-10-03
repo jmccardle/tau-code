@@ -23,13 +23,11 @@ export class ChatPanel implements vscode.Disposable {
     context: vscode.ExtensionContext,
     output: vscode.LogOutputChannel,
     panel: vscode.WebviewPanel,
-    start: boolean,
   ) {
     this.#panel = panel;
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg');
 
     this.#session = new DaemonRelay(context, output, panel.webview, `tab ${panel.title}`);
-    if (start) this.#session.start();
 
     panel.onDidDispose(() => {
       ChatPanel.#open.delete(this);
@@ -59,24 +57,22 @@ export class ChatPanel implements vscode.Disposable {
         ],
       },
     );
-    return new ChatPanel(context, output, panel, true);
+    return new ChatPanel(context, output, panel);
   }
 
   /**
    * Rebuild a panel VS Code restored after a window reload.
    *
-   * The agent process did NOT survive the reload -- it was a child of the old
-   * extension host. So this starts a new one rather than pretending to
-   * reattach. The transcript is not lost: it is in tau's session store, and a
-   * later `switch_session` reaches it.
+   * The session DID survive the reload: it is the daemon's, not the extension
+   * host's. The page remembers which one it was on (webview state), and
+   * re-attaches to it -- a turn that was running is still running.
    */
   static restore(
     context: vscode.ExtensionContext,
     output: vscode.LogOutputChannel,
     panel: vscode.WebviewPanel,
   ): void {
-    const restored = new ChatPanel(context, output, panel, false);
-    restored.#session.start();
+    new ChatPanel(context, output, panel);
   }
 
   /** The focused agent tab, or null when none has focus. */

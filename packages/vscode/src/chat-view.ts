@@ -6,7 +6,7 @@ import { DaemonRelay } from './session.js';
  *
  * Same UI as the editor tab, in a narrower place. VS Code creates the webview
  * lazily -- `resolveWebviewView` runs the first time the view is actually
- * shown -- so no tau process is started for a sidebar the user never opens.
+ * shown -- so a sidebar the user never opens never dials the daemon.
  */
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'tau-code.chat';
@@ -21,7 +21,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   resolveWebviewView(view: vscode.WebviewView): void {
     const session = new DaemonRelay(this.context, this.output, view.webview, 'sidebar');
     this.#session = session;
-    session.start();
 
     view.onDidDispose(() => {
       if (this.#session === session) this.#session = null;
