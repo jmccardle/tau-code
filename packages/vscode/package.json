@@ -73,6 +73,11 @@
         "category": "tau"
       },
       {
+        "command": "tau-code.restartDaemon",
+        "title": "Restart the tau Daemon",
+        "category": "tau"
+      },
+      {
         "command": "tau-code.chooseRuntime",
         "title": "Choose Which tau Starts the Daemon",
         "category": "tau"

@@ -228,7 +228,7 @@ export class DaemonRelay implements vscode.Disposable {
       text:
         `This panel is served by τ ${version}, a daemon that was already running (pid ${pid}). ` +
         `This window would start τ ${chosen.version}, from ${chosen.where}, once that daemon stops.`,
-      action: { label: 'Choose', command: 'tau-code.chooseRuntime' },
+      action: { label: 'Restart', command: 'tau-code.restartDaemon' },
     };
     this.#notices = [...this.#notices.filter((old) => old.id !== VERSION_NOTICE), notice];
     this.output.warn(`[${this.label}] ${notice.text}`);

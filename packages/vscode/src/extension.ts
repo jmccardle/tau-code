@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ChatPanel, ChatPanelSerializer } from './chat-panel.js';
 import { ChatViewProvider } from './chat-view.js';
 import { describe, invalidate, RUNTIME_EXTENSION_ID, tauRuntime } from './runtime.js';
+import { stopDaemon } from './daemon.js';
 import { DaemonRelay } from './session.js';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -121,6 +122,39 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       void vscode.window.showInformationMessage('No tau panel is open. Run "tau: Open Agent".');
+    }),
+
+    // Stop the daemon and start this window's τ in its place. Offered by the
+    // notice that says another τ's daemon is serving. Modal, because the daemon
+    // is shared: every editor window, browser tab and `tau --connect` on it is
+    // disconnected, and a running turn is stopped.
+    vscode.commands.registerCommand('tau-code.restartDaemon', async () => {
+      const confirm = 'Restart';
+      const choice = await vscode.window.showWarningMessage(
+        'Restart the tau daemon?',
+        {
+          modal: true,
+          detail:
+            'Every client attached to it (other editor windows, browser tabs, tau --connect) is ' +
+            'disconnected and reconnects to the new one. A turn that is running is stopped. ' +
+            'Sessions are kept.',
+        },
+        confirm,
+      );
+      if (choice !== confirm) return;
+      const token = vscode.workspace.getConfiguration('tau-code').get<string>('token')?.trim() || null;
+      try {
+        await stopDaemon(output, token);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        output.error(`Could not stop the daemon: ${detail}`);
+        void vscode.window.showErrorMessage(`Could not stop the tau daemon: ${detail}`);
+        return;
+      }
+      // Each panel re-runs `tau serve -d` on reconnect, which now starts this
+      // window's τ.
+      for (const panel of ChatPanel.all()) panel.restart();
+      if (sidebar.isLive) sidebar.restart();
     }),
 
     vscode.commands.registerCommand('tau-code.showLog', () => output.show()),

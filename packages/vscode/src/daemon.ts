@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import type { ServeStopped } from '@ffwf/tau-code-protocol';
 import type * as vscode from 'vscode';
 import { describe, tauRuntime, type TauResolution } from './runtime.js';
 
@@ -109,9 +110,52 @@ async function locate(output: vscode.LogOutputChannel): Promise<DaemonFound> {
   return { start, resolution };
 }
 
-function run(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+/**
+ * Stop the daemon at this window's address: `tau serve --stop --json`.
+ *
+ * Run with the τ this window would START, not the one serving: the address is
+ * resolved the same way by either, and the point of stopping is usually that
+ * the other one should serve next. τ drains the shutdown answer, stops the way
+ * SIGTERM does, and returns once the address refuses a handshake.
+ *
+ * `token` is the `tau-code.token` setting, passed as TAUD_TOKEN, because a
+ * daemon that requires one refuses an unauthenticated shutdown.
+ */
+export async function stopDaemon(output: vscode.LogOutputChannel, token: string | null): Promise<ServeStopped> {
+  const resolution = await tauRuntime(output);
+  const chosen = resolution.chosen;
+  if (!chosen) throw new NoDaemon(resolution.problem ?? 'No tau was found.', resolution);
+
+  const args = [...chosen.args, 'serve', '--stop', '--json'];
+  output.info(`Stopping the daemon: ${chosen.command} ${args.join(' ')}`);
+  const env = token ? { ...process.env, TAUD_TOKEN: token } : process.env;
+  const { stdout, stderr } = await run(chosen.command, args, env);
+  if (stderr.trim()) output.warn(stderr.trim());
+  let stopped: ServeStopped;
+  try {
+    stopped = JSON.parse(stdout) as ServeStopped;
+  } catch {
+    throw new Error(
+      `\`tau serve --stop --json\` printed something that is not JSON, so this τ predates --stop ` +
+        `(serve protocol 0.7). It printed: ${stdout.slice(0, 300)}`,
+    );
+  }
+  output.info(
+    stopped.stopped
+      ? `Stopped tau serve on ${stopped.address} (pid ${String(stopped.pid)}).`
+      : `No daemon was answering on ${stopped.address}.`,
+  );
+  forgetDaemon();
+  return stopped;
+}
+
+function run(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { timeout: 60_000, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(command, args, { timeout: 60_000, windowsHide: true, env }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr.trim() || error.message));
         return;

@@ -83,6 +83,11 @@ export class ChatPanel implements vscode.Disposable {
     return null;
   }
 
+  /** Every agent tab in this window, for a restart that replaces the daemon under all of them. */
+  static all(): readonly ChatPanel[] {
+    return [...ChatPanel.#open];
+  }
+
   static get count(): number {
     return ChatPanel.#open.size;
   }

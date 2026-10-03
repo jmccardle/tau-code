@@ -6,11 +6,11 @@
  * installed τ. τ's protocol dataclasses are the source of truth; nothing here is
  * hand-maintained, and `npm run check:protocol` fails when this file is stale.
  *
- * tau serve protocol 0.6
+ * tau serve protocol 0.7
  */
 
 /** The protocol version `hello` must name. */
-export const PROTOCOL_VERSION = "0.6" as const;
+export const PROTOCOL_VERSION = "0.7" as const;
 /** The port `tau serve` listens on when its config names none. */
 export const DEFAULT_PORT = 8256 as const;
 
@@ -1702,6 +1702,17 @@ export interface ServeStarted {
   [key: string]: unknown;
 }
 
+/** What `tau serve --stop --json` prints. Not a frame. */
+export interface ServeStopped {
+  /** `HOST:PORT` or `unix:/PATH`. */
+  address: string;
+  /** The process id of the daemon that stopped, or `None` when none answered. */
+  pid: number | null;
+  /** Whether this call stopped one; false when no daemon answered there. */
+  stopped: boolean;
+  [key: string]: unknown;
+}
+
 /** The session's display name from here on; the model never sees it. */
 export interface SessionInfoEntry {
   copiedFrom?: string;
@@ -1866,6 +1877,11 @@ export interface SetSessionNameResult {
   /** The name just persisted (echoes params.name). */
   name: string;
   [key: string]: unknown;
+}
+
+/** Stop the daemon: it answers, then stops as it does on SIGTERM, closing every connection. */
+export interface Shutdown {
+  type: "shutdown";
 }
 
 /** The `submission_end` channel. */
@@ -2315,6 +2331,9 @@ export type ClientFrame = {
   type: "describe";
 } | {
   id: number;
+  type: "shutdown";
+} | {
+  id: number;
   /** The entry the cursors start from; `None` is the head cursor's leaf. */
   leaf?: string | null;
   /** Model names from the daemon's config, one cursor each; one may repeat. */
@@ -2719,6 +2738,7 @@ export interface Requests {
   set_extension_config: SetExtensionConfig;
   set_model: SetModel;
   set_session_name: SetSessionName;
+  shutdown: Shutdown;
   submit: Submit;
   summarize_and_navigate: SummarizeAndNavigate;
 }
@@ -2772,6 +2792,7 @@ export interface Results {
   set_extension_config: SetExtensionConfigResult;
   set_model: SetModelResult;
   set_session_name: SetSessionNameResult;
+  shutdown: null;
   submit: SubmitResult;
   summarize_and_navigate: SummarizeAndNavigateResult;
 }
@@ -2796,6 +2817,6 @@ export interface EventData {
 export type EventKind = keyof EventData;
 
 /** Every request type, in the schema's order. */
-export const REQUEST_TYPES = ["abort","answer","answer_request","attach","close_cursor","commit_branch","compact","compare","complete_message_id","complete_path","describe","detach","disable_extension","elide_span","enable_extension","end_compare","enumerate_domain","fork","get_commands","get_entry","get_extension_config","get_extension_state","get_last_assistant_text","get_messages","get_models","get_pending_request","get_session_name","get_session_stats","get_state","get_tools","get_tree","hello","list_managed_extensions","list_sessions","move_cursor","navigate","new_session","next_step","open_cursor","paste_subtree","perform_ready","prompt","reload_extension","set_auto_compaction","set_extension_config","set_model","set_session_name","submit","summarize_and_navigate"] as const;
+export const REQUEST_TYPES = ["abort","answer","answer_request","attach","close_cursor","commit_branch","compact","compare","complete_message_id","complete_path","describe","detach","disable_extension","elide_span","enable_extension","end_compare","enumerate_domain","fork","get_commands","get_entry","get_extension_config","get_extension_state","get_last_assistant_text","get_messages","get_models","get_pending_request","get_session_name","get_session_stats","get_state","get_tools","get_tree","hello","list_managed_extensions","list_sessions","move_cursor","navigate","new_session","next_step","open_cursor","paste_subtree","perform_ready","prompt","reload_extension","set_auto_compaction","set_extension_config","set_model","set_session_name","shutdown","submit","summarize_and_navigate"] as const;
 /** Every event kind, in the schema's order. */
 export const EVENT_KINDS = ["agent_event","channel","compaction_end","cursors","entry_append","entry_final","entry_open","request","request_closed","ui"] as const;
