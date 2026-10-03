@@ -17,8 +17,12 @@
   },
   "categories": ["AI", "Other"],
   "icon": "media/icon.png",
-  "//tauSpec": "Which tau is installed into the shipped interpreter. ONE copy of this number: scripts/build-payload.mjs reads it from here, and the payload's manifest.json records what pip ACTUALLY installed by reading the dist-info back, so the pin and the artifact cannot drift into disagreeing quietly. 0.12.0 is the first release with `tau serve`, which is what the extension starts now; the `[serve]` extra is its WebSocket dependency. Bump it with the Dockerfile's TAU_SPEC, not on its own: two artifacts shipping two taus is how a client ends up tested against neither. The `[tui]` extra is deliberately absent: the daemon never imports Textual.",
-  "tauSpec": "ffwf-tau-coding-agent[serve]==0.12.0",
+  "//tauSpec": "Which tau is installed into the shipped interpreter. ONE copy of this number: scripts/build-payload.mjs reads it from here, and the payload's manifest.json records what pip ACTUALLY installed by reading the dist-info back, so the pin and the artifact cannot drift into disagreeing quietly. 0.12.0 is the first release with `tau serve`, which is what the extension starts now; the `[serve]` extra is its WebSocket dependency. Bump it with the Dockerfile's TAU_SPEC, not on its own: two artifacts shipping two taus is how a client ends up tested against neither. The `[tui]` extra is deliberately absent: the daemon never imports Textual. That is why this is not `ffwf-tau[serve]` as in the Dockerfile, but it carries the same three things that meta-package adds -- the anthropic and google SDKs and Pillow -- because without them the daemon starts, says hello, and then fails the first prompt to a Claude or Gemini model. build-payload.mjs imports each one to prove it.",
+  "tauSpec": [
+    "ffwf-tau-coding-agent[serve]==0.12.0",
+    "ffwf-tau-llm[anthropic,google]==0.12.0",
+    "ffwf-tau-agent-core[images]==0.12.0"
+  ],
   "//extensionKind": "`workspace`, matching ffwf.tau-code. The runtime is spawned wherever the agent runs -- over SSH, in WSL, in a devcontainer -- so a runtime that installed on the laptop while tau ran on the remote would be the wrong architecture's binaries in the wrong place. VS Code's platform-specific resolution downloads the build matching the REMOTE host, which is the one this has to be.",
   "extensionKind": ["workspace"],
   "//capabilities": "A payload of files this extension ships, spawned by another extension. It reads nothing from the workspace, so trust does not gate it; it is real files on a real disk, so a virtual workspace has nowhere to put it.",

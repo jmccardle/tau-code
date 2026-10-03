@@ -5,6 +5,10 @@
  *   node scripts/build-payload.mjs --target win32-x64
  *   node scripts/build-payload.mjs --all
  *
+ *   # an unpublished tau, from local wheels:
+ *   TAU_WHEELS=dir/ TAU_SPEC='ffwf-tau-coding-agent[serve]==0.12.0rc1 ffwf-tau-llm[anthropic,google]==0.12.0rc1' \\
+ *     node scripts/build-payload.mjs
+ *
  * Every target is built from ONE machine, and that is not a convenience: the
  * whole payload is a prebuilt interpreter plus wheels, and the only compiled
  * things in tau's serve closure are pydantic-core and websockets' C speedups,
@@ -82,6 +86,9 @@ const TARGETS = {
     triple: 'armv7-unknown-linux-gnueabihf',
     layout: 'posix',
     pip: ['manylinux_2_17_armv7l', 'manylinux2014_armv7l'],
+    // Pillow publishes no armv7l wheel. Reading an image on this target is
+    // τ's own ImageSupportUnavailable, which names the missing extra.
+    without: ['images'],
   },
   'alpine-x64': {
     triple: 'x86_64-unknown-linux-musl',
@@ -513,11 +520,24 @@ function installedVersion(sitePackages, distribution) {
   return found[0].slice(prefix.length, -'.dist-info'.length);
 }
 
-function tauSpec() {
+/** What pip installs for `target`: the requirements, less the extras that target goes `without`. */
+function tauSpec(target) {
+  const without = TARGETS[target].without ?? [];
+  return requirements().map((requirement) => withoutExtras(requirement, without));
+}
+
+/**
+ * The requirements, or `TAU_SPEC` (whitespace-separated) to build a payload of
+ * a tau that is not on PyPI yet -- a release candidate from `TAU_WHEELS`, as
+ * the Dockerfile's build args do. The manifest records what pip installed, so
+ * an override cannot pass for the pin.
+ */
+function requirements() {
+  if (process.env.TAU_SPEC) return process.env.TAU_SPEC.trim().split(/\s+/);
   const manifest = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
   const spec = manifest.tauSpec;
-  if (typeof spec !== 'string' || spec === '') {
-    die('package.json has no `tauSpec`. That is the one place the tau version is written.');
+  if (!Array.isArray(spec) || spec.length === 0 || !spec.every((r) => typeof r === 'string' && r !== '')) {
+    die('package.json has no `tauSpec` list. That is the one place the tau version is written.');
   }
   return spec;
 }
@@ -593,7 +613,32 @@ function writeShim(payload, layout) {
  * depends on now, and `websockets` is the second compiled package in it
  * (its C speedups), so importing it here is the check that its wheel matched.
  */
-async function verify(interpreter, args) {
+/**
+ * `name[a,b]==v` with the extras in `without` removed. Every requirement keeps
+ * its name and version: dropping an extra must not drop the package.
+ */
+function withoutExtras(requirement, without) {
+  const match = /^([^[]+)\[([^\]]*)\](.*)$/.exec(requirement);
+  if (!match || without.length === 0) return requirement;
+  const kept = match[2].split(',').map((e) => e.trim()).filter((e) => !without.includes(e));
+  return kept.length ? `${match[1]}[${kept.join(',')}]${match[3]}` : `${match[1]}${match[3]}`;
+}
+
+/**
+ * Modules a model call imports lazily, by the extra that brings them: the
+ * anthropic and google wire protocols, and image input.
+ */
+const LAZY_MODULES = { anthropic: 'anthropic', google: 'google.genai', images: 'PIL' };
+
+/** The lazy modules `target` ships: all of them, less its `without`. */
+function lazyModules(target) {
+  const without = TARGETS[target].without ?? [];
+  return Object.entries(LAZY_MODULES)
+    .filter(([extra]) => !without.includes(extra))
+    .map(([, module]) => module);
+}
+
+async function verify(interpreter, args, modules) {
   const version = capture(interpreter, [...args, '--version']);
   say(`  verify  ${version}`);
 
@@ -627,6 +672,17 @@ async function verify(interpreter, args) {
   // .pyc stamping this build machine's absolute paths into co_filename -- so
   // the check would be the thing that spoiled what it checked.
   const env = { HOME: home, PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' };
+
+  // Every provider SDK τ imports lazily, on the first request to that wire
+  // protocol. Missing one passes every other check here and fails at the
+  // user's first prompt to that model, so each is imported now.
+  for (const module of modules) {
+    const imported = spawnSync(interpreter, ['-I', '-B', '-c', `import ${module}`], { encoding: 'utf8', env });
+    if (imported.status !== 0) {
+      throw new Error(`the payload cannot import ${module}, which a model call needs: ${imported.stderr.trim()}`);
+    }
+  }
+  say(`  verify  imports ${modules.join(', ')}`);
 
   const port = await freePort();
   const daemon = spawn(interpreter, [...args, 'serve', '--listen', `127.0.0.1:${port}`], {
@@ -746,7 +802,7 @@ async function build(target, options) {
 
   const pip = process.env.PYTHON ?? 'python3';
   const platformArgs = spec.pip.flatMap((tag) => ['--platform', tag]);
-  say(`  pip     ${tauSpec()} -> ${relative(out, sitePackages)}`);
+  say(`  pip     ${tauSpec(target).join(' ')} -> ${relative(out, sitePackages)}`);
   run(pip, [
     '-m',
     'pip',
@@ -768,7 +824,9 @@ async function build(target, options) {
     // object's co_filename, which is both larger and a small privacy leak.
     '--no-compile',
     '--upgrade',
-    tauSpec(),
+    // Wheels to prefer over the index, for a tau that is not published yet.
+    ...(process.env.TAU_WHEELS ? ['--find-links', process.env.TAU_WHEELS] : []),
+    ...tauSpec(target),
   ]);
 
   // `--target` writes console scripts into <target>/bin. They carry an absolute
@@ -810,7 +868,7 @@ async function build(target, options) {
     args,
     pythonVersion: PY_VERSION,
     tauVersion,
-    tauSpec: tauSpec(),
+    tauSpec: tauSpec(target),
     pbsRelease: PBS_RELEASE,
     builtAt: new Date().toISOString(),
   };
@@ -821,9 +879,17 @@ async function build(target, options) {
   // __pycache__, so a verify that ran last would leave 2.5 MB of this machine's
   // paths in a tree the prune step had already finished cleaning.
   if (target === hostTarget()) {
-    manifest.protocolVersion = await verify(interpreter, args);
+    manifest.protocolVersion = await verify(interpreter, args, lazyModules(target));
   } else {
     say(`  verify  structural only -- ${target} cannot be executed on a ${hostTarget() ?? 'unknown'} host`);
+    // Not an import, which needs the target's interpreter, but the next best
+    // thing: each lazy module's package directory is where pip would put it.
+    for (const module of lazyModules(target)) {
+      if (!existsSync(join(sitePackages, ...module.split('.')))) {
+        die(`${target}: no ${module} in the payload, which a model call needs.`);
+      }
+    }
+    say(`  verify  ${lazyModules(target).join(', ')} present`);
   }
 
   // --- prune ----------------------------------------------------------------
@@ -876,7 +942,7 @@ async function build(target, options) {
     // way to find out cheaply is to ask the interpreter again.
     if (target === hostTarget()) {
       say(`  verify  re-checking after prune`);
-      await verify(interpreter, args);
+      await verify(interpreter, args, lazyModules(target));
       prune(python, []);
     }
   }

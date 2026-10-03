@@ -1352,6 +1352,21 @@ The hub and the runner are deleted; both hosts are clients of τ's daemon
   the closure and publishes wheels for all nine targets (checked with
   `pip download`, not assumed). Its build verifies by starting `tau serve` from
   the payload and saying hello through the payload's own `websockets`.
+- **The runtime payload carries every provider SDK.** τ imports the anthropic
+  and google SDKs, and Pillow for image input, lazily, on the first request
+  that needs them. The first live test with a real model found the payload
+  passing every build check and failing its first Claude prompt with
+  `ModuleNotFoundError`. `tauSpec` is now a list adding `ffwf-tau-llm[anthropic,google]`
+  and `ffwf-tau-agent-core[images]`: what the image's `ffwf-tau` meta-package
+  adds, without its Textual. The build imports each module on the host target
+  and checks each is present on the others. `linux-armhf` goes `without:
+  ['images']`, because Pillow publishes no armv7l wheel; reading an image there
+  is τ's own error naming the extra. The payload roughly doubled, to about
+  100 MB on disk and a 34 MB `.vsix` for linux-x64.
+- **A payload can be built before τ is on PyPI.** `TAU_WHEELS=DIR` adds
+  `--find-links` and `TAU_SPEC` replaces the pin, as the Dockerfile's build
+  args do. The manifest records what pip installed, so a payload built this way
+  says so.
 - **The smoke scripts start a throwaway daemon** (`scripts/lib/daemon.mjs`):
   a temp HOME, a free port, and nothing of `~/.tau` opened.
 
