@@ -154,19 +154,20 @@
     "watch": "node esbuild.mjs --watch",
     "package": "npx --yes @vscode/vsce package --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
   },
-  "//dependencies": "The three @ffwf/* entries are workspace siblings, unpublished by design, so they are ranged `*` rather than pinned -- see `//internal-deps` in the root package.json. Nothing resolves them at install time for a user anyway: esbuild bundles them into dist/extension.js and the .vsix is built --no-dependencies.",
+  "//dependencies": "The two @ffwf/* entries are workspace siblings, unpublished by design, so they are ranged `*` rather than pinned -- see `//internal-deps` in the root package.json. Nothing resolves them at install time for a user anyway: esbuild bundles them into dist/extension.js and the .vsix is built --no-dependencies.",
   "dependencies": {
     "@ffwf/tau-code-protocol": "*",
-    "@ffwf/tau-code-runner": "*",
     "@ffwf/tau-code-ui": "*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.12",
     "@vitejs/plugin-react": "^4.3.0",
     "esbuild": "^0.24.0",
     "vite": "^5.4.0"

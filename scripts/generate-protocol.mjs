@@ -1,23 +1,28 @@
 #!/usr/bin/env node
 /**
- * Generate packages/protocol/src/generated.ts from a live tau process.
+ * Generate packages/protocol/src/generated.ts from the installed τ's serve schema.
  *
- * This spawns `tau --mode rpc --no-session`, sends one `get_capabilities`
- * request, and turns the answer into TypeScript. It uses only the documented
- * wire, so it needs no Python import, no access to the tau source tree, and no
- * script committed on tau's side. `get_capabilities` returns every command with
- * its `params_schema` and `result_schema`, plus `event_schema`, `declined`,
- * `limits`, and `protocol_version` -- about 68 KiB.
+ * This runs `tau serve --schema`, which prints the JSON Schema (2020-12) τ
+ * renders from its own protocol dataclasses, and turns it into TypeScript. It
+ * reads the τ a user actually runs -- not a path into a τ checkout -- so the
+ * drift check below is a check against the daemon this client will dial.
  *
  * Usage:
  *   node scripts/generate-protocol.mjs
  *   TAU_BIN=/path/to/venv/bin/tau node scripts/generate-protocol.mjs
- *   node scripts/generate-protocol.mjs --check    # fail if the file is stale
+ *   node scripts/generate-protocol.mjs --check            # fail if the file is stale
+ *   node scripts/generate-protocol.mjs --from FILE        # read a schema file instead
  *
- * Fail Early: the emitter below handles exactly the JSON Schema keywords tau
- * actually uses. Anything else THROWS, naming the path and the keyword. It
- * never emits `any` to get past a construct it does not understand -- a silent
- * `any` is how a protocol change reaches runtime instead of the build.
+ * `--from` is an explicit input, not a fallback: it exists for testing the
+ * emitter against a schema τ has not shipped yet, and nothing reaches for it on
+ * its own.
+ *
+ * Fail Early: the emitter handles exactly the JSON Schema keywords τ's schema
+ * uses. Anything else THROWS, naming the path and the keyword. It never emits
+ * `any` to get past a construct it does not understand -- a silent `any` is how
+ * a protocol change reaches runtime instead of the build. The same goes for the
+ * receiving half of the wire: a request with no `x-result`, or an event kind
+ * with no `x-data`, is refused rather than typed `unknown`.
  */
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -28,6 +33,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, '../packages/protocol/src/generated.ts');
 const TAU_BIN = process.env['TAU_BIN'] ?? 'tau';
 const CHECK_ONLY = process.argv.includes('--check');
+const FROM = (() => {
+  const index = process.argv.indexOf('--from');
+  if (index === -1) return null;
+  const path = process.argv[index + 1];
+  if (!path) throw new Error('--from needs a schema file path.');
+  return path;
+})();
 
 /** Keywords the emitter understands. Anything else is a hard error. */
 const KNOWN_KEYWORDS = new Set([
@@ -35,13 +47,21 @@ const KNOWN_KEYWORDS = new Set([
   'properties',
   'required',
   'additionalProperties',
+  'unevaluatedProperties',
   'anyOf',
+  'oneOf',
+  'allOf',
+  '$ref',
   'enum',
+  'const',
+  'items',
   'description',
   'title',
   'default',
   'minimum',
-  'items',
+  // τ's annotations: which result a request answers, which data an event kind carries.
+  'x-result',
+  'x-data',
 ]);
 
 const SCALARS = {
@@ -50,58 +70,48 @@ const SCALARS = {
   number: 'number',
   boolean: 'boolean',
   null: 'null',
-  // The fallback for an array whose schema declares no `items`. Still the
-  // truthful translation for one: `any[]` would pretend otherwise and let a
-  // consumer index into it unchecked.
-  array: 'unknown[]',
 };
 
-function fetchCapabilities() {
+function run(bin, args) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(TAU_BIN, ['--mode', 'rpc', '--no-session'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      out += chunk;
-      const index = out.indexOf('\n');
-      if (index !== -1) {
-        const line = out.slice(0, index);
-        child.kill();
-        try {
-          const message = JSON.parse(line);
-          if (message.error) {
-            reject(new Error(`tau answered get_capabilities with an error: ${line}`));
-            return;
-          }
-          resolvePromise(message.result);
-        } catch (error) {
-          reject(new Error(`tau's first line did not parse as JSON: ${line}\n${error}`));
-        }
-      }
-    });
-    child.stderr.on('data', (chunk) => {
-      err += chunk;
-    });
-    child.on('error', (error) => {
+    child.stdout.on('data', (chunk) => (out += chunk));
+    child.stderr.on('data', (chunk) => (err += chunk));
+    child.on('error', (error) =>
       reject(
         new Error(
-          `Could not run '${TAU_BIN}': ${error.message}\n` +
+          `Could not run '${bin}': ${error.message}\n` +
             `Set TAU_BIN to tau's console script (e.g. /path/to/venv/bin/tau).`,
         ),
-      );
-    });
+      ),
+    );
     child.on('exit', (code) => {
-      if (out.indexOf('\n') === -1) {
-        reject(new Error(`tau exited (${code}) without answering. stderr:\n${err}`));
-      }
+      if (code === 0) resolvePromise(out);
+      else
+        reject(
+          new Error(
+            `'${bin} ${args.join(' ')}' exited ${code}. A τ older than serve protocol 0.2 has no ` +
+              `--schema flag; tau-code needs one that does.\nstderr:\n${err}`,
+          ),
+        );
     });
-    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'get_capabilities' }) + '\n');
   });
 }
+
+async function fetchSchema() {
+  const text = FROM ? await readFile(FROM, 'utf8') : await run(TAU_BIN, ['serve', '--schema']);
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`The schema did not parse as JSON: ${error}`);
+  }
+}
+
+// ── the emitter ─────────────────────────────────────────────────────────────
 
 function checkKeywords(schema, path) {
   for (const key of Object.keys(schema)) {
@@ -115,57 +125,71 @@ function checkKeywords(schema, path) {
   }
 }
 
+function refName(ref, path) {
+  const match = /^#\/\$defs\/([A-Za-z0-9_]+)$/.exec(ref);
+  if (!match) throw new Error(`Unhandled $ref '${ref}' at ${path}: only #/$defs/<Name> is understood.`);
+  return match[1];
+}
+
 function typeOf(schema, path, indent) {
   if (typeof schema !== 'object' || schema === null) {
     throw new Error(`Schema at ${path} is not an object.`);
   }
   checkKeywords(schema, path);
 
-  if (schema.enum) {
-    return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
-  }
-  if (schema.anyOf) {
-    return schema.anyOf.map((sub, i) => typeOf(sub, `${path}.anyOf[${i}]`, indent)).join(' | ');
+  if (schema.$ref) return refName(schema.$ref, path);
+  if ('const' in schema) return JSON.stringify(schema.const);
+  if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
+  if (schema.anyOf) return union(schema.anyOf, `${path}.anyOf`, indent);
+  if (schema.oneOf) return union(schema.oneOf, `${path}.oneOf`, indent);
+  if (schema.allOf) {
+    // `allOf` with an object sibling of its own (`required`, `properties`) is
+    // an intersection with that object too; the frame unions use exactly this.
+    const parts = schema.allOf.map((sub, i) => typeOf(sub, `${path}.allOf[${i}]`, indent));
+    const { allOf: _ignored, ...rest } = schema;
+    if (rest.properties) parts.push(objectType({ type: 'object', ...rest }, path, indent));
+    return parts.map((part) => (part.includes('|') ? `(${part})` : part)).join(' & ');
   }
 
   const declared = schema.type;
-  if (declared === undefined) return 'unknown';
-
+  // `{}` is JSON Schema's "anything". It is said explicitly on the wire, so
+  // `unknown` is the truthful translation, not a dodge.
+  if (declared === undefined) {
+    if (schema.properties || schema.required) return objectType(schema, path, indent);
+    return 'unknown';
+  }
   if (Array.isArray(declared)) {
-    return declared
-      .map((name) => {
-        if (name === 'object') return objectType(schema, path, indent);
-        const scalar = SCALARS[name];
-        if (!scalar) throw new Error(`Unhandled type '${name}' at ${path}.`);
-        return scalar;
-      })
-      .join(' | ');
+    return declared.map((name) => typeOf({ ...schema, type: name }, path, indent)).join(' | ');
   }
-
   if (declared === 'object') return objectType(schema, path, indent);
-
-  // tau's schemas carried no `items` until 0.10.0, and some still do not. An
-  // element schema that declares a `type` is translated; anything else stays
-  // `unknown[]`, which is what the wire actually said.
   if (declared === 'array') {
-    const itemSchema = schema['items'];
-    if (typeof itemSchema === 'object' && itemSchema !== null && itemSchema['type']) {
-      return `${typeOf(itemSchema, `${path}.items`, indent)}[]`;
-    }
-    return 'unknown[]';
+    const items = schema.items;
+    if (items === undefined) return 'unknown[]';
+    const element = typeOf(items, `${path}.items`, indent);
+    return /[|&]/.test(element) ? `(${element})[]` : `${element}[]`;
   }
-
   const scalar = SCALARS[declared];
   if (!scalar) throw new Error(`Unhandled type '${declared}' at ${path}.`);
   return scalar;
 }
 
+function union(members, path, indent) {
+  return members.map((sub, i) => typeOf(sub, `${path}[${i}]`, indent)).join(' | ');
+}
+
 function objectType(schema, path, indent) {
   const properties = schema.properties ?? {};
   const names = Object.keys(properties);
-  const open = schema.additionalProperties !== false;
+  const extra = schema.additionalProperties;
+  // `additionalProperties` absent or `{}` both mean "any other key"; a schema
+  // means "other keys of this type".
+  const closed = extra === false || schema.unevaluatedProperties === false;
+  const open =
+    !closed && (extra === undefined || extra === true || (typeof extra === 'object' && Object.keys(extra).length === 0));
+  const typedExtra = typeof extra === 'object' && extra !== null && Object.keys(extra).length > 0;
 
   if (names.length === 0) {
+    if (typedExtra) return `Record<string, ${typeOf(extra, `${path}.additionalProperties`, indent)}>`;
     return open ? 'Record<string, unknown>' : '{}';
   }
 
@@ -174,16 +198,13 @@ function objectType(schema, path, indent) {
   const lines = [];
   for (const name of names) {
     const sub = properties[name];
-    const rendered = typeOf(sub, `${path}.${name}`, indent + 1);
-    if (sub.description) {
-      lines.push(`${pad}/** ${collapse(sub.description)} */`);
-    }
+    if (sub.description) lines.push(`${pad}/** ${collapse(sub.description)} */`);
     const optional = required.has(name) ? '' : '?';
-    lines.push(`${pad}${quoteKey(name)}${optional}: ${rendered};`);
+    lines.push(`${pad}${quoteKey(name)}${optional}: ${typeOf(sub, `${path}.${name}`, indent + 1)};`);
   }
-  if (open) {
-    // A client MUST ignore any field it does not recognize: MINOR bumps are
-    // additive, so an unknown key is expected, not a violation.
+  if (typedExtra) {
+    lines.push(`${pad}[key: string]: ${typeOf(extra, `${path}.additionalProperties`, indent + 1)} | undefined;`);
+  } else if (open) {
     lines.push(`${pad}[key: string]: unknown;`);
   }
   return `{\n${lines.join('\n')}\n${'  '.repeat(indent)}}`;
@@ -197,107 +218,18 @@ function collapse(text) {
   return String(text).replace(/\s+/g, ' ').replace(/\*\//g, '*\\/').trim();
 }
 
-function pascal(name) {
-  return name
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join('');
-}
-
-function emit(caps) {
-  const commands = [...caps.commands].sort((a, b) => a.name.localeCompare(b.name));
-  const out = [];
-
-  out.push('/* eslint-disable */');
-  out.push('/**');
-  out.push(' * GENERATED FILE -- DO NOT EDIT.');
-  out.push(' *');
-  out.push(' * Regenerate with `npm run generate`, which spawns a real tau process and');
-  out.push(' * reads `get_capabilities`. The wire is the source of truth; nothing here is');
-  out.push(' * hand-maintained.');
-  out.push(' *');
-  out.push(` * Protocol version: ${caps.protocol_version}   Dialect: ${caps.dialect}`);
-  out.push(` * Commands: ${caps.commands.length}   Declined: ${caps.declined.length}   Events: ${caps.events.length}`);
-  out.push(' */');
-  out.push('');
-  out.push(`/** The protocol version this file was generated from. */`);
-  out.push(`export const PROTOCOL_VERSION = ${JSON.stringify(caps.protocol_version)} as const;`);
-  out.push(`export const DIALECT = ${JSON.stringify(caps.dialect)} as const;`);
-  out.push('');
-  out.push('/** Bounds tau enforces on what a host may SEND. */');
-  out.push(`export const LIMITS = ${JSON.stringify(caps.limits, null, 2)} as const;`);
-  out.push('');
-  out.push('/** The ten agent lifecycle event types. */');
-  out.push(
-    `export const EVENT_TYPES = [\n${caps.events.map((e) => `  ${JSON.stringify(e)},`).join('\n')}\n] as const;`,
-  );
-  out.push('export type EventType = (typeof EVENT_TYPES)[number];');
-  out.push('');
-  out.push('/** Verbs tau deliberately does not implement, with its stated reason. */');
-  out.push('export const DECLINED: Readonly<Record<string, string>> = {');
-  for (const entry of [...caps.declined].sort((a, b) => a.name.localeCompare(b.name))) {
-    out.push(`  ${quoteKey(entry.name)}: ${JSON.stringify(collapse(entry.reason))},`);
-  }
-  out.push('};');
-  out.push('');
-
-  if (caps.event_schema.description) {
-    out.push(`/** ${collapse(caps.event_schema.description)} */`);
-  }
-  out.push(`export interface WireEvent ${typeOf(caps.event_schema, 'event_schema', 0)}`);
-  out.push('');
-
-  for (const command of commands) {
-    const name = pascal(command.name);
-    out.push(`/**`);
-    out.push(` * \`${command.name}\` (tier ${command.tier}, since ${command.since}).`);
-    out.push(` *`);
-    for (const line of wrap(collapse(command.notes), 92)) out.push(` * ${line}`);
-    out.push(` */`);
-    out.push(`export type ${name}Params = ${typeOf(command.params_schema, `${command.name}.params`, 0)};`);
-    out.push(`export type ${name}Result = ${typeOf(command.result_schema, `${command.name}.result`, 0)};`);
-    out.push('');
-  }
-
-  out.push('/** Every verb on the wire, mapped to its params and result. */');
-  out.push('export interface Commands {');
-  for (const command of commands) {
-    const name = pascal(command.name);
-    out.push(`  ${quoteKey(command.name)}: { params: ${name}Params; result: ${name}Result };`);
-  }
-  out.push('}');
-  out.push('');
-  out.push('export type CommandName = keyof Commands;');
-  out.push('export type CommandParams<M extends CommandName> = Commands[M]["params"];');
-  out.push('export type CommandResult<M extends CommandName> = Commands[M]["result"];');
-  out.push('');
-  out.push('/** The tier each verb belongs to, for a host that surfaces the distinction. */');
-  out.push('export const COMMAND_TIERS: Readonly<Record<CommandName, "A" | "B" | "C">> = {');
-  for (const command of commands) {
-    out.push(`  ${quoteKey(command.name)}: ${JSON.stringify(command.tier)},`);
-  }
-  out.push('};');
-  out.push('');
-  out.push('/**');
-  out.push(' * The full `get_capabilities` result, exactly as the wire declares it.');
-  out.push(' *');
-  out.push(' * Some of its array fields are typed (e.g. `commands` items in command');
-  out.push(' * schemas have `items`), but the top-level `commands` and `declined`');
-  out.push(' * arrays remain `unknown[]` because they are bare arrays on the wire.');
-  out.push(' * Element shapes for the typed arrays come from the generator now.');
-  out.push(' */');
-  out.push('export type Capabilities = GetCapabilitiesResult;');
-  out.push('');
-
-  return out.join('\n');
+function docComment(text, indent = '') {
+  if (!text) return [];
+  const lines = wrap(collapse(text), 92);
+  if (lines.length === 1) return [`${indent}/** ${lines[0]} */`];
+  return [`${indent}/**`, ...lines.map((line) => `${indent} * ${line}`), `${indent} */`];
 }
 
 function wrap(text, width) {
-  const words = text.split(' ');
   const lines = [];
   let line = '';
-  for (const word of words) {
-    if (line.length + word.length + 1 > width) {
+  for (const word of text.split(' ')) {
+    if (line && line.length + word.length + 1 > width) {
       lines.push(line);
       line = word;
     } else {
@@ -308,23 +240,136 @@ function wrap(text, width) {
   return lines;
 }
 
-const caps = await fetchCapabilities();
-const source = emit(caps);
+// ── reading the schema's structure ──────────────────────────────────────────
+
+/** The single string a def's `type` property pins, e.g. "submit" for Submit. */
+function tagOf(def, name, field = 'type') {
+  const property = def.properties?.[field];
+  const values = property?.enum ?? ('const' in (property ?? {}) ? [property.const] : null);
+  if (!values || values.length !== 1 || typeof values[0] !== 'string') {
+    throw new Error(`$defs.${name}.${field} does not pin a single string; cannot tell which ${field} it is.`);
+  }
+  return values[0];
+}
+
+function required(schema, key) {
+  if (!(key in schema)) {
+    throw new Error(`The schema has no top-level '${key}'. This τ predates what tau-code generates from.`);
+  }
+  return schema[key];
+}
+
+function emit(schema) {
+  const defs = required(schema, '$defs');
+  const version = required(schema, 'x-protocol-version');
+  const port = required(schema, 'x-default-port');
+
+  // A request is a $def that says what it answers. Every ClientFrame member
+  // must be one of them, by its `type` tag, so a request τ forgot to annotate
+  // is caught here instead of typed as answering nothing.
+  const requests = Object.entries(defs)
+    .filter(([, def]) => 'x-result' in def)
+    .map(([name, def]) => ({ name, type: tagOf(def, name), result: def['x-result'] }));
+  const annotated = new Set(requests.map((request) => request.type));
+  const frames = required(schema, 'ClientFrame').oneOf;
+  if (!Array.isArray(frames)) throw new Error('ClientFrame is not a oneOf.');
+  frames.forEach((frame, i) => {
+    const target = frame.$ref ? defs[refName(frame.$ref, `ClientFrame.oneOf[${i}]`)] : frame;
+    const tag = target.properties?.type?.enum?.[0] ?? target.allOf?.map((part) => part.$ref && defs[refName(part.$ref, 'ClientFrame')]?.properties?.type?.enum?.[0]).find(Boolean);
+    if (!tag) throw new Error(`ClientFrame.oneOf[${i}] has no type tag.`);
+    if (!annotated.has(tag)) {
+      throw new Error(
+        `The '${tag}' request has no x-result. Every request must say what it answers (null included); ` +
+          `a request typed as answering 'unknown' is a hand-written claim waiting to happen.`,
+      );
+    }
+  });
+
+  const event = defs['Event'];
+  if (!event) throw new Error('The schema has no $defs.Event.');
+  const eventData = event['x-data'];
+  if (!eventData || typeof eventData !== 'object') {
+    throw new Error('$defs.Event has no x-data map; event payloads would be untyped.');
+  }
+
+  const out = [];
+  out.push('/* eslint-disable */');
+  out.push('/**');
+  out.push(' * GENERATED FILE -- DO NOT EDIT.');
+  out.push(' *');
+  out.push(" * Regenerate with `npm run generate`, which reads `tau serve --schema` from the");
+  out.push(" * installed τ. τ's protocol dataclasses are the source of truth; nothing here is");
+  out.push(' * hand-maintained, and `npm run check:protocol` fails when this file is stale.');
+  out.push(' *');
+  out.push(` * ${collapse(schema.title ?? 'tau serve protocol')}`);
+  out.push(' */');
+  out.push('');
+  out.push('/** The protocol version `hello` must name. */');
+  out.push(`export const PROTOCOL_VERSION = ${JSON.stringify(version)} as const;`);
+  out.push('/** The port `tau serve` listens on when its config names none. */');
+  out.push(`export const DEFAULT_PORT = ${JSON.stringify(port)} as const;`);
+  out.push('');
+
+  for (const [name, def] of Object.entries(defs)) {
+    out.push(...docComment(def.description));
+    const rendered = typeOf(def, `$defs.${name}`, 0);
+    const isPlainObject = rendered.startsWith('{') && !def.oneOf && !def.anyOf && !def.allOf;
+    out.push(isPlainObject ? `export interface ${name} ${rendered}` : `export type ${name} = ${rendered};`);
+    out.push('');
+  }
+
+  for (const frame of ['ClientFrame', 'ServerFrame']) {
+    out.push(...docComment(schema[frame].description ?? `Every ${frame === 'ClientFrame' ? 'frame a client sends' : 'frame the daemon sends'}.`));
+    out.push(`export type ${frame} = ${typeOf(schema[frame], frame, 0)};`);
+    out.push('');
+  }
+
+  out.push('/** Every request, by its `type`. */');
+  out.push('export interface Requests {');
+  for (const request of requests) out.push(`  ${quoteKey(request.type)}: ${request.name};`);
+  out.push('}');
+  out.push('');
+  out.push('/** What each request answers, by its `type`. */');
+  out.push('export interface Results {');
+  for (const request of requests) {
+    out.push(`  ${quoteKey(request.type)}: ${typeOf(request.result, `$defs.${request.name}.x-result`, 1)};`);
+  }
+  out.push('}');
+  out.push('');
+  out.push('export type RequestType = keyof Requests;');
+  out.push("export type RequestFields<T extends RequestType> = Omit<Requests[T], 'type'>;");
+  out.push('');
+  out.push('/** The `data` each event kind carries, by its `kind`. */');
+  out.push('export interface EventData {');
+  for (const [kind, data] of Object.entries(eventData)) {
+    out.push(`  ${quoteKey(kind)}: ${typeOf(data, `$defs.Event.x-data.${kind}`, 1)};`);
+  }
+  out.push('}');
+  out.push('');
+  out.push('export type EventKind = keyof EventData;');
+  out.push('');
+  out.push('/** Every request type, in the schema\'s order. */');
+  out.push(`export const REQUEST_TYPES = ${JSON.stringify(requests.map((r) => r.type))} as const;`);
+  out.push('/** Every event kind, in the schema\'s order. */');
+  out.push(`export const EVENT_KINDS = ${JSON.stringify(Object.keys(eventData))} as const;`);
+  out.push('');
+
+  return { source: out.join('\n'), version, requests: requests.length, kinds: Object.keys(eventData).length };
+}
+
+const schema = await fetchSchema();
+const { source, version, requests, kinds } = emit(schema);
 
 if (CHECK_ONLY) {
   const existing = await readFile(OUT, 'utf8').catch(() => null);
   if (existing !== source) {
     console.error(
-      `generated.ts is stale. tau speaks protocol ${caps.protocol_version}; ` +
-        `run 'npm run generate' and commit the result.`,
+      `generated.ts is stale. τ speaks serve protocol ${version}; run 'npm run generate' and commit the result.`,
     );
     process.exit(1);
   }
-  console.log(`generated.ts matches tau protocol ${caps.protocol_version}.`);
+  console.log(`generated.ts matches τ serve protocol ${version}.`);
 } else {
   await writeFile(OUT, source, 'utf8');
-  console.log(
-    `Wrote ${OUT}\n  protocol ${caps.protocol_version}, ` +
-      `${caps.commands.length} commands, ${caps.declined.length} declined, ${caps.events.length} events.`,
-  );
+  console.log(`Wrote ${OUT}\n  serve protocol ${version}: ${requests} requests, ${kinds} event kinds.`);
 }
