@@ -166,6 +166,19 @@ export interface Attached {
   [key: string]: unknown;
 }
 
+/** The `@` token at the caret and what it completes to. */
+export interface AttachmentCompletion {
+  /** The offset after its last. */
+  end: number;
+  matches: PathMatch[];
+  /** The token's first character offset in the text. */
+  start: number;
+  token: string;
+  /** How many paths match, counting past the bound on `matches`. */
+  total: number;
+  [key: string]: unknown;
+}
+
 /** What `Submit.expand_attachments` did. */
 export interface AttachmentReport {
   /** How many `@` references were sent as attachments. */
@@ -226,6 +239,15 @@ export interface CommandInfo {
   [key: string]: unknown;
 }
 
+/** An extension command's completion, as RPC's `submit` answer names it. */
+export interface CommandOutput {
+  /** The command that ran, which an input hook may have rewritten. */
+  name: string | null;
+  /** What it returned, as display text, or `None`. */
+  output: string | null;
+  [key: string]: unknown;
+}
+
 /**
  * RPC `commit_branch` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's own handler
  * at `cursor_id`.
@@ -236,7 +258,7 @@ export interface CommitBranch {
   /** Whether the branch keeps ONLY the selection. true appends an elide resuming at the root-most mark, so the context becomes the system prompt plus the branch; false leaves everything above the attach point in context. */
   drop_context: boolean;
   /** The marked entry ids, in any order — tree_surgery puts them into tree order. The longest run that is already an ancestor chain is kept in place; the rest are minted as copies parented under it, so nothing is re-parented and nothing is erased. */
-  ids: unknown[];
+  ids: string[];
   session_id: string;
   type: "commit_branch";
 }
@@ -245,7 +267,7 @@ export interface CommitBranchResult {
   /** cursor.leaf after the mutation (E5 rule 1). */
   leaf: string | null;
   /** ConversationTree.context_for(cursor) after the mutation — the same flat message array get_messages returns, for the path this call just produced. Returned rather than left for a follow-up get_messages because the mutation's whole product is a different context, and a host that had to fetch it separately could render the old one in between. */
-  messages: unknown[];
+  messages: ContextMessage[];
   [key: string]: unknown;
 }
 
@@ -274,7 +296,7 @@ export interface CompactionEnd {
   /** True when a host's `abort` stopped this compaction part-way (finding 5, Tier B review). Nothing was written — the summary is generated before the entry is appended — so `performed` is ABSENT, exactly as it is when is_error is true, and `leaf` is the unchanged tip. False on every other outcome rather than omitted: absence is not this tier's way of saying anything (E5 rule 3). A compaction cancelled by SHUTDOWN never reaches this notification at all — that one reports on stderr (D-5, T4). */
   cancelled: boolean;
   /** Session-log entry ids folded into the summary. */
-  compacted_entry_ids?: unknown[];
+  compacted_entry_ids?: string[];
   /** The id the compact acknowledgement returned (correlation). */
   compaction_id: string;
   /** The exception's repr when is_error, else null. */
@@ -286,11 +308,11 @@ export interface CompactionEnd {
   /** cursor.leaf once the compaction finished (E5/F3): the post-compaction tip when performed is true, else the unchanged tip. */
   leaf: string | null;
   /** CompactionDetails.modified_files ([] when details is None). */
-  modified_files?: unknown[];
+  modified_files?: string[];
   /** False when AgentSession.compact() returned None — a real outcome (nothing to compact), not an error, and the expected answer under the shipped keep_recent_tokens for any conversation smaller than it, because the cut then removes nothing. Absent entirely when is_error or cancelled is true. Every CompactionResult field below is absent unless this is true. */
   performed?: boolean;
   /** CompactionDetails.read_files ([] when details is None). */
-  read_files?: unknown[];
+  read_files?: string[];
   /** The JSON-RPC id of the compact request that started this compaction — null when that request was a notification (no id), which is the one case compaction_id is the only correlation handle. */
   request_id: number | null;
   /** CompactionResult.summary — the generated text. */
@@ -300,7 +322,7 @@ export interface CompactionEnd {
   /** Estimated context tokens this compaction removed: the summarized prefix, less the summary that replaces it. NOT tokens_before less the summary — tokens_before includes the recent context the cut keeps. May be negative when the summary is larger than the prefix it replaced; that is reported rather than clamped to 0. */
   tokens_saved?: number;
   /** What GENERATING this summary cost (CompactionResult.usage) — routinely the priciest single call in a session; distinct from tokens_saved, which is what compaction bought. */
-  usage?: Record<string, unknown>;
+  usage?: Usage;
   [key: string]: unknown;
 }
 
@@ -331,6 +353,14 @@ export interface CompactionEntry {
   timestamp: string;
   tokensBefore: number;
   type: "compaction";
+  [key: string]: unknown;
+}
+
+/** When compaction runs (`compaction.CompactionSettings`). */
+export interface CompactionSettingsRecord {
+  enabled: boolean;
+  keep_recent_tokens: number;
+  reserve_tokens: number;
   [key: string]: unknown;
 }
 
@@ -399,7 +429,7 @@ export interface CompleteMessageId {
 
 export interface CompleteMessageIdResult {
   /** The candidates in tree order (root-most first), as [{entry_id, preview}]: `entry_id` is the value every message_id argument takes, and `preview` is the entry's first line — the row the tree browser draws. Bounded by `limit`. */
-  matches: unknown[];
+  matches: MessageMatch[];
   /** How many entries matched BEFORE `limit` was applied, so a host is told it is seeing a prefix rather than shown one silently (G3, the rule complete_path already follows). */
   total: number;
   [key: string]: unknown;
@@ -422,9 +452,24 @@ export interface CompletePath {
 
 export interface CompletePathResult {
   /** `null` when `offset` is not inside an @reference at all — the host shows no popup. Otherwise {start, end, token, matches, total}: `start`/`end` are the character span of the whole @word, so a host replaces that span rather than guessing where the token began; `matches` is a list of {name, detail, is_dir}, `name` being the text that goes AFTER the @ (directories end in '/'); `total` is how many entries matched before the list was bounded, so a host can say '12 of 340' instead of implying it showed everything. An EMPTY `matches` with a non-null completion is the 'this names no file' warning, not an absence of information. */
-  completion: Record<string, unknown> | null;
+  completion: AttachmentCompletion | null;
   [key: string]: unknown;
 }
+
+/** The context's size, as `get_session_stats` measures it (`compaction.ContextUsageEstimate`). */
+export interface ContextEstimate {
+  last_usage_index: number | null;
+  tokens: number;
+  trailing_tokens: number;
+  usage_tokens: number;
+  [key: string]: unknown;
+}
+
+/**
+ * A message of model input: a stored message, or a summary rendered as a user message, which
+ * alone has no `timestamp`.
+ */
+export type ContextMessage = UserMessage | SummaryMessage | AssistantMessage | ToolResultMessage | SystemMessage | CustomRoleMessage;
 
 /** `Submission.correlation`: open, JSON-safe keys a submitter attached; `compare` is τ's. */
 export interface Correlation {
@@ -583,6 +628,13 @@ export interface Domain {
   [key: string]: unknown;
 }
 
+/** One legal value of a domain: `value` is what is bound, `label` what is shown. */
+export interface DomainChoice {
+  label: string;
+  value: string;
+  [key: string]: unknown;
+}
+
 /** A splice anchor with no summary: the path before `firstKeptId` leaves the context. */
 export interface ElideEntry {
   configId?: string | null;
@@ -617,7 +669,7 @@ export interface ElideSpanResult {
   /** cursor.leaf after the mutation (E5 rule 1). */
   leaf: string | null;
   /** ConversationTree.context_for(cursor) after the mutation — the same flat message array get_messages returns, for the path this call just produced. Returned rather than left for a follow-up get_messages because the mutation's whole product is a different context, and a host that had to fetch it separately could render the old one in between. */
-  messages: unknown[];
+  messages: ContextMessage[];
   [key: string]: unknown;
 }
 
@@ -731,7 +783,7 @@ export interface EnumerateDomainResult {
   /** How many values matched before `limit` was applied, so a host says '12 of 340' instead of implying it showed everything (G3). An empty `values` with a non-zero `total` cannot happen; an empty one with total 0 means the domain genuinely has none. */
   total: number;
   /** A list of {value, label}. `value` is what a host binds into `next_step`'s `bound`; `label` is what it shows. They are equal for a domain whose values already read as text. */
-  values: unknown[];
+  values: DomainChoice[];
   [key: string]: unknown;
 }
 
@@ -779,6 +831,21 @@ export interface ExtensionRequest {
   /** A command that clears the lock, or `None`. */
   release: string | null;
   sentence: string;
+  [key: string]: unknown;
+}
+
+/** One argument a flow still needs, and everything required to ask for it. */
+export interface FlowStep {
+  /** The argument being asked for. */
+  argument: Argument;
+  /** The arguments already bound, so a head redrawing a form has them. */
+  bound: Record<string, unknown>;
+  /** That argument's `tau_agent_core.capabilities.Domain`, resolved here so a head need not look it up. */
+  domain: Domain;
+  /** The flow's name. */
+  flow: string;
+  /** The entry a scoped `message_id` argument is relative to, carried through from the `next_step` call so the head hands it straight back to `enumerate_domain`. */
+  leaf: string | null;
   [key: string]: unknown;
 }
 
@@ -882,7 +949,7 @@ export interface GetEntry {
 
 export interface GetEntryResult {
   /** The raw session-log entry, as stored: camelCase `parentId` / `firstKeptId` / `fromId`, a `type`, and whatever payload that type carries — a `message` for the message kinds, a `summary` for a compaction or a branch_summary. Handed over whole rather than projected, because the caller is a detail pane rendering ONE node and a projection would be a second message shape to keep in step with get_messages'. One node per call: get_tree carries a one-line preview per row precisely so a browser does not pull bodies it is not showing. */
-  entry: Record<string, unknown>;
+  entry: Entry;
   [key: string]: unknown;
 }
 
@@ -903,7 +970,7 @@ export interface GetExtensionConfigResult {
   /** The managed path the token resolved to, not the token sent. */
   path: string;
   /** The extension's CONFIG_SCHEMA, normalized at load into {title, fields} — the same spec shape ui.form takes, so a head that can render a form can render a settings screen with no new widget. null for an extension that declares none, which is the answer that tells a head to offer no screen rather than an empty one. */
-  schema: Record<string, unknown>;
+  schema: FormSpec | null;
   /** The live slice api.config returns for this extension, keyed by file stem: config.json's extensions.<stem> with --ext-config overrides applied, plus any set_extension_config since. {} for an unconfigured extension — never the schema's defaults, which the extension itself supplies. */
   values: Record<string, unknown>;
   [key: string]: unknown;
@@ -922,9 +989,9 @@ export interface GetExtensionState {
 
 export interface GetExtensionStateResult {
   /** Every discovered file that FAILED to load, as [{path, error}]. Kept from the last load_extensions call, because a failed import leaves nothing to recompute from. This is the half that makes this a read of its own rather than list_managed_extensions with more fields: a file that cannot import can never be a legal extension_name, and is exactly what a listing must show. */
-  errors: unknown[];
+  errors: LoadError[];
   /** Every loaded extension and what it registered, as [{name, path, tools, commands, shortcuts, hooks, content_hash, subjects}] — sdk.summarize_extensions of the live registry, which is the same projection the TUI's /extensions listing draws. Read LIVE, not from the load-time snapshot, so a reload_extension is reflected here. */
-  extensions: unknown[];
+  extensions: ExtensionInfo[];
   [key: string]: unknown;
 }
 
@@ -958,17 +1025,7 @@ export interface GetMessages {
 
 export interface GetMessagesResult {
   /** AgentSession.messages — the terminal, flat message array (E2's pull side). */
-  messages: ({
-    /** A plain string on a system message; elsewhere a list of content blocks, each carrying its own `type` — text, image, thinking or toolCall. */
-    content: string | unknown[];
-    /** 'system', 'user', 'assistant' or 'toolResult'. An extension-injected node carries 'custom' and the loop remaps it to 'user' before a provider sees it. */
-    role: string;
-    /** Epoch MILLISECONDS at the moment the message happened: a user message's send, a toolResult's collection, an assistant message's end (or its cancellation, for a partial). null means no clock applies — a synthetic message an extension built, or a system message. Never 0; a session written before τ fixed this carries 0 on disk and every store maps it to null on load, so a host never sees one (docs/MESSAGE-TIMESTAMPS.md). Consecutive timestamps are what let a host compute per-call latency and whether a prompt cache entry had expired, and they read identically live and after a reload. */
-    timestamp?: number | null;
-    /** Present on assistant messages: the ONE completion that produced this message, as {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_reported, total_tokens, extra}. Per-completion, never cumulative — each prompt already contains every earlier one, so summing total_tokens over a conversation counts turn 1 once per turn. cache_reported false means the server accounts for no prompt cache, so its cache_read_tokens of 0 is silence and not a miss; cache_read_tokens at 0 WITH cache_reported true is the signal described in docs/PROMPT-CACHING.md §7. */
-    usage?: Record<string, unknown>;
-    [key: string]: unknown;
-  })[];
+  messages: ContextMessage[];
   [key: string]: unknown;
 }
 
@@ -985,7 +1042,7 @@ export interface GetModels {
 
 export interface GetModelsResult {
   /** Every config model NAME this child can switch to, sorted, as [{name, model}]: `name` is the exact string set_model's `name` param takes, and `model` is the SAME projection get_state publishes for the active model — {id, provider, context_window} — obtained by resolving `name` through the session's bound model resolver, i.e. by asking the one component set_model itself would ask. Empty only when the child's config declares no models; a resolver that cannot be enumerated is an INTERNAL_ERROR, never an empty list. */
-  models: unknown[];
+  models: ModelRecord[];
   [key: string]: unknown;
 }
 
@@ -1002,7 +1059,7 @@ export interface GetPendingRequest {
 
 export interface GetPendingRequestResult {
   /** The extension request AT THE CURSOR, or null when there is none. The cursor only, never an ancestry walk: the thing a user is looking at and the thing that refused their submission are one entry. {entry_id, extension, extension_name, sentence, label, lock, ask, release} — `label` is τ's own framing of the four states over `lock` and `ask`, `sentence` is the extension's own line, `ask` is a validated `ui.form` spec ({title, fields, actions}) or null, and `release` names a command that clears the lock (advisory: commands are exempt from a lock by placement, not by name). A host renders all four states; three of them draw something and the fourth is this verb answering null. */
-  request: Record<string, unknown> | null;
+  request: ExtensionRequest | null;
   [key: string]: unknown;
 }
 
@@ -1036,17 +1093,17 @@ export interface GetSessionStats {
 
 export interface GetSessionStatsResult {
   /** The session's EFFECTIVE CompactionSettings — {enabled, reserve_tokens, keep_recent_tokens}, read off AgentSession.compaction_settings, which hands back a COPY so a reader cannot retune a turn already in flight. An RPC session is CONSTRUCTED with enabled=False (backends.py:885) — that is how a host discovers auto-compaction is off (§1.1) — and set_auto_compaction (D-4, shipped in this same tier) is the one thing that changes it, so this reports the session's LIVE effective setting at call time, never a constant. */
-  compaction_settings: Record<string, unknown>;
+  compaction_settings: CompactionSettingsRecord;
   /** estimate_context_tokens(session.messages) (compaction.py) projected as {tokens, usage_tokens, trailing_tokens, last_usage_index}: tokens is the total estimate the compaction threshold is checked against; usage_tokens is the anchored provider-reported count up to the last assistant Usage, trailing_tokens the heuristic estimate for messages after it, last_usage_index that message's index (null if no assistant Usage exists yet, in which case tokens==trailing_tokens and the whole list was heuristically estimated). */
-  context: Record<string, unknown>;
+  context: ContextEstimate;
   /** context_window - context.tokens. Can be negative: an honest over-budget number, never clamped to zero. */
   context_headroom: number;
   /** The active model's context_window (get_model()). */
   context_window: number;
   /** {id, timestamp, summary, first_kept_id, tokens_before} for the most recent type=='compaction' entry in session_log.entries(), or null if this session has never compacted — an honest absence, never a fabricated entry. */
-  last_compaction: Record<string, unknown> | null;
+  last_compaction: LastCompaction | null;
   /** AgentSession.get_usage() — null before the first completion. */
-  usage: Record<string, unknown> | null;
+  usage: Usage | null;
   [key: string]: unknown;
 }
 
@@ -1071,13 +1128,13 @@ export interface GetStateResult {
   /** len(AgentSession.messages). */
   message_count: number;
   /** AgentSession.get_model(): {id, provider, context_window}. */
-  model: Record<string, unknown>;
+  model: ModelSpec;
   /** AgentSession.state.session_id. */
   session_id: string;
   /** AgentSession.state.status. */
   status: "idle" | "running";
   /** AgentSession.get_usage() — null before the first completion. */
-  usage: Record<string, unknown> | null;
+  usage: Usage | null;
   [key: string]: unknown;
 }
 
@@ -1201,6 +1258,17 @@ export interface IncompleteEntry {
   [key: string]: unknown;
 }
 
+/** The newest compaction entry on the path (`agent_session.CompactionRecord`). */
+export interface LastCompaction {
+  first_kept_id: string | null;
+  id: string;
+  summary: string;
+  /** ISO-8601. */
+  timestamp: string;
+  tokens_before: number | null;
+  [key: string]: unknown;
+}
+
 /**
  * RPC `list_managed_extensions` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's
  * own handler at `cursor_id`.
@@ -1214,13 +1282,27 @@ export interface ListManagedExtensions {
 
 export interface ListManagedExtensionsResult {
   /** Every file extension under management, in load order, as [{path, enabled}]. `path` is the exact string every extension_name argument takes (enable_extension, disable_extension, reload_extension); `enabled` is false exactly when the extension is loaded but its bucket has been removed from the runner, so its hooks, tools and slash commands are not offered. */
-  extensions: unknown[];
+  extensions: ManagedExtension[];
   [key: string]: unknown;
 }
 
 /** Every session in the daemon's store, across every cwd, newest first (RPC `list_sessions`). */
 export interface ListSessions {
   type: "list_sessions";
+}
+
+/** An extension file that failed to load, and why. */
+export interface LoadError {
+  error: string;
+  path: string;
+  [key: string]: unknown;
+}
+
+/** One managed extension file and whether it is enabled. */
+export interface ManagedExtension {
+  enabled: boolean;
+  path: string;
+  [key: string]: unknown;
 }
 
 /** A message as the log stores it, told apart by `role`. */
@@ -1235,6 +1317,13 @@ export interface MessageEntry {
   status?: never;
   timestamp: string;
   type: "message";
+  [key: string]: unknown;
+}
+
+/** One entry `complete_message_id` offers: its id, and its first line. */
+export interface MessageMatch {
+  entry_id: string;
+  preview: string;
   [key: string]: unknown;
 }
 
@@ -1303,7 +1392,7 @@ export interface NavigateResult {
   /** cursor.leaf after the mutation (E5 rule 1). */
   leaf: string | null;
   /** ConversationTree.context_for(cursor) after the mutation — the same flat message array get_messages returns, for the path this call just produced. Returned rather than left for a follow-up get_messages because the mutation's whole product is a different context, and a host that had to fetch it separately could render the old one in between. */
-  messages: unknown[];
+  messages: ContextMessage[];
   [key: string]: unknown;
 }
 
@@ -1337,11 +1426,11 @@ export interface NextStep {
 
 export interface NextStepResult {
   /** {flow, mutation, arguments}. `mutation` is the capability to perform — the named flow's, always, so a host that already knows which flow it stepped can dispatch before this returns. `arguments` is what to perform it with, keyed by the mutation's own parameter names. This is a commitment: τ does not ask a second time, and a host that wants a confirmation renders one from this. */
-  ready?: Record<string, unknown> | null;
+  ready?: Ready | null;
   /** `step` — one required argument is still unbound and `step` describes it. `ready` — every required argument is bound and `ready` names the mutation to perform and what to perform it with. The two are mutually exclusive and exactly one is present. */
   status: "step" | "ready";
   /** {flow, argument, domain, leaf, bound}. `argument` is {name, domain, description, cardinality, required, scope}; `domain` is the resolved domain record {name, description, free, values, enumerator}, included so a host can render the field without a second call — `values` is non-null for a small fixed set, and `enumerator` non-null means call `enumerate_domain` for the live set. */
-  step?: Record<string, unknown> | null;
+  step?: FlowStep | null;
   [key: string]: unknown;
 }
 
@@ -1414,7 +1503,15 @@ export interface PasteSubtreeResult {
   /** cursor.leaf after the paste — E5 rule 1, and here it is the UNCHANGED tip, present because absence is never a signal (rule 3), not because anything moved. */
   leaf: string | null;
   /** The ids minted, in the order they were appended. The first is the copy of `source_id` itself. Ids rather than messages because a paste edits the TREE and never moves the leaf: the current context is unchanged, so there is nothing to re-render until someone navigates onto the copy. */
-  minted_ids: unknown[];
+  minted_ids: string[];
+  [key: string]: unknown;
+}
+
+/** One path an `@` token can complete to. */
+export interface PathMatch {
+  detail: string;
+  is_dir: boolean;
+  name: string;
   [key: string]: unknown;
 }
 
@@ -1456,7 +1553,7 @@ export interface Prompt {
   /** Whether a leading '/' is command-dispatched. Defaults to False. */
   expand_commands?: boolean;
   /** Optional list of image content blocks. */
-  images?: unknown[] | null;
+  images?: ImageContent[] | null;
   /** Concurrency policy against an in-flight turn. Defaults to 'reject'. 'fork' is a recognized value but currently REJECTED at submission time (-32602, phase-2 review S3) — it runs on its own cursor, whose events this handler does not forward (docs/CURSORS.md §6). */
   multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
   session_id: string;
@@ -1481,9 +1578,9 @@ export interface PromptResult {
   /** Whether a turn was admitted for this submission, so a `submission_end` channel event with its id will follow. False for a steer delivered into another turn, and for a command. */
   admitted?: boolean;
   /** Present exactly when the request set expand_attachments: true — absent is 'expansion did not run', which is a different statement from 'expansion found nothing'. {expanded: int, images: int, unresolved: [str], failures: [str]}. `unresolved` names the @words that matched no file and were therefore left in the text as prose. `failures` names the ones that resolved but could not be sent, each with the reason; the model is told the same thing through a <reference error="…"> block, so neither side is left believing an attachment landed when it did not. A host that shows neither list turns a visible failure back into a silent one. */
-  attachments?: Record<string, unknown>;
+  attachments?: AttachmentReport;
   /** Present ONLY when this acceptance is also the submission's only completion: a core (extension-registered) slash command resolved synchronously with no turn started, so there is no later agent_end to carry it. {name, output} — `name` is the command that ran, which an input hook may have rewritten. Only an extension-registered command reaches this shape; a built-in resolves to a step, a ready flow or a view, each of which this wire refuses with COMMAND_NOT_SUPPORTED. Absent for an ordinary turn — poll get_messages / watch for agent_end instead. */
-  command?: Record<string, unknown>;
+  command?: CommandOutput;
   /** What a command resolved to, after the daemon performed it; `null` for a prompt. */
   dispatched?: DispatchedCommand | null;
   /** Always null on this success shape; a real rejection is SUBMISSION_REJECTED instead. */
@@ -1491,7 +1588,7 @@ export interface PromptResult {
   /** Echoes the request's submission_id (caller-supplied, or a minted uuid4 for prompt). */
   submission_id: string;
   /** Present ONLY when this submission resolved to a VIEW command — /tree or /extensions. {name, state, unavailable_because}: `name` is the view asked for, `state` is what a head draws it from, and `unavailable_because` is a sentence saying why no state rides along. Exactly one of the last two is non-null, never both and never neither. τ projects no view state yet (docs/VSCODE-HEAD.md §6), so today every one of these carries the reason; a host with its own browser opens it from its own reads, and a host without one prints the reason. This is a SUCCESS response, not the COMMAND_NOT_SUPPORTED a view used to raise: the wire says what was asked for and what it can supply, and the payload lands in `state` when there is one, with no shape change for a host. */
-  view?: Record<string, unknown>;
+  view?: View;
   [key: string]: unknown;
 }
 
@@ -1744,7 +1841,7 @@ export interface SetModelResult {
   /** cursor.leaf immediately after the model_change entry this call appended (E5) — that entry's own id, since the append is the last write this handler makes. */
   leaf: string | null;
   /** AgentSession.get_model() after the switch: {id, provider, context_window}. */
-  model: Record<string, unknown>;
+  model: ModelSpec;
   [key: string]: unknown;
 }
 
@@ -1843,7 +1940,7 @@ export interface Submit {
   /** Whether a leading '/' is command-dispatched. Defaults to False. */
   expand_commands?: boolean;
   /** Optional list of image content blocks. */
-  images?: unknown[] | null;
+  images?: ImageContent[] | null;
   /** Concurrency policy against an in-flight turn. Defaults to 'reject'. 'fork' is a recognized value but currently REJECTED at submission time (-32602, phase-2 review S3) — it runs on its own cursor, whose events this handler does not forward (docs/CURSORS.md §6). */
   multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
   session_id: string;
@@ -1868,9 +1965,9 @@ export interface SubmitResult {
   /** Whether a turn was admitted for this submission, so a `submission_end` channel event with its id will follow. False for a steer delivered into another turn, and for a command. */
   admitted?: boolean;
   /** Present exactly when the request set expand_attachments: true — absent is 'expansion did not run', which is a different statement from 'expansion found nothing'. {expanded: int, images: int, unresolved: [str], failures: [str]}. `unresolved` names the @words that matched no file and were therefore left in the text as prose. `failures` names the ones that resolved but could not be sent, each with the reason; the model is told the same thing through a <reference error="…"> block, so neither side is left believing an attachment landed when it did not. A host that shows neither list turns a visible failure back into a silent one. */
-  attachments?: Record<string, unknown>;
+  attachments?: AttachmentReport;
   /** Present ONLY when this acceptance is also the submission's only completion: a core (extension-registered) slash command resolved synchronously with no turn started, so there is no later agent_end to carry it. {name, output} — `name` is the command that ran, which an input hook may have rewritten. Only an extension-registered command reaches this shape; a built-in resolves to a step, a ready flow or a view, each of which this wire refuses with COMMAND_NOT_SUPPORTED. Absent for an ordinary turn — poll get_messages / watch for agent_end instead. */
-  command?: Record<string, unknown>;
+  command?: CommandOutput;
   /** What a command resolved to, after the daemon performed it; `null` for a prompt. */
   dispatched?: DispatchedCommand | null;
   /** Always null on this success shape; a real rejection is SUBMISSION_REJECTED instead. */
@@ -1878,7 +1975,7 @@ export interface SubmitResult {
   /** Echoes the request's submission_id (caller-supplied, or a minted uuid4 for prompt). */
   submission_id: string;
   /** Present ONLY when this submission resolved to a VIEW command — /tree or /extensions. {name, state, unavailable_because}: `name` is the view asked for, `state` is what a head draws it from, and `unavailable_because` is a sentence saying why no state rides along. Exactly one of the last two is non-null, never both and never neither. τ projects no view state yet (docs/VSCODE-HEAD.md §6), so today every one of these carries the reason; a host with its own browser opens it from its own reads, and a host without one prints the reason. This is a SUCCESS response, not the COMMAND_NOT_SUPPORTED a view used to raise: the wire says what was asked for and what it can supply, and the payload lands in `state` when there is one, with no shape change for a host. */
-  view?: Record<string, unknown>;
+  view?: View;
   [key: string]: unknown;
 }
 
@@ -1901,7 +1998,15 @@ export interface SummarizeAndNavigateResult {
   /** cursor.leaf after the mutation (E5 rule 1). */
   leaf: string | null;
   /** ConversationTree.context_for(cursor) after the mutation — the same flat message array get_messages returns, for the path this call just produced. Returned rather than left for a follow-up get_messages because the mutation's whole product is a different context, and a host that had to fetch it separately could render the old one in between. */
-  messages: unknown[];
+  messages: ContextMessage[];
+  [key: string]: unknown;
+}
+
+/** A compaction or branch summary as the context renders it: a user message with no timestamp. */
+export interface SummaryMessage {
+  content: TextContent[];
+  role: "user";
+  timestamp?: never;
   [key: string]: unknown;
 }
 
@@ -2042,6 +2147,17 @@ export interface UserMessage {
   content: string | (TextContent | ImageContent)[];
   role: "user";
   timestamp: number;
+  [key: string]: unknown;
+}
+
+/** A named surface only a head can open. */
+export interface View {
+  /** The view's name, a key of `tau_agent_core.capabilities.VIEW_COMMANDS`. */
+  name: string;
+  /** What a head draws the view from. `None` everywhere today — no capability projects the session tree yet (docs/VSCODE-HEAD.md §6), and this is the spot that payload lands in when one does, with no change to the union. */
+  state?: Record<string, unknown> | null;
+  /** Why no `state` rides with this, in a sentence a head can print. A head that has its own view of that name ignores it and opens it; a head that has none prints it and does nothing else. Not a fallback: it is the same idiom the RPC table's seven `declined_because` entries already use. */
+  unavailable_because?: string | null;
   [key: string]: unknown;
 }
 
@@ -2226,7 +2342,7 @@ export type ClientFrame = {
   expand_commands?: boolean;
   id: number;
   /** Optional list of image content blocks. */
-  images?: unknown[] | null;
+  images?: ImageContent[] | null;
   /** Concurrency policy against an in-flight turn. Defaults to 'reject'. 'fork' is a recognized value but currently REJECTED at submission time (-32602, phase-2 review S3) — it runs on its own cursor, whose events this handler does not forward (docs/CURSORS.md §6). */
   multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
   session_id: string;
@@ -2258,7 +2374,7 @@ export type ClientFrame = {
   expand_commands?: boolean;
   id: number;
   /** Optional list of image content blocks. */
-  images?: unknown[] | null;
+  images?: ImageContent[] | null;
   /** Concurrency policy against an in-flight turn. Defaults to 'reject'. 'fork' is a recognized value but currently REJECTED at submission time (-32602, phase-2 review S3) — it runs on its own cursor, whose events this handler does not forward (docs/CURSORS.md §6). */
   multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
   session_id: string;
@@ -2534,7 +2650,7 @@ export type ClientFrame = {
   drop_context: boolean;
   id: number;
   /** The marked entry ids, in any order — tree_surgery puts them into tree order. The longest run that is already an ancestor chain is kept in place; the rest are minted as copies parented under it, so nothing is re-parented and nothing is erased. */
-  ids: unknown[];
+  ids: string[];
   session_id: string;
   type: "commit_branch";
 } | {

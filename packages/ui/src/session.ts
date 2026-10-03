@@ -1,6 +1,7 @@
 import {
   Replica,
   type Attached,
+  type CompactionEnd,
   type CursorState,
   type Event,
   type ReplicaEntry,
@@ -114,6 +115,12 @@ export interface SessionState {
   ui: readonly UiCall[];
   /** The last submission's attachment report, keyed by its submission id. */
   attachments: { submissionId: string; report: AttachmentReport } | null;
+  /**
+   * How the last compaction ended, in a sentence. A compaction finishes after
+   * the request that started it has answered, so its outcome arrives as its
+   * own event -- and a failed one changed nothing, which the reader must hear.
+   */
+  compaction: { text: string; failed: boolean } | null;
 }
 
 const NO_LIVE: Live = {
@@ -158,6 +165,7 @@ export class SessionStore {
       forms: [],
       ui: [],
       attachments: null,
+      compaction: null,
     };
   }
 
@@ -286,6 +294,9 @@ export class SessionStore {
         return;
       case 'ui':
         this.#patch({ ui: [...this.#state.ui, { seq: event.seq, data: event.data }].slice(-UI_KEPT) });
+        return;
+      case 'compaction_end':
+        this.#patch({ compaction: compactionSentence(event.data) });
         return;
       default:
         return;
@@ -437,6 +448,14 @@ export class SessionStore {
     const { client, cursorId } = this.#require();
     return { client, session_id: this.sessionId, cursor_id: cursorId };
   }
+}
+
+function compactionSentence(end: CompactionEnd): { text: string; failed: boolean } {
+  if (end.is_error) return { text: `Compaction failed: ${end.error ?? 'τ gave no reason'}. Nothing was changed.`, failed: true };
+  if (end.cancelled) return { text: 'Compaction was cancelled. Nothing was changed.', failed: false };
+  if (!end.performed) return { text: 'Compaction found nothing to compact.', failed: false };
+  const saved = end.tokens_saved === undefined ? '' : ` It saved about ${end.tokens_saved.toLocaleString()} tokens.`;
+  return { text: `Compacted.${saved}`, failed: false };
 }
 
 /**

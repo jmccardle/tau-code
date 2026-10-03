@@ -22,7 +22,8 @@ try {
   const before = await client.request('list_sessions', {});
   check('a fresh store lists no sessions', before.sessions.length === 0);
 
-  const { session_id } = await client.request('create_session', { cwd: daemon.home });
+  const opened = await client.request('new_session', { cwd: daemon.home });
+  const session_id = opened.session.session_id;
   const attached = await client.request('attach', { session_id });
   console.log(`session ${session_id.slice(0, 8)} in ${attached.cwd}`);
   check('attach answers a snapshot', Array.isArray(attached.entries));
@@ -37,7 +38,7 @@ try {
   check('built-ins are listed with the vocabulary', commands.some((c) => c.origin === 'builtin'));
 
   const after = await client.request('list_sessions', {});
-  check('the new session is listed', after.sessions.some((row) => row.id === session_id));
+  check('the new session is listed', after.sessions.some((row) => row.session_id === session_id));
 
   client.close();
   console.log(process.exitCode ? '\nFAILED' : '\nOK');

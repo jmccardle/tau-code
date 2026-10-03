@@ -19,6 +19,7 @@ import {
   nextIndex,
 } from '../dist/completion.js';
 import { VIEWS, performCommand } from '../dist/commands.js';
+import { ServeError } from '@ffwf/tau-code-protocol';
 
 /**
  * A synthetic vocabulary in `surface.commands`' shape (`CommandInfo`).
@@ -224,7 +225,10 @@ test('completePath sends the session, the text and the caret offset', async () =
   const { session, calls } = fakeSession(() => ({ completion: null }));
   const result = await completePath(session, 'read @no', 8);
   assert.equal(result, null, 'a null completion means "show no popup"');
-  assert.deepEqual(calls[0], { type: 'complete_path', fields: { session_id: 's1', text: 'read @no', offset: 8 } });
+  assert.deepEqual(calls[0], {
+    type: 'complete_path',
+    fields: { session_id: 's1', cursor_id: 'c1', text: 'read @no', offset: 8 },
+  });
 });
 
 test('completePath reads matches into candidates', async () => {
@@ -271,7 +275,7 @@ const MODEL_STEP = {
   flow: 'model',
   argument: { name: 'name', domain: 'model_name', description: '', required: true },
   domain: { name: 'model_name', description: '', free: false, values: null, enumerator: 'get_models', field_kind: 'select' },
-  cursor: 'L9',
+  leaf: 'L9',
   bound: {},
 };
 
@@ -327,7 +331,7 @@ test('a ready flow goes back to the daemon through perform_ready, not by mutatio
     record.calls.map((c) => c.type),
     ['next_step', 'perform_ready'],
   );
-  assert.deepEqual(record.calls[0].fields, { session_id: 's1', flow: 'compact', bound: {}, leaf: 'L9' });
+  assert.deepEqual(record.calls[0].fields, { session_id: 's1', cursor_id: 'c1', flow: 'compact', bound: {}, leaf: 'L9' });
   assert.deepEqual(record.calls[1].fields, { session_id: 's1', cursor_id: 'c1', ready });
   assert.deepEqual(record.asked, [], 'nothing was asked, because nothing was unbound');
 });
@@ -385,8 +389,10 @@ test('a Ready this head does not know is refused by name, not dropped', async ()
 test('an extension command goes through submit, so the input hooks run', async () => {
   const { host: h, record } = host(() => ({
     accepted: true,
+    admitted: false,
     submission_id: 'x',
-    command: { arm: 'Performed', mutation: 'notes', flow: null, data: { output: 'noted' } },
+    rejection_reason: null,
+    dispatched: { arm: 'Performed', mutation: 'notes', flow: null, data: { output: 'noted' } },
   }));
   const outcome = await performCommand('notes', 'buy milk', COMMANDS, h);
   assert.equal(outcome.kind, 'performed');
@@ -395,10 +401,14 @@ test('an extension command goes through submit, so the input hooks run', async (
   assert.equal(record.calls[0].fields.text, '/notes buy milk');
   assert.equal(record.calls[0].fields.expand_commands, true);
   assert.equal(record.calls[0].fields.multitask_strategy, 'enqueue');
+  assert.equal(record.calls[0].fields.source, 'interactive', 'RPC provenance: a person typed this');
+  assert.equal(record.calls[0].fields.submitter, 'human');
 });
 
 test('a refused submission says why, in τ’s words', async () => {
-  const { host: h } = host(() => ({ accepted: false, submission_id: 'x', reason: 'locked by pirate' }));
+  const { host: h } = host(() => {
+    throw new ServeError('submit', { code: 'submission_rejected', message: 'locked by pirate', data: { submission_id: 'x' } });
+  });
   const outcome = await performCommand('notes', '', COMMANDS, h);
   assert.deepEqual(outcome, { kind: 'refused', notice: 'locked by pirate' });
 });

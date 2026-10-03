@@ -1536,6 +1536,9 @@ export function Chat({
         </div>
       ) : null}
       {state?.live.cacheNotice ? <div className="tau-notice tau-warn">{state.live.cacheNotice}</div> : null}
+      {state?.compaction ? (
+        <div className={`tau-notice${state.compaction.failed ? ' tau-warn' : ''}`}>{state.compaction.text}</div>
+      ) : null}
       <Composer
         session={session}
         state={state}

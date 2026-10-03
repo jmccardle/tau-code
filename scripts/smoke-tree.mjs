@@ -73,11 +73,11 @@ try {
   // first run of this script reported OK against a one-entry session it had
   // just created, with every check passing and nothing measured.
   const wanted = header.id;
-  const target = rows.find((row) => row.id === wanted);
+  const target = rows.find((row) => row.session_id === wanted);
   if (!target) {
     throw new Error(
       `the copy (${wanted}) is not in list_sessions, which returned ` +
-        `${rows.map((r) => r.id.slice(0, 8)).join(', ') || '(nothing)'}.`,
+        `${rows.map((r) => r.session_id.slice(0, 8)).join(', ') || '(nothing)'}.`,
     );
   }
   const attached = await client.request('attach', { session_id: wanted });
