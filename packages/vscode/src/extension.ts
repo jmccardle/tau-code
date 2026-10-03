@@ -32,8 +32,8 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
 
-    // Bring agent tabs back after a window reload. The process does not
-    // survive; the serializer starts a fresh one rather than faking a reattach.
+    // Bring agent tabs back after a window reload. The session lives in the
+    // daemon, so the restored tab re-attaches to the one it was showing.
     vscode.window.registerWebviewPanelSerializer(
       ChatPanel.viewType,
       new ChatPanelSerializer(context, output),

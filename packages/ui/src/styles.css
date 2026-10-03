@@ -791,6 +791,9 @@
 /* An entry the session wrote and never finished: the process died, or the
    turn was aborted, mid-message. Drawn as itself, not as a finished answer. */
 .tau-entry-interrupted { border-left: 3px solid var(--tau-warn); opacity: 0.85; }
+/* A note about the entry, not more of it: a stopped answer's last line would
+   otherwise read as if the model wrote "Stopped before it finished." */
+.tau-entry > .tau-muted { margin-top: 0.4em; font-size: 0.85em; font-style: italic; color: var(--tau-muted); }
 .tau-entry-marker { border-left: 3px solid var(--tau-muted); font-size: 0.92em; }
 .tau-session-group { margin: 0.6em 0 0.2em; font-size: 0.85em; color: var(--tau-muted); }
 .tau-live-args { display: block; font-size: 0.85em; opacity: 0.8; white-space: pre-wrap; }
