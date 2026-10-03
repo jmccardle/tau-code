@@ -1,4 +1,4 @@
-import type { CommandInfo, DispatchedCommand } from '@ffwf/tau-code-protocol';
+import { ServeError, type CommandInfo, type DispatchedCommand } from '@ffwf/tau-code-protocol';
 import type { Daemon } from './daemon.js';
 import { messageOf } from './daemon.js';
 import type { SessionStore } from './session.js';
@@ -103,14 +103,16 @@ export async function performCommand(
       session_id,
       cursor_id,
       text: `/${name}${args ? ` ${args}` : ''}`,
+      source: 'interactive',
+      submitter: 'human',
       submission_id: `tau-code-cmd-${Date.now()}`,
       multitask_strategy: 'enqueue',
       expand_commands: true,
     });
-    if (!result.accepted) return { kind: 'refused', notice: result.reason ?? `τ refused /${name}.` };
-    if (!result.command) return { kind: 'performed', notice: `/${name} done.` };
-    return await followArm(result.command, host, 0);
+    if (!result.dispatched) return { kind: 'performed', notice: `/${name} done.` };
+    return await followArm(result.dispatched, host, 0);
   } catch (raw) {
+    if (raw instanceof ServeError && raw.code === 'submission_rejected') return { kind: 'refused', notice: raw.detail };
     return { kind: 'refused', notice: messageOf(raw) };
   }
 }
@@ -138,7 +140,7 @@ async function runFlow(
   for (; taken < MAX_FLOW_STEPS; taken += 1) {
     const { client, session_id, cursor_id } = host.session.at();
     const leaf = host.session.state.cursor?.leaf ?? null;
-    const answer = await client.request('next_step', { session_id, flow: name, bound, leaf });
+    const answer = await client.request('next_step', { session_id, cursor_id, flow: name, bound, leaf });
 
     if (answer.status === 'ready') {
       if (!answer.ready) return { kind: 'refused', notice: `next_step said /${name} is ready and sent no mutation.` };

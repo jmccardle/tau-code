@@ -179,3 +179,12 @@ test('the attachment report of a submission is kept by its id', async () => {
     report: { expanded: 1, images: 0, unresolved: ['nope'], failures: [] },
   });
 });
+
+test('compaction_end becomes a sentence, and a failed one says nothing changed', async () => {
+  const { store, client } = await attachedStore();
+  client.push(2, 'compaction_end', { compaction_id: 'k1', request_id: null, is_error: true, error: 'model unreachable', cancelled: false, leaf: 'u1' });
+  assert.deepEqual(store.state.compaction, { text: 'Compaction failed: model unreachable. Nothing was changed.', failed: true });
+  client.push(3, 'compaction_end', { compaction_id: 'k2', request_id: null, is_error: false, cancelled: false, performed: true, tokens_saved: 1200, leaf: 'u1' });
+  assert.equal(store.state.compaction.failed, false);
+  assert.match(store.state.compaction.text, /Compacted\. It saved about 1,200 tokens\./);
+});

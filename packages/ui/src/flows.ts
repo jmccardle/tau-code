@@ -54,9 +54,8 @@ export interface FlowStep {
   argument: FlowArgument;
   domain: FlowDomain;
   /**
-   * The entry the step was computed at -- a LEAF, despite the name, which is
-   * the core dataclass's. `enumerate_domain` takes it as `leaf`, so a scoped
-   * domain (`ancestors_of_cursor`) lists from the same place.
+   * The entry the step was computed at. `enumerate_domain` takes it as
+   * `leaf`, so a scoped domain (`ancestors_of_leaf`) lists from the same place.
    */
   leaf: string | null;
   bound: Record<string, unknown>;
@@ -94,7 +93,7 @@ export function stepOf(step: WireStep): FlowStep {
   }
   return {
     flow: step.flow,
-    leaf: step.cursor,
+    leaf: step.leaf,
     bound: step.bound,
     argument: {
       name: argument.name,
@@ -126,9 +125,10 @@ export async function enumerateDomain(
   domain: string,
   options: { query?: string; leaf?: string | null; limit?: number } = {},
 ): Promise<DomainListing> {
-  const { client, session_id } = session.at();
+  const { client, session_id, cursor_id } = session.at();
   const result = await client.request('enumerate_domain', {
     session_id,
+    cursor_id,
     domain,
     ...(options.query === undefined ? {} : { query: options.query }),
     ...(options.leaf === undefined ? {} : { leaf: options.leaf }),

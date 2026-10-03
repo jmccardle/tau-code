@@ -31,8 +31,8 @@ export function groupByCwd(rows: readonly SessionRow[], first: string | null): A
 /** The label to show for a row, in the order a reader would want it. */
 export function sessionLabel(row: SessionRow): string {
   if (row.name) return row.name;
-  if (row.first_message) return row.first_message;
-  return `(untitled — ${row.id.slice(0, 8)})`;
+  if (row.title) return row.title;
+  return `(untitled — ${row.session_id.slice(0, 8)})`;
 }
 
 /** A short, local, human time. Falls back to the raw string it cannot parse. */

@@ -562,9 +562,17 @@ export function Composer({
       // started typing something else.
       setText((current) => (current === '' ? trimmed : current));
     } else if (outcome.kind === 'command') {
-      const output = outcome.command['data'];
-      if (output && typeof output === 'object' && typeof (output as Record<string, unknown>)['output'] === 'string') {
-        setNotice(String((output as Record<string, unknown>)['output']));
+      // A line this head did not recognise as a command, which τ did: the
+      // vocabulary changed under it (an extension was just enabled, say).
+      const command = outcome.command;
+      if (command.arm === 'Performed') {
+        const output = command.data['output'];
+        setNotice(typeof output === 'string' && output ? output : `/${command.flow ?? command.mutation} done.`);
+      } else {
+        setNotice(
+          `τ read that as /${command.arm === 'View' ? command.name : command.flow}, which needs more from this head ` +
+            `than a line of text. Run it again from the / popup.`,
+        );
       }
     }
   };
@@ -783,21 +791,25 @@ export function SessionPicker({
             ) : (
               <ul className="tau-session-list">
                 {list.map((row) => {
-                  const current = row.id === currentSessionId;
+                  const current = row.session_id === currentSessionId;
                   return (
-                    <li key={row.id}>
+                    <li key={row.session_id}>
                       <button
                         className={`tau-session-row${current ? ' tau-session-current' : ''}`}
                         disabled={busy || current || !daemon}
-                        onClick={() => void act(() => daemon!.open(row.id))}
-                        title={row.id}
+                        onClick={() => void act(() => daemon!.open(row.session_id))}
+                        title={row.ref}
                       >
                         <span className="tau-session-title">{sessionLabel(row)}</span>
                         <span className="tau-session-meta">
                           {current ? 'current · ' : ''}
                           {`${row.message_count} msg · `}
                           {formatWhen(row.modified)}
+                          {row.parent ? ' · forked' : ''}
                         </span>
+                        {/* τ lists a session it could not read and says why. Hiding
+                            that row would undo the reporting it did on purpose. */}
+                        {row.error ? <span className="tau-session-error">unreadable: {row.error}</span> : null}
                       </button>
                     </li>
                   );
@@ -840,7 +852,7 @@ export function ModelPicker({ session, models, active, running, onClose }: Model
     setError(null);
     try {
       const { client, session_id, cursor_id } = session.at();
-      await client.request('set_model', { session_id, cursor_id, model: name });
+      await client.request('set_model', { session_id, cursor_id, name });
       onClose();
     } catch (raw) {
       setError(messageOf(raw));
@@ -1524,6 +1536,9 @@ export function Chat({
         </div>
       ) : null}
       {state?.live.cacheNotice ? <div className="tau-notice tau-warn">{state.live.cacheNotice}</div> : null}
+      {state?.compaction ? (
+        <div className={`tau-notice${state.compaction.failed ? ' tau-warn' : ''}`}>{state.compaction.text}</div>
+      ) : null}
       <Composer
         session={session}
         state={state}

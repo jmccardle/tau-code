@@ -165,8 +165,8 @@ export async function completePath(
   text: string,
   offset: number,
 ): Promise<Completions | null> {
-  const { client, session_id } = session.at();
-  const { completion } = await client.request('complete_path', { session_id, text, offset });
+  const { client, session_id, cursor_id } = session.at();
+  const { completion } = await client.request('complete_path', { session_id, cursor_id, text, offset });
   if (completion === null) return null;
   return {
     kind: 'path',

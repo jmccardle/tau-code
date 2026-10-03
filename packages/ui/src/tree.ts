@@ -1,4 +1,4 @@
-import type { TreeResult } from '@ffwf/tau-code-protocol';
+import type { GetTreeResult } from '@ffwf/tau-code-protocol';
 import type { SessionStore } from './session.js';
 
 /**
@@ -64,7 +64,7 @@ export interface Tree {
 }
 
 /** Read `get_tree` into the model below. */
-export function treeOf(result: TreeResult): Tree {
+export function treeOf(result: GetTreeResult): Tree {
   if (result.nodes.length !== result.count) {
     throw new TypeError(
       `get_tree said count ${result.count} and sent ${result.nodes.length} nodes. ` +

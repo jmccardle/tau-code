@@ -46,7 +46,7 @@ const STEP = {
     enumerator: 'get_models',
     field_kind: 'select',
   },
-  cursor: 'e7',
+  leaf: 'e7',
   bound: {},
 };
 
@@ -57,7 +57,7 @@ test('a step is read into a field a renderer can draw with no second call', () =
   assert.equal(step.argument.required, true);
   assert.equal(step.domain.enumerator, 'get_models');
   assert.equal(step.domain.fieldKind, 'select');
-  assert.equal(step.leaf, 'e7', "the core's `cursor` field is an entry id, and is read as the leaf");
+  assert.equal(step.leaf, 'e7');
 });
 
 test('a field kind this head cannot draw throws, rather than rendering nothing', () => {
@@ -91,7 +91,10 @@ test('enumerate_domain is asked at the step leaf, and reports total so a capped 
   const listing = await enumerateDomain(session, 'message_id', { leaf: 'e7' });
   assert.equal(listing.total, 40);
   assert.deepEqual(listing.values, [{ value: 'a', label: 'A' }]);
-  assert.deepEqual(calls[0], { type: 'enumerate_domain', fields: { session_id: 's1', domain: 'message_id', leaf: 'e7' } });
+  assert.deepEqual(calls[0], {
+    type: 'enumerate_domain',
+    fields: { session_id: 's1', cursor_id: 'c1', domain: 'message_id', leaf: 'e7' },
+  });
 });
 
 /* --------------------------------------------------------------- requests */

@@ -59,8 +59,11 @@ export function ExtensionPanel({ session, surface, onClose }: ExtensionPanelProp
     setBusy(true);
     try {
       const { client, session_id, cursor_id } = session.at();
-      await client.request('perform', { session_id, cursor_id, method, arguments: { path } });
-      setError(null);
+      const result = await client.request(method, { session_id, cursor_id, path });
+      // `ok: false` is a decision τ made -- an unknown target, or one already
+      // in the state asked for -- and it carries a sentence. Reported, never
+      // swallowed into a refresh that looks like nothing happened.
+      setError(result.ok ? null : result.message);
     } catch (raw) {
       // A refusal is τ's sentence -- an unknown target, a file that will not
       // import -- and it is shown, never swallowed into a refresh that looks
