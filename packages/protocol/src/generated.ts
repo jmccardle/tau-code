@@ -489,6 +489,7 @@ export interface CursorState {
   cursor_id: string;
   label: string;
   leaf: string | null;
+  /** The config name of the model its next turn calls, as `set_model` takes it and `get_models` lists it; not the model id, which two names may share. */
   model: string;
   owner_id: string | null;
   /** The extension request at its leaf, or `None`. */

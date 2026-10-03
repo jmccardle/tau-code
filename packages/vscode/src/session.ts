@@ -6,6 +6,9 @@ import { findDaemon, forgetDaemon, NoDaemon, socketUrl } from './daemon.js';
 import { versionMismatch, type TauResolution } from './runtime.js';
 import type { FromWebview, HostNotice, ToWebview, WebviewContext } from './webview/messages.js';
 
+/** One slot for "which τ": what is installed, replaced by what is serving once that is known. */
+const VERSION_NOTICE = 'tau-version';
+
 /**
  * One webview's link to `tau serve`, relayed through the extension host.
  *
@@ -216,15 +219,18 @@ export class DaemonRelay implements vscode.Disposable {
   #compareDaemon(version: string, pid: number): void {
     const chosen = this.#resolution?.chosen;
     if (!chosen || chosen.version === null || chosen.version === version) return;
+    // The same id as the "two taus installed" notice, so it takes that one's
+    // place: once the daemon has said hello, which τ is SERVING is the fact,
+    // and which one this window would start is the footnote.
     const notice: HostNotice = {
-      id: `tau-daemon-${version}-${chosen.version}`,
+      id: VERSION_NOTICE,
       level: 'warn',
       text:
-        `The daemon serving this panel is τ ${version} (pid ${pid}), which was already running. ` +
-        `This window would have started τ ${chosen.version}, from ${chosen.where}. ` +
-        `Stop that daemon to switch; the next panel starts the other one.`,
+        `This panel is served by τ ${version}, a daemon that was already running (pid ${pid}). ` +
+        `This window would start τ ${chosen.version}, from ${chosen.where}, once that daemon stops.`,
+      action: { label: 'Choose', command: 'tau-code.chooseRuntime' },
     };
-    this.#notices = [...this.#notices.filter((old) => !old.id.startsWith('tau-daemon-')), notice];
+    this.#notices = [...this.#notices.filter((old) => old.id !== VERSION_NOTICE), notice];
     this.output.warn(`[${this.label}] ${notice.text}`);
     this.#flushNotices();
   }
@@ -235,7 +241,7 @@ export class DaemonRelay implements vscode.Disposable {
     this.#notices = mismatch
       ? [
           {
-            id: `tau-version-${resolution.chosen?.version ?? '?'}-${resolution.other?.version ?? '?'}`,
+            id: VERSION_NOTICE,
             level: 'warn',
             text: mismatch,
             action: { label: 'Choose', command: 'tau-code.chooseRuntime' },

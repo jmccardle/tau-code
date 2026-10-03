@@ -241,10 +241,8 @@ export function versionMismatch(resolution: TauResolution): string | null {
   if (chosen.version === other.version) return null;
 
   return (
-    `Two taus are installed and they are different versions. ` +
-    `Running ${chosen.version}, from ${chosen.where}. ` +
-    `Also found ${other.version}, from ${other.where}. ` +
-    `The "tau-code.runtime" setting chooses between them.`
+    `Two taus are installed: ${chosen.version} from ${chosen.where}, which this window starts, ` +
+    `and ${other.version} from ${other.where}. The "tau-code.runtime" setting chooses.`
   );
 }
 
