@@ -6,11 +6,11 @@
  * installed τ. τ's protocol dataclasses are the source of truth; nothing here is
  * hand-maintained, and `npm run check:protocol` fails when this file is stale.
  *
- * tau serve protocol 0.3
+ * tau serve protocol 0.4
  */
 
 /** The protocol version `hello` must name. */
-export const PROTOCOL_VERSION = "0.3" as const;
+export const PROTOCOL_VERSION = "0.4" as const;
 /** The port `tau serve` listens on when its config names none. */
 export const DEFAULT_PORT = 8256 as const;
 
@@ -21,90 +21,9 @@ export interface Abort {
   type: "abort";
 }
 
-/**
- * A single event from the agent loop. Reference: SUBPHASE-0.0.md, "5. Agent Events" section.
- * Reference: docs/SUBMISSION-LIFECYCLE.md, "Provenance on events" (phase 2). Attributes: type:
- * Event type discriminator timestamp: Milliseconds since epoch message: Message data
- * (agent_start/end, message_*) turn_index: Turn number (turn_*) tool_call_id: Tool call ID
- * (tool_*) tool_name: Tool name (tool_*) args: Tool execution arguments (tool_execution_start)
- * result: Tool execution result (tool_execution_*) details: A tool's structured facts about
- * its own execution on ``tool_execution_end`` — the path it read, the line range, the match
- * count, the diff. What ``result`` holds is what the MODEL reads; this is what a head can
- * render beside it. ``None`` when the tool declared none, and on every other event type.
- * is_error: Whether this event represents an error blocked: Whether a ``tool_execution_end``
- * is an extension VETO (S50) — distinct from a generic errored result, so a front-end can
- * render "⛔ blocked by <ext>: <reason>" rather than a plain error box. blocked_by: The
- * extension that vetoed the call (its runner path label), paired with ``blocked`` on a
- * ``tool_execution_end``; ``None`` otherwise. tool_results: List of tool result messages
- * (turn_end) messages: List of messages produced (agent_end) error: Why an ``agent_end``
- * closed, when the loop raised rather than finishing (``"RuntimeError: Connection refused"``).
- * ``None`` on a normal close; always paired with ``is_error=True``. end_reason: How an
- * ``agent_end`` closed, as one of ``"done"``, ``"terminate"``, ``"aborted"``, ``"max_turns"``,
- * ``"repeat_tool_calls"`` or ``"error"``. ``None`` on every other event type. This
- * distinguishes a loop that finished from one that was cut short: before it, a run stopped by
- * ``max_turns`` emitted the same ``agent_end`` as one where the model simply had nothing more
- * to say, so a caller could not tell a truncated answer from a complete one. cursor_id: The
- * :class:`~tau_agent_core.cursor.Cursor` whose turn emitted this event. Several cursors run
- * turns on one session at once, so a renderer routes by it (docs/CURSORS.md §6). ``None``
- * outside a turn. submission_id: The ``Submission`` that drove this turn, if any — Jupyter's
- * ``parent_header``. ``None`` for a turn not driven through ``submit()`` (e.g.
- * ``continue_conversation()``, which predates the Submission contract) — an honest "no
- * submission", never a fabricated id. source: The submission's origin (``"interactive"``,
- * ``"bus"``, ``"agent"``, …) — pi's ``InputSource`` equivalent, so a renderer can decide *how*
- * to show a turn (Jupyter's rule: render every source, differently) without the core knowing
- * any renderer exists. ``None`` alongside ``submission_id``. submitter: WHO submitted — an
- * extension name, ``"human"``, a channel id. ``None`` alongside ``submission_id``.
- * correlation: The submission's free-form origin detail (bus subject, cron id, HTTP request
- * id), carried through unchanged so an embedded server can fan out to the right stream.
- * ``None`` alongside ``submission_id`` (an EMPTY dict would claim "a submission with no
- * correlation data"; ``None`` says "no submission stamped this event" instead). purpose: Which
- * side completion a ``side_completion_*`` event reports — ``"compaction"`` or
- * ``"branch_summary"``. ``None`` on every other type. Side work belongs to no turn and stamps
- * no ``submission_id``, so this is what a renderer keys on instead. reason: What asked for it
- * — ``"manual"``, ``"threshold"`` or ``"navigate"``. Set on all three ``side_completion_*``
- * events, so a reader that joins late still learns whether the compaction it is watching was
- * requested or imposed. ``None`` on every other type. delta: One text fragment of a side
- * completion, on ``side_completion_update``. ``None`` elsewhere. text: The finished
- * side-completion text, on ``side_completion_end``. Sent whole as well as in fragments,
- * because a subscriber that attached late or dropped a delta must still be able to render the
- * result rather than a partial one. ``None`` elsewhere, and ``None`` on an end that failed —
- * paired with ``is_error`` and ``error``. usage: What a side completion SPENT, on
- * ``side_completion_end``. This is the only place those tokens are observable: the work runs
- * outside the agent loop, so no ``turn_end`` counts it (docs/STREAMING-SIDE-WORK.md).
- */
-export interface AgentEvent {
-  args?: Record<string, unknown> | null;
-  blocked?: boolean;
-  blocked_by?: string | null;
-  correlation?: Record<string, unknown> | null;
-  cursor_id?: string | null;
-  delta?: string | null;
-  details?: Record<string, unknown> | null;
-  end_reason?: "done" | "terminate" | "aborted" | "max_turns" | "repeat_tool_calls" | "error" | null;
-  error?: string | null;
-  is_error?: boolean;
-  message?: Record<string, unknown> | null;
-  messages?: Record<string, unknown>[] | null;
-  purpose?: "compaction" | "branch_summary" | null;
-  reason?: "manual" | "threshold" | "navigate" | null;
-  result?: unknown | null;
-  source?: "interactive" | "rpc" | "extension" | "bus" | "timer" | "webhook" | "voice" | "agent" | null;
-  submission_id?: string | null;
-  submitter?: string | null;
-  text?: string | null;
-  timestamp: number;
-  tool_call_id?: string | null;
-  tool_name?: string | null;
-  tool_results?: Record<string, unknown>[] | null;
-  turn_index?: number | null;
-  type: "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "side_completion_start" | "side_completion_update" | "side_completion_end";
-  usage?: Record<string, number> | null;
-  [key: string]: unknown;
-}
-
 /** A `agent_event` event. */
 export interface AgentEventEvent {
-  data: AgentEvent;
+  data: WireEvent;
   epoch: string;
   kind: "agent_event";
   seq: number;
@@ -592,6 +511,9 @@ export interface EntryAppendEvent {
 
 /** An `entry_open`, `entry_final` or `entry_append`: one log write. */
 export interface EntryEventData {
+  /** The cursor whose turn or request wrote it; an `entry_final` names the cursor that opened the entry. Null for a write no cursor made. A client joins `agent_event` to the entries a turn writes by it. */
+  cursor_id?: string | null;
+  /** The entry as the log now holds it. */
   entry: Entry;
   [key: string]: unknown;
 }
@@ -1258,7 +1180,7 @@ export interface Submit {
   /** Image content blocks to send with the text. */
   images?: Record<string, unknown>[] | null;
   /** What to do when the cursor is busy (docs/SUBMISSION-LIFECYCLE.md). */
-  multitask_strategy?: "enqueue" | "reject" | "steer" | "follow_up";
+  multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
   session_id: string;
   /** The id the events of this submission carry; the daemon mints one when `None`. A client that renders its own streams sends it. */
   submission_id?: string | null;
@@ -1487,6 +1409,66 @@ export interface ViewArm {
   [key: string]: unknown;
 }
 
+/**
+ * The wire projection of ``AgentEvent`` (D3) — REMOTE-CONTROL.md's designed shape, and (as of
+ * unit 2B) what ``rpc/handler.py`` actually sends: ``rpc/wire_events.py`` constructs instances
+ * of this class rather than a hand-shaped dict. See the module docstring's Status note and the
+ * field-by-field comment above this class.
+ */
+export interface WireEvent {
+  /** Which diffable content-block kind `delta` belongs to. Set exactly when `delta` is set — 'text' on a side_completion_update, which has no other kind. */
+  block_type?: "text" | "thinking" | null;
+  /** Whether a tool_execution_end is an extension veto (S50), distinct from a generic errored result. */
+  blocked?: boolean;
+  /** The extension that vetoed the call; paired with blocked. */
+  blocked_by?: string | null;
+  /** One sentence saying this turn's prompt cache should have been read and was not, on agent_end. Null is the normal case and says nothing was observed: the cache was read, the server accounts for no cache, the prompt is under the minimum cacheable prefix, or a read earlier in this session already proved caching is on. A host renders it as a warning; see docs/PROMPT-CACHING.md §7 for the three gates. None for all other event types. */
+  cache_notice?: string | null;
+  /** The submission's free-form origin detail (E4). None alongside submission_id — an empty dict would claim a submission with no correlation data, which is a different statement. */
+  correlation?: Record<string, unknown> | null;
+  /** The session log's resulting cursor, on agent_end (E5/F3). Filled in by rpc/transport.py's writer immediately before this line is serialized — not by rpc/wire_events.py at event-projection time — because persistence happens strictly AFTER agent_end fires; reading it any earlier reproduces the exact stale-tip bug this field exists to close. None for all other event types. */
+  cursor?: string | null;
+  /** The cursor whose turn emitted this event (docs/CURSORS.md §6). Several cursors run turns on one session at once; a host routes by this. None outside a turn. */
+  cursor_id?: string | null;
+  /** One text fragment that arrived. On message_update (E1) it is a diffable content-block's prefix-diff against the previous message_update in the same turn, never the cumulative message; only a diffable block kind sets it (see block_type), and a non-diffable block change (e.g. a growing toolCall) produces no wire event. On side_completion_update it is the next fragment of the summary. Both are applied the same way, which is why they share a field rather than asking a client to keep two accumulators — see `replace`. None for all other event types. */
+  delta?: string | null;
+  /** How many tool calls this completion lost because the stream ended mid-argument, on message_end. A truncated or aborted arguments buffer is a prefix, so the provider drops the call rather than running it on a repaired or empty payload, and this is the only record that it existed. Null rather than 0 when none were dropped, so 'none lost' and 'not reported' stay distinguishable. None for all other event types. */
+  dropped_tool_calls?: number | null;
+  /** How an agent_end closed: 'done' (the model had nothing more to say), 'terminate' (a tool asked to stop), 'aborted', 'max_turns' (the ceiling truncated the run), 'repeat_tool_calls' (the loop stopped itself because the model kept repeating an identical, wholly-failing batch) or 'error'. None on every other event type. `error` says whether the loop raised; this says how it stopped when it did not, which is what tells a host that an answer is TRUNCATED rather than finished. */
+  end_reason?: "done" | "terminate" | "aborted" | "max_turns" | "repeat_tool_calls" | "error" | null;
+  /** Why an agent_end closed when the loop raised rather than finishing (e.g. 'RuntimeError: Connection refused'). None on a normal close; always paired with is_error=True when set. Without it 'the agent finished' and 'the agent died mid-turn' are the same event on the wire. */
+  error?: string | null;
+  /** Whether this event represents an error. */
+  is_error?: boolean;
+  /** Count of messages produced this turn, on agent_end (E2). The messages themselves are pulled via get_messages, never pushed. None for all other event types. */
+  message_count?: number | null;
+  /** Which side completion a side_completion_* event reports: 'compaction' or 'branch_summary'. Side work spends tokens and produces text outside any turn, so it stamps no submission_id and a host keys on this instead. The summary TEXT and what it cost are deliberately not on the wire — both land in the session log as a compaction or branch_summary entry, which get_entry serves with tokens_before, covered_tokens and summary_usage attached. Pushing unbounded content through an event is what WireEvent exists to avoid. None for all other event types. See docs/STREAMING-SIDE-WORK.md. */
+  purpose?: "compaction" | "branch_summary" | null;
+  /** What asked for a side completion: 'manual' (a person or this host), 'threshold' (the auto-trigger, which nobody asked for) or 'navigate' (the tree browser's summarising move). On all three side_completion_* events, so a host that attached mid-summary still learns whether the work was requested or imposed. None for all other event types. */
+  reason?: "manual" | "threshold" | "navigate" | null;
+  /** Only meaningful when delta is set. False (the common case): delta is an incremental suffix — append it to whatever was already accumulated for this block_type this turn. True: the provider replaced rather than extended the block's content — delta is the block's ENTIRE new value, and the receiver must RESET its accumulator to delta rather than appending. Mirrors event_projection.BlockDelta.replace exactly. */
+  replace?: boolean;
+  /** The submission's origin (E4). None alongside submission_id. */
+  source?: "interactive" | "rpc" | "extension" | "bus" | "timer" | "webhook" | "voice" | "agent" | null;
+  /** Why the model stopped this completion, on the message_end that carries usage. 'length' means the output cap ended it, so the content is a PREFIX and not an answer — the one value an operator has to act on. None on the content-only duplicate message_end (which carries no usage either) and on every other event type. This rides a field of its own because the message it belongs to is excluded from the wire; it is a closed enum, not unbounded content. See docs/TRUNCATED-TOOL-CALLS.md. */
+  stop_reason?: "stop" | "length" | "toolUse" | "error" | "aborted" | null;
+  /** The Submission that drove this turn, if any (E4/G6). None for an event from a call that never went through submit()/prompt() — never a fabricated id. */
+  submission_id?: string | null;
+  /** WHO submitted (E4). None alongside submission_id. */
+  submitter?: string | null;
+  /** Milliseconds since epoch. */
+  timestamp: number;
+  /** Tool call id (tool_*). */
+  tool_call_id?: string | null;
+  /** Tool name (tool_*). */
+  tool_name?: string | null;
+  /** Turn number (turn_*). */
+  turn_index?: number | null;
+  /** Event type discriminator. */
+  type: "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "side_completion_start" | "side_completion_update" | "side_completion_end";
+  [key: string]: unknown;
+}
+
 /** Every frame a client sends. */
 export type ClientFrame = {
   /** What the client is, for the daemon's log (`tui`, `tail`, `web`). */
@@ -1531,7 +1513,7 @@ export type ClientFrame = {
   /** Image content blocks to send with the text. */
   images?: Record<string, unknown>[] | null;
   /** What to do when the cursor is busy (docs/SUBMISSION-LIFECYCLE.md). */
-  multitask_strategy?: "enqueue" | "reject" | "steer" | "follow_up";
+  multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
   session_id: string;
   /** The id the events of this submission carry; the daemon mints one when `None`. A client that renders its own streams sends it. */
   submission_id?: string | null;
@@ -1727,7 +1709,7 @@ export type RequestFields<T extends RequestType> = Omit<Requests[T], 'type'>;
 
 /** The `data` each event kind carries, by its `kind`. */
 export interface EventData {
-  agent_event: AgentEvent;
+  agent_event: WireEvent;
   channel: ChannelEventData;
   cursors: CursorsEventData;
   entry_append: EntryEventData;

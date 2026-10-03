@@ -6,7 +6,9 @@ import {
   type ReplicaEntry,
   type FormSpec,
   type ServeClient,
+  type SubmissionStartPayload,
   type UiEventData,
+  type WireEvent,
 } from '@ffwf/tau-code-protocol';
 
 /**
@@ -49,7 +51,7 @@ export interface LiveBlock {
 export interface LiveToolCall {
   toolCallId: string;
   name: string;
-  /** The arguments, which `tool_execution_start` carries in full. */
+  /** The arguments, from the assistant entry that requested the call; null if this view does not hold it. */
   args: Record<string, unknown> | null;
   startedAt: number;
 }
@@ -265,24 +267,22 @@ export class SessionStore {
 
   /** A stateless event: live view, forms, display calls, attachment reports. */
   #passed(event: Event): void {
-    const data = (event.data ?? {}) as Record<string, unknown>;
     switch (event.kind) {
       case 'agent_event':
-        if (data['cursor_id'] === this.#state.cursorId) this.#live(data);
+        if (event.data.cursor_id === this.#state.cursorId) this.#live(event.data);
         return;
       case 'channel':
-        this.#channel(data);
+        if (event.data.name === 'submission_start') this.#submissionStart(event.data.payload);
         return;
-      case 'request':
+      case 'request': {
+        const { request_id, spec } = event.data;
         this.#patch({
-          forms: [
-            ...this.#state.forms.filter((form) => form.requestId !== String(data['request_id'])),
-            { requestId: String(data['request_id']), spec: data['spec'] as FormSpec },
-          ],
+          forms: [...this.#state.forms.filter((form) => form.requestId !== request_id), { requestId: request_id, spec }],
         });
         return;
+      }
       case 'request_closed':
-        this.#patch({ forms: this.#state.forms.filter((form) => form.requestId !== String(data['request_id'])) });
+        this.#patch({ forms: this.#state.forms.filter((form) => form.requestId !== event.data.request_id) });
         return;
       case 'ui':
         this.#patch({ ui: [...this.#state.ui, { seq: event.seq, data: event.data }].slice(-UI_KEPT) });
@@ -292,30 +292,43 @@ export class SessionStore {
     }
   }
 
-  #channel(data: Record<string, unknown>): void {
-    if (data['name'] !== 'submission_start') return;
-    const payload = (data['payload'] ?? {}) as Record<string, unknown>;
-    const submission = (payload['submission'] ?? {}) as Record<string, unknown>;
-    const report = payload['attachments'];
-    if (report === null || report === undefined || typeof submission['submission_id'] !== 'string') return;
-    const record = report as Record<string, unknown>;
-    const strings = (key: string): string[] => (Array.isArray(record[key]) ? (record[key] as unknown[]).map(String) : []);
+  #submissionStart(payload: SubmissionStartPayload): void {
+    if (payload.attachments === null) return;
+    const { expanded, images, unresolved, failures } = payload.attachments;
     this.#patch({
       attachments: {
-        submissionId: submission['submission_id'],
-        report: {
-          expanded: Number(record['expanded'] ?? 0),
-          images: Number(record['images'] ?? 0),
-          unresolved: strings('unresolved'),
-          failures: strings('failures'),
-        },
+        submissionId: payload.submission.submission_id,
+        report: { expanded, images, unresolved, failures },
       },
     });
   }
 
-  #live(event: Record<string, unknown>): void {
+  /**
+   * A tool call's arguments, from the assistant entry that asked for it.
+   *
+   * The event stream deliberately carries no arguments: the assistant message
+   * that requested the call is finalized as an entry before the tool runs, and
+   * it is on the same socket, so the arguments are read from there -- the join
+   * τ's own TUI makes (`serve/remote.py` `WireJoin`). Searched newest first,
+   * because it is the last assistant entry this cursor wrote.
+   */
+  #argumentsOf(toolCallId: string): Record<string, unknown> | null {
+    const path = this.#state.path;
+    for (let i = path.length - 1; i >= 0; i -= 1) {
+      const entry = path[i];
+      if (entry?.type !== 'message') continue;
+      const message = (entry as Extract<ReplicaEntry, { type: 'message' }>).message;
+      if (message.role !== 'assistant') continue;
+      for (const block of message.content) {
+        if (block.type === 'toolCall' && block.id === toolCallId) return block.arguments;
+      }
+    }
+    return null;
+  }
+
+  #live(event: WireEvent): void {
     const live = this.#state.live;
-    switch (event['type']) {
+    switch (event.type) {
       case 'agent_start':
         this.#patch({ live: { ...NO_LIVE, cacheNotice: live.cacheNotice } });
         return;
@@ -323,42 +336,36 @@ export class SessionStore {
         this.#patch({ live: { ...live, blocks: [] } });
         return;
       case 'message_update': {
-        const delta = event['delta'];
-        const kind = event['block_type'];
+        const { delta, block_type: kind } = event;
         if (typeof delta !== 'string' || (kind !== 'text' && kind !== 'thinking')) return;
-        this.#patch({ live: { ...live, blocks: appendDelta(live.blocks, kind, delta, event['replace'] === true) } });
+        this.#patch({ live: { ...live, blocks: appendDelta(live.blocks, kind, delta, event.replace === true) } });
         return;
       }
       case 'message_end': {
         // The finished message is an entry now; the live copy would draw it twice.
         const truncation =
-          event['stop_reason'] === 'length'
-            ? { droppedToolCalls: typeof event['dropped_tool_calls'] === 'number' ? event['dropped_tool_calls'] : null }
-            : live.truncation;
+          event.stop_reason === 'length' ? { droppedToolCalls: event.dropped_tool_calls ?? null } : live.truncation;
         this.#patch({ live: { ...live, blocks: [], truncation } });
         return;
       }
       case 'tool_execution_start': {
-        const id = event['tool_call_id'];
-        if (typeof id !== 'string') return;
-        const args = event['args'];
+        const id = event.tool_call_id;
+        if (!id) return;
         const call: LiveToolCall = {
           toolCallId: id,
-          name: typeof event['tool_name'] === 'string' ? event['tool_name'] : '(unnamed tool)',
-          args: typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : null,
-          startedAt: Number(event['timestamp'] ?? Date.now()),
+          name: event.tool_name ?? '(unnamed tool)',
+          args: this.#argumentsOf(id),
+          startedAt: event.timestamp,
         };
         this.#patch({ live: { ...live, tools: [...live.tools, call] } });
         return;
       }
-      case 'tool_execution_end': {
+      case 'tool_execution_end':
         // The result is a toolResult entry; the running row has done its job.
-        const id = event['tool_call_id'];
-        this.#patch({ live: { ...live, tools: live.tools.filter((call) => call.toolCallId !== id) } });
+        this.#patch({ live: { ...live, tools: live.tools.filter((call) => call.toolCallId !== event.tool_call_id) } });
         return;
-      }
       case 'agent_end': {
-        const notice = typeof event['cache_notice'] === 'string' ? event['cache_notice'] : null;
+        const notice = event.cache_notice ?? null;
         const fresh = notice !== null && !this.#cacheWarned.has(notice);
         if (fresh) this.#cacheWarned.add(notice);
         this.#patch({
@@ -366,8 +373,8 @@ export class SessionStore {
             ...live,
             blocks: [],
             tools: [],
-            endReason: typeof event['end_reason'] === 'string' ? event['end_reason'] : null,
-            error: typeof event['error'] === 'string' ? event['error'] : null,
+            endReason: event.end_reason ?? null,
+            error: event.error ?? null,
             cacheNotice: fresh ? notice : live.cacheNotice,
           },
         });

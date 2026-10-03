@@ -104,11 +104,31 @@ test('message_end hands the text to the entry, and notes a truncation by the out
   assert.deepEqual(store.state.live.truncation, { droppedToolCalls: 2 });
 });
 
-test('a running tool shows its arguments, and leaves when it ends', async () => {
+test('a running tool shows the arguments its assistant entry asked for, and leaves when it ends', async () => {
   const { store, client } = await attachedStore();
-  client.push(2, 'agent_event', { type: 'tool_execution_start', timestamp: 5, cursor_id: 'head', tool_call_id: 't1', tool_name: 'read', args: { path: 'a.txt' } });
+  // The event stream carries no arguments: they are in the assistant entry
+  // finalized before the tool runs, on the same socket.
+  client.push(2, 'entry_final', {
+    cursor_id: 'head',
+    entry: {
+      type: 'message',
+      id: 'a1',
+      parentId: 'u1',
+      timestamp: 't',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'a.txt' } }],
+        api: 'x',
+        model: 'm',
+        provider: 'p',
+        stop_reason: 'toolUse',
+      },
+    },
+  });
+  client.push(3, 'cursors', { cursors: [cursor('head', 'a1', true), cursor('other', 'u1')] });
+  client.push(4, 'agent_event', { type: 'tool_execution_start', timestamp: 5, cursor_id: 'head', tool_call_id: 't1', tool_name: 'read' });
   assert.deepEqual(store.state.live.tools.map((call) => [call.name, call.args]), [['read', { path: 'a.txt' }]]);
-  client.push(3, 'agent_event', { type: 'tool_execution_end', timestamp: 6, cursor_id: 'head', tool_call_id: 't1' });
+  client.push(5, 'agent_event', { type: 'tool_execution_end', timestamp: 6, cursor_id: 'head', tool_call_id: 't1' });
   assert.deepEqual(store.state.live.tools, []);
 });
 
