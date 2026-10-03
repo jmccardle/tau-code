@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { TauClient } from '@ffwf/tau-code-protocol';
 import { enumerateDomain, offersPicker, type DomainValue, type FlowStep } from './flows.js';
-import { describe } from './useTau.js';
+import { messageOf } from './daemon.js';
+import type { SessionStore } from './session.js';
 
 /**
  * One step of a flow, asked.
@@ -20,13 +20,13 @@ import { describe } from './useTau.js';
  * this renders a picker for anything it says yes to.
  */
 export interface FlowDialogProps {
-  client: TauClient | null;
+  session: SessionStore | null;
   step: FlowStep;
   onSubmit: (value: unknown) => void;
   onCancel: () => void;
 }
 
-export function FlowDialog({ client, step, onSubmit, onCancel }: FlowDialogProps): JSX.Element {
+export function FlowDialog({ session, step, onSubmit, onCancel }: FlowDialogProps): JSX.Element {
   const [options, setOptions] = useState<DomainValue[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +35,7 @@ export function FlowDialog({ client, step, onSubmit, onCancel }: FlowDialogProps
   const picker = offersPicker(step.domain);
 
   useEffect(() => {
-    if (!client || !picker) return;
+    if (!session || !picker) return;
     let cancelled = false;
     // A fixed `values` list is already in hand; only an enumerator costs a call.
     if (step.domain.values !== null) {
@@ -43,7 +43,7 @@ export function FlowDialog({ client, step, onSubmit, onCancel }: FlowDialogProps
       setTotal(step.domain.values.length);
       return;
     }
-    void enumerateDomain(client, step.domain.name, { cursor: step.cursor })
+    void enumerateDomain(session, step.domain.name, { leaf: step.leaf })
       .then((listing) => {
         if (cancelled) return;
         setOptions(listing.values);
@@ -53,12 +53,12 @@ export function FlowDialog({ client, step, onSubmit, onCancel }: FlowDialogProps
         // A domain that cannot be listed is a refusal, not a traceback, and not
         // a silently empty field either: an empty list would read as "this
         // argument has no legal value", which is a different statement.
-        if (!cancelled) setError(describe(raw));
+        if (!cancelled) setError(messageOf(raw));
       });
     return () => {
       cancelled = true;
     };
-  }, [client, picker, step.domain.name, step.domain.values, step.cursor]);
+  }, [session, picker, step.domain.name, step.domain.values, step.leaf]);
 
   const label = step.argument.description || step.argument.name;
 

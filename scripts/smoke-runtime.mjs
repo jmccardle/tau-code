@@ -7,25 +7,28 @@
  *
  * `scripts/smoke.mjs` answers "is tau reachable"; this answers a narrower
  * question that nothing else covers: does the chain from the payload's manifest
- * through `TauProcess.baseArgs` to a negotiated protocol actually hold. Three
- * things in that chain can be wrong in ways that typecheck --
+ * to `tau serve -d --json` to a hello actually hold -- the exact call the
+ * extension makes (packages/vscode/src/daemon.ts). Three things in that chain
+ * can be wrong in ways that typecheck --
  *
  *   - a manifest naming an interpreter path that is right on the build machine
  *     and wrong once the tree has moved,
- *   - `baseArgs` landing on the wrong side of `--mode rpc`,
- *   - an interpreter that starts and cannot import tau, because a wheel for
- *     another platform was resolved.
+ *   - the manifest's args landing on the wrong side of `serve`,
+ *   - an interpreter that starts and cannot import tau or websockets, because a
+ *     wheel for another platform was resolved,
  *
- * -- and all three surface here as a failed negotiation rather than as a bug
- * report from somebody whose editor said "tau could not start".
+ * -- and all three surface here as a failed start or hello rather than as a
+ * bug report from somebody whose editor said there is no daemon.
  *
  * Sends no prompt, so it costs nothing and needs no reachable model.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TauClient, commandsOf } from '../packages/protocol/dist/index.js';
-import { TauProcess, StdioTransport } from '../packages/runner/dist/index.js';
+import { BUILT_AGAINST } from '../packages/protocol/dist/index.js';
+import { check, connect, freePort, UNUSED_MODEL } from './lib/daemon.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PAYLOAD = join(ROOT, 'packages', 'runtime', 'runtime');
@@ -44,7 +47,7 @@ const interpreter = join(PAYLOAD, manifest.interpreter);
 
 console.log(`payload ${manifest.target}: tau ${manifest.tauVersion} on Python ${manifest.pythonVersion}`);
 console.log(`  ${interpreter}`);
-console.log(`  ${[...manifest.args, '--mode', 'rpc'].join(' ')}`);
+console.log(`  ${[...manifest.args, 'serve', '-d', '--json'].join(' ')}`);
 
 // The manifest's paths are relative BY DESIGN -- the tree is built here and
 // unpacked somewhere else on every machine that installs it -- so an absolute
@@ -58,38 +61,57 @@ if (isAbsolute(manifest.interpreter) || isAbsolute(manifest.shim)) {
   process.exit(1);
 }
 
-const proc = new TauProcess({
-  bin: interpreter,
-  baseArgs: manifest.args,
-  noSession: true,
-});
-proc.start((chunk) => process.stderr.write(`[tau stderr] ${chunk}`));
+// A throwaway HOME, so the daemon this starts is not the user's and does not
+// find the user's: `-d` is idempotent, and on the default address it would
+// happily report a daemon that is already running instead of starting this one.
+const home = mkdtempSync(join(tmpdir(), 'tau-code-smoke-runtime-'));
+mkdirSync(join(home, '.tau'), { recursive: true });
+writeFileSync(join(home, '.tau', 'config.json'), JSON.stringify(UNUSED_MODEL));
+const address = `127.0.0.1:${await freePort()}`;
+const env = { HOME: home, PATH: '/usr/bin:/bin' };
 
-const transport = new StdioTransport(proc, (detail) => console.error('VIOLATION:', detail));
-const client = new TauClient(transport);
-
+let pid = null;
 try {
-  const caps = await client.connect();
-  console.log(`\nprotocol ${caps.protocol_version} / ${caps.dialect}`);
-  console.log(`  ${commandsOf(caps).length} commands`);
+  const printed = execFileSync(interpreter, [...manifest.args, 'serve', '-d', '--json', '--listen', address], {
+    env,
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  const started = JSON.parse(printed);
+  pid = started.pid;
+  console.log(`\nstarted ${started.started}, pid ${started.pid}, at ${started.address}`);
+  check('-d --json names the address it was asked for', started.address === address);
+  check('this call started it (the HOME is fresh)', started.started === true);
 
+  const again = JSON.parse(
+    execFileSync(interpreter, [...manifest.args, 'serve', '-d', '--json', '--listen', address], { env, encoding: 'utf8' }),
+  );
+  check('a second -d finds the first instead of starting another', again.started === false && again.pid === pid);
+
+  const client = await connect(`ws://${address}/`, 'smoke-runtime');
+  const hello = client.helloResult;
+  console.log(`tau serve ${hello.version} at protocol ${hello.protocol}`);
+  check(`it speaks the protocol this client was generated against (${BUILT_AGAINST})`, hello.protocol === BUILT_AGAINST);
   // The payload states a protocol version at build time. If the running process
   // disagrees with its own manifest, the manifest is describing a different
   // install than the one that is there.
-  if (manifest.protocolVersion && manifest.protocolVersion !== caps.protocol_version) {
-    throw new Error(
-      `the payload's manifest says protocol ${manifest.protocolVersion} and the process speaks ` +
-        `${caps.protocol_version}.`,
-    );
-  }
+  check(
+    "it agrees with the payload's own manifest",
+    !manifest.protocolVersion || manifest.protocolVersion === hello.protocol,
+  );
+  client.close();
 
-  const state = await client.call('get_state', {});
-  console.log(`session ${state.session_id}  status=${state.status}`);
-
-  console.log('\nOK');
+  console.log(process.exitCode ? '\nFAILED' : '\nOK');
 } catch (error) {
   console.error('\nFAILED:', error instanceof Error ? error.message : error);
   process.exitCode = 1;
 } finally {
-  await proc.stop();
+  if (pid !== null) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // Already gone; nothing to stop.
+    }
+  }
+  rmSync(home, { recursive: true, force: true });
 }

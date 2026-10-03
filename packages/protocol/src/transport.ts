@@ -1,79 +1,47 @@
 /**
  * The transport seam.
  *
- * Everything above this file speaks whole JSON-RPC lines and knows nothing
- * about pipes, sockets, or `postMessage`. This is the same separation tau's own
- * `rpc/transport.py` keeps on its side (REMOTE-CONTROL.md X1), and it is what
- * lets one client serve three hosts:
+ * Everything above this file speaks whole protocol frames -- one JSON object
+ * each -- and knows nothing about sockets or `postMessage`. It is what lets one
+ * client serve both hosts:
  *
- *   - a child process over stdio      (the VS Code extension host, the server)
- *   - a WebSocket                     (the browser)
- *   - `postMessage`                   (the VS Code webview)
+ *   - a WebSocket to `tau serve`       (the browser, the VS Code extension host)
+ *   - `postMessage` through a relay    (the VS Code webview)
+ *
+ * The serve protocol frames by WebSocket message: one JSON object per text
+ * frame. There is no line framing to reassemble, so a transport hands up whole
+ * objects and nothing else.
  */
 export interface Transport {
-  /** Send one complete JSON-RPC message. The transport adds any framing. */
-  send(message: unknown): void;
-  /** Register the sink for inbound messages. Called once. */
-  onMessage(handler: (message: unknown) => void): void;
+  /** Send one frame. */
+  send(frame: unknown): void;
+  /** Register the sink for inbound frames. Called once. */
+  onMessage(handler: (frame: unknown) => void): void;
   /**
-   * Register the "the peer is gone" sink. One named event with per-transport
-   * detection: stdin EOF, a closed socket, a disposed webview (X2).
+   * Register the "the peer is gone" sink. `reason` is a sentence a person can
+   * act on; `code` is the WebSocket close code when there was one, because the
+   * daemon's 4000 ("you fell too far behind") means something a reconnect can
+   * fix and an auth refusal does not.
    */
-  onClose(handler: (reason: string) => void): void;
+  onClose(handler: (reason: string, code: number | null) => void): void;
   close(): void;
 }
 
 /**
- * Reassembles LF-delimited JSON from arbitrarily-chunked input.
+ * The daemon closed this connection because it fell too far behind.
  *
- * **There is deliberately no maximum line length here.** tau's protocol doc is
- * explicit that a host must not impose one (T8): `get_capabilities` alone
- * answers with more than 64 KiB, and `get_messages` has no ceiling at all.
- * 64 KiB is the default limit in several stream readers, including Node's own
- * `readline` historically and Python's `asyncio.StreamReader` — the same number
- * and the same failure that tau's inbound `max_request_line_bytes` exists to
- * have fixed on its side.
- *
- * A malformed line is reported, not swallowed. The caller decides whether that
- * is fatal; this class never drops a line silently.
+ * Not an error to report: the client resumes by `since`, and the replay or
+ * snapshot the next `attach` answers brings it current.
  */
-export class LineFramer {
-  #buffer = '';
+export const CLOSE_TOO_FAR_BEHIND = 4000;
 
-  constructor(
-    private readonly onValue: (value: unknown) => void,
-    private readonly onMalformed: (line: string, error: unknown) => void,
-  ) {}
-
-  push(chunk: string): void {
-    this.#buffer += chunk;
-    let index: number;
-    while ((index = this.#buffer.indexOf('\n')) !== -1) {
-      const line = this.#buffer.slice(0, index);
-      this.#buffer = this.#buffer.slice(index + 1);
-      if (line.trim() === '') continue;
-      let value: unknown;
-      try {
-        value = JSON.parse(line);
-      } catch (error) {
-        this.onMalformed(line, error);
-        continue;
-      }
-      this.onValue(value);
-    }
-  }
-
-  /**
-   * Bytes held back because no LF has arrived yet. A non-empty value at close
-   * means the peer died mid-line, which is worth reporting rather than
-   * discarding.
-   */
-  get pending(): string {
-    return this.#buffer;
-  }
-}
-
-/** Serialize one message as a single LF-terminated line. */
-export function frame(message: unknown): string {
-  return JSON.stringify(message) + '\n';
-}
+/**
+ * A relay's own close: there is nothing to dial, and dialling again will not
+ * change that until the user does something (open a folder, install τ).
+ *
+ * Not a daemon code -- the daemon never sends it. A host that relays the
+ * protocol (the VS Code extension host) closes with this so the client stops
+ * retrying and shows the sentence instead. In the 4xxx private range, clear of
+ * the daemon's 4000.
+ */
+export const CLOSE_NOTHING_TO_DIAL = 4900;

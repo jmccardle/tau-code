@@ -4,9 +4,11 @@
 
 Run a [τ](https://github.com/jmccardle/tau) agent inside VS Code or VSCodium.
 
-τ is a Python agent harness. This extension is a client for it: it starts
-`tau --mode rpc` as a child process and talks to it over τ's documented
-JSON-RPC protocol. The agent's tools run against the folder you have open.
+τ is a Python agent harness. This extension is a client of its daemon,
+`tau serve`: it finds the daemon your τ config names, or starts one, and every
+panel connects to it. Sessions belong to the daemon, so a browser tab, this
+panel and `tau --connect` in a terminal can all be on one conversation at once,
+and a window reload loses nothing.
 
 **Status: early.** Chat works end to end, with Tab completion for `/commands`
 and `@files`, a Markdown transcript, a model picker, a session list, and the
@@ -16,57 +18,45 @@ missing, so you find out here rather than after installing.
 
 ## Requirements
 
-τ has to be installed and its `tau` console script reachable:
+τ 0.12.0 or later, with its `serve` extra, and its `tau` console script
+reachable:
 
 ```bash
-pipx install ffwf-tau        # or: pip install ffwf-tau
+pipx install 'ffwf-tau[serve]'        # or: pip install 'ffwf-tau[serve]'
 ```
+
+Or install the optional **tau runtime** extension (`ffwf.tau-runtime`), which
+ships its own Python with τ in it, and nothing needs to be on your `PATH`.
 
 τ needs a model. It reads `~/.tau/config.json`; run `tau` once and it writes a
 template you can edit.
 
 If `tau` is not on your `PATH`, set `tau-code.binary` to the full path.
 
-### Which τ
-
-Every panel here is gated on what your τ answers to `get_capabilities`, not on a
-version number, so an older one loses a feature rather than failing. What each
-release adds:
-
-| τ | Protocol | What it turns on |
-|---|---|---|
-| 0.9.x | 1.3 | Chat, sessions, the model picker |
-| 0.10.0 | 1.4 | `@file` completion, `/command` flow dialogs, `/extensions` |
-| 0.10.1 | 1.5 | **The conversation tree browser**, and answering extension requests |
-| 0.10.3 | 1.6 | A `/` popup that stops showing every extension command twice |
-
-A plain `pip install ffwf-tau` gets 0.10.3 and everything works. A panel whose
-verbs are missing says which τ added them and stays out of the way, so an older
-τ you already have loses a feature rather than breaking.
+The extension and the daemon agree on a protocol version in their first
+exchange. A daemon speaking another one refuses, and the panel says which side
+to upgrade.
 
 ## Use it
 
-1. Open the folder you want the agent to work in, and **trust it**. The
-   extension refuses to start without a folder, because there is no honest
-   working directory for the agent's tools otherwise — and VS Code disables
-   this extension entirely in a Restricted Mode window, so in an untrusted
-   folder the τ icon is not there to click. That is the right call: the agent
+1. Open the folder you want the agent to work in, and **trust it**. New
+   sessions start in that folder. VS Code disables this extension entirely in
+   a Restricted Mode window, so in an untrusted folder the τ icon is not there
+   to click. That is the right call: the agent
    runs shell commands against what it reads. The extension page says so under
    the shield, and **Manage** in the Restricted Mode banner is where you change
    your mind.
 2. Click the τ icon in the activity bar, or press `Ctrl+Alt+T` (`Cmd+Alt+T` on
    macOS).
-3. Pick a session to continue, or press **Start here** to use the new one.
-4. Type. `Ctrl+Alt+T` again opens the same session as a full editor tab.
+3. Pick a session to continue — the list is every session the daemon holds,
+   grouped by folder, this one first — or press **Start here** and type.
+4. A new session is created when you send, not when you open the panel, so an
+   opened-and-closed panel leaves nothing behind.
 
-The panel opens on the session list whenever the session it started is empty.
-tau writes a session to its store when the agent starts rather than when you
-first send something, so opening the panel four times leaves four empty
-sessions; landing on the list means the obvious next click is a conversation you
-were already having.
+While a turn is running, what you send is queued and runs after it.
 
-Three commands are in the palette under **tau**: `Open Agent`,
-`Restart Agent`, `Show Agent Log`.
+Commands in the palette under **tau**: `Open Agent`, `Reconnect to tau serve`,
+`Show Agent Log`, and the two that choose which τ starts the daemon.
 
 ## Tab completion
 
@@ -78,9 +68,6 @@ will be sent.
 The file list comes from **τ**, not from the editor. That matters over Remote
 SSH or in a devcontainer: τ answers from the directory its own tools resolve
 against, which is where your code actually is.
-
-`@file` completion needs τ at protocol 1.4 or later (see [Which τ](#which-τ)),
-and the composer says which one you have rather than failing.
 
 ## The conversation tree
 
@@ -101,9 +88,8 @@ memory; a key that commits calls one verb and closes, and Escape discards all of
 it. A refusal is therefore cheap — the panel is still open, on the row you were
 looking at.
 
-This needs τ 0.10.1, which is what `pip install ffwf-tau` gets you. An older one
-answers `METHOD_NOT_FOUND` for the tree read, and the panel says so instead of
-drawing an empty box.
+Another panel or `tau --connect` on the same session can change the tree too;
+the browser re-reads it when that happens.
 
 ## How answers render
 
@@ -118,40 +104,29 @@ colours sitting inside your theme.
 
 ## Changing the model
 
-The model name in the status bar opens a picker. It lists the models in your
-`~/.tau/config.json`, each with the provider and model id it resolves to, and
-switching one takes effect on your next message — tau never changes model
-mid-answer, so the picker waits while a turn is running.
-
-The status bar shows the model **id**, and the picker lists config **names**.
-Those are different strings: a config entry called `local-llm` can resolve to
-`qwen38-27B`, and neither name can be worked out from the other. The picker
-marks the row you are on when it can tell — if you started tau with a `--model`
-that is not in your config, nothing matches, and it says so, because switching
-away from that one is one way.
+The model name in the status bar opens a picker. It lists the models in the
+daemon's `~/.tau/config.json`, each with the provider and model id it resolves
+to — a config entry called `local-llm` can resolve to `qwen38-27B`, and the
+rows show both. A switch applies to this panel's cursor from its next turn.
 
 ## Settings
 
 | Setting | What it does |
 |---|---|
+| `tau-code.runtime` | Which τ starts the daemon when more than one is installed: `auto`, `bundled`, `system`. |
 | `tau-code.binary` | Path to τ's console script. A bare name is looked up on `PATH`. |
-| `tau-code.model` | Passed to τ as `--model` when the agent starts. The picker changes it afterwards. Empty uses τ's own default. |
-| `tau-code.provider` | Passed to τ as `--provider`. Empty uses τ's own default. |
-| `tau-code.sessionDir` | Where session logs are written. |
+| `tau-code.model` | The model a session this extension creates starts on. Empty uses the daemon's default. |
+| `tau-code.token` | The token to send when the daemon has `serve.token` set. Empty sends none. |
 
-`tau-code.sessionDir` is worth reading about. Empty uses τ's default for RPC
-hosts: a private `<tmp>/.tau-<uid>/sessions`, so this extension does not fill
-the session list you see in τ's own TUI — and **those sessions do not survive a
-reboot on a system that clears its temp directory.** Set it to
-`~/.tau/sessions` to share one store. Resume then works both ways: the picker
-here lists sessions the TUI wrote, and `tau --continue` resumes ones written
-here.
+A daemon that is already running is used whichever τ started it. When that τ is
+a different version from the one this window would start, a banner says so.
 
 ## Remote development
 
 The extension declares `extensionKind: ["workspace"]`. Over SSH, in WSL, or in
-a devcontainer the agent runs where the code is while the panel renders
-locally. That split is the one thing a standalone web client cannot reproduce.
+a devcontainer the daemon starts where the code is while the panel renders
+locally; the extension host carries the connection between them. That split is
+the one thing a standalone web client cannot reproduce.
 
 ## What is deliberately missing
 
@@ -160,8 +135,8 @@ locally. That split is the one thing a standalone web client cannot reproduce.
   only handle: delete it.
 - **Jump-to-edit and diff views.** τ's tools compute the data and the agent
   loop discards it before a message is built.
-- **Live tool arguments.** During a call you see the tool's name and that it is
-  running. The arguments arrive at turn end.
+- **A parallel turn from the panel.** A busy session queues what you send; a
+  second cursor for a parallel turn is on the wire and not yet a button.
 
 ## If the panel says it could not register a service worker
 
@@ -175,7 +150,8 @@ finds it.
 
 Run **Developer: Reload Window**. There is no port to change and nothing to
 configure: the panel is a `vscode-webview://` document talking over
-`postMessage`, and this extension opens no socket of any kind.
+`postMessage`, and the panel itself opens no socket — the extension host does,
+to the daemon.
 
 ## About
 

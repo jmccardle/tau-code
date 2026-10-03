@@ -1,18 +1,30 @@
 /**
- * Reading the flow loop, and the extension request.
+ * The flow loop's step, and the extension request.
  *
- * Both are shapes tau sends and this client narrows. What is tested here is the
- * NARROWING -- check-then-throw, naming the field -- because that is the whole of
- * what this side owns. tau's own vocabulary (which argument comes next, what a
- * domain holds, whether an ask's values validate) is tested on tau's side, and
- * asserting it here would pin it in two places and let them disagree.
+ * Both shapes are generated from τ's schema now, so what this side owns is
+ * smaller than it was: reading a step into the field a renderer draws (and
+ * refusing a field kind it cannot draw), carrying the request at a cursor into
+ * this head's casing, and what each sends back. τ's own vocabulary (which
+ * argument comes next, what a domain holds, whether an ask's values validate)
+ * is tested on τ's side, and asserting it here would pin it in two places.
  *
  *   node --test packages/ui/test/
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { enumerateDomain, offersPicker, readyOf, stepOf } from '../dist/flows.js';
-import { answerRequest, initialValues, loadPendingRequest, refusalReason } from '../dist/requests.js';
+import { enumerateDomain, offersPicker, stepOf } from '../dist/flows.js';
+import { answerRequest, initialValues, refusalReason, requestOf } from '../dist/requests.js';
+
+function fakeSession(answer) {
+  const calls = [];
+  const client = {
+    async request(type, fields) {
+      calls.push({ type, fields });
+      return answer(type, fields);
+    },
+  };
+  return { calls, session: { at: () => ({ client, session_id: 's1', cursor_id: 'c1' }) } };
+}
 
 /* ------------------------------------------------------------------ flows */
 
@@ -34,7 +46,7 @@ const STEP = {
     enumerator: 'get_models',
     field_kind: 'select',
   },
-  cursor: null,
+  cursor: 'e7',
   bound: {},
 };
 
@@ -45,25 +57,20 @@ test('a step is read into a field a renderer can draw with no second call', () =
   assert.equal(step.argument.required, true);
   assert.equal(step.domain.enumerator, 'get_models');
   assert.equal(step.domain.fieldKind, 'select');
+  assert.equal(step.leaf, 'e7', "the core's `cursor` field is an entry id, and is read as the leaf");
 });
 
 test('a field kind this head cannot draw throws, rather than rendering nothing', () => {
   // Fail Early. A silently skipped field is a form that cannot be submitted and
   // does not say why.
-  assert.throws(
-    () => stepOf({ ...STEP, domain: { ...STEP.domain, field_kind: 'colour-wheel' } }),
-    /cannot render/,
-  );
+  assert.throws(() => stepOf({ ...STEP, domain: { ...STEP.domain, field_kind: 'colour-wheel' } }), /cannot render/);
 });
 
-test('a malformed step names the missing field', () => {
-  assert.throws(() => stepOf({ ...STEP, argument: { domain: 'x' } }), /argument\.name is not a string/);
-  assert.throws(() => stepOf(null), /step is not an object/);
-});
-
-test('a ready names the mutation and what to perform it with', () => {
-  const ready = readyOf({ flow: 'model', mutation: 'set_model', arguments: { name: 'haiku' } });
-  assert.deepEqual(ready, { flow: 'model', mutation: 'set_model', arguments: { name: 'haiku' } });
+test('a step missing what the schema leaves optional is refused by name, not guessed at', () => {
+  const { field_kind: _kind, ...noKind } = STEP.domain;
+  assert.throws(() => stepOf({ ...STEP, domain: noKind }), /field_kind undefined/);
+  const { required: _required, ...noRequired } = STEP.argument;
+  assert.throws(() => stepOf({ ...STEP, argument: noRequired }), /required/);
 });
 
 test('a picker is offered wherever a domain has a list, whatever the declared kind', () => {
@@ -75,36 +82,23 @@ test('a picker is offered wherever a domain has a list, whatever the declared ki
   assert.equal(offersPicker({ fieldKind: 'text', free: true, enumerator: null }), false);
 });
 
-test('enumerate_domain reports total, so a capped list can say it is capped', async () => {
-  const client = {
-    calls: [],
-    async call(method, params) {
-      this.calls.push({ method, params });
-      return { domain: 'message_id', values: [{ value: 'a1', label: 'hello' }], total: 340 };
-    },
-  };
-  const listing = await enumerateDomain(client, 'message_id', { cursor: 'c1' });
-  assert.deepEqual(listing.values, [{ value: 'a1', label: 'hello' }]);
-  assert.equal(listing.total, 340);
-  assert.deepEqual(client.calls[0].params, { domain: 'message_id', cursor: 'c1' });
-});
-
-test('a value with no label falls back to the value, never to undefined', () => {
-  const client = {
-    async call() {
-      return { values: [{ value: 'plain' }], total: 1 };
-    },
-  };
-  return enumerateDomain(client, 'text').then((listing) => {
-    assert.deepEqual(listing.values, [{ value: 'plain', label: 'plain' }]);
-  });
+test('enumerate_domain is asked at the step leaf, and reports total so a capped list can say so', async () => {
+  const { session, calls } = fakeSession(() => ({
+    domain: 'message_id',
+    values: [{ value: 'a', label: 'A' }],
+    total: 40,
+  }));
+  const listing = await enumerateDomain(session, 'message_id', { leaf: 'e7' });
+  assert.equal(listing.total, 40);
+  assert.deepEqual(listing.values, [{ value: 'a', label: 'A' }]);
+  assert.deepEqual(calls[0], { type: 'enumerate_domain', fields: { session_id: 's1', domain: 'message_id', leaf: 'e7' } });
 });
 
 /* --------------------------------------------------------------- requests */
 
 const ASK = {
   title: 'Approve the deploy?',
-  body: { text: 'It touches production.' },
+  body: { kind: 'text', text: 'It touches production.' },
   fields: [
     { name: 'ticket', kind: 'text', label: 'Change ticket' },
     { name: 'urgent', kind: 'confirm', label: 'Urgent' },
@@ -116,77 +110,20 @@ const ASK = {
   ],
 };
 
-function requestClient(request) {
-  return {
-    calls: [],
-    async call(method, params) {
-      this.calls.push({ method, params });
-      return method === 'get_pending_request' ? { request } : { handled: true, output: 'ok', cursor: 'x' };
-    },
-  };
-}
-
-test('no request is null, which is the ordinary answer and not a failure', async () => {
-  assert.equal(await loadPendingRequest(requestClient(null)), null);
-});
-
-test('a request carries tau own framing line rather than one derived here', async () => {
-  // Four states over two keys, and the sentence for each is a table tau owns.
-  // Deriving it here would be a second copy of it.
-  const found = await loadPendingRequest(
-    requestClient({
-      entry_id: 'r1',
-      extension: '/x/gate.py',
-      extension_name: 'gate',
-      sentence: 'A deploy needs sign-off.',
-      label: 'Extension gate requires a response',
-      lock: true,
-      ask: ASK,
-      release: 'gate-clear',
-    }),
-  );
-  assert.equal(found.label, 'Extension gate requires a response');
-  assert.equal(found.lock, true);
-  assert.equal(found.ask.fields.length, 3);
-  assert.deepEqual(found.ask.actions[0], { label: 'Approve', command: 'gate-approve' });
-});
-
-test('an ask with no action is refused, because tau cannot build one', async () => {
-  await assert.rejects(
-    () =>
-      loadPendingRequest(
-        requestClient({
-          entry_id: 'r1',
-          extension: '/x/g.py',
-          extension_name: 'g',
-          sentence: 's',
-          label: 'l',
-          lock: false,
-          ask: { title: 'x', fields: [], actions: [] },
-          release: null,
-        }),
-      ),
-    /declares no actions/,
-  );
-});
-
-test('a field kind this head cannot draw throws before the panel is built', async () => {
-  await assert.rejects(
-    () =>
-      loadPendingRequest(
-        requestClient({
-          entry_id: 'r1',
-          extension: '/x/g.py',
-          extension_name: 'g',
-          sentence: 's',
-          label: 'l',
-          lock: true,
-          ask: { title: 'x', fields: [{ name: 'a', kind: 'runes' }], actions: [{ label: 'Y', command: 'y' }] },
-          release: null,
-        }),
-      ),
-    /cannot render/,
-  );
+test('the request at a cursor keeps τ’s own framing line rather than one derived here', () => {
+  const request = requestOf({
+    entry_id: 'r1',
+    extension: '/ext/gate.py',
+    extension_name: 'gate',
+    sentence: 'A deploy needs sign-off.',
+    label: 'locked · asks',
+    lock: true,
+    ask: ASK,
+    release: 'gate-clear',
+  });
+  assert.equal(request.entryId, 'r1');
+  assert.equal(request.label, 'locked · asks');
+  assert.equal(request.ask, ASK);
 });
 
 test('a bare lock says every way out, including the two that are not commands', () => {
@@ -209,27 +146,16 @@ test('a field starts at its declared default, else the empty value of its kind',
   // An empty answer is the field's VALUE, not a cancellation: a form with one
   // optional-in-practice box has to be submittable.
   assert.deepEqual(initialValues(ASK), { ticket: '', urgent: false, env: 'staging' });
-  assert.deepEqual(
-    initialValues({ ...ASK, fields: [{ name: 'n', kind: 'number', label: 'N', default: 7 }] }),
-    { n: 7 },
-  );
-  assert.deepEqual(
-    initialValues({ ...ASK, fields: [{ name: 'm', kind: 'multiselect', label: 'M' }] }),
-    { m: [] },
-  );
+  assert.deepEqual(initialValues({ fields: [{ name: 'n', kind: 'number', label: 'N', default: 7 }] }), { n: 7 });
+  assert.deepEqual(initialValues({ fields: [{ name: 'm', kind: 'multiselect', label: 'M' }] }), { m: [] });
 });
 
-test('answering sends the action LABEL, which is what the ask table is keyed by', async () => {
-  const client = requestClient(null);
-  const result = await answerRequest(
-    client,
-    { entryId: 'r1' },
-    'Approve',
-    { ticket: 'OPS-1' },
-  );
-  assert.deepEqual(client.calls[0], {
-    method: 'answer_request',
-    params: { request_id: 'r1', action: 'Approve', values: { ticket: 'OPS-1' } },
+test('answering sends the action LABEL, at this head’s cursor', async () => {
+  const { session, calls } = fakeSession(() => ({ handled: true, output: 'ok' }));
+  const result = await answerRequest(session, { entryId: 'r1' }, 'Approve', { ticket: 'OPS-1' });
+  assert.deepEqual(calls[0], {
+    type: 'answer_request',
+    fields: { session_id: 's1', cursor_id: 'c1', request_id: 'r1', action: 'Approve', values: { ticket: 'OPS-1' } },
   });
   assert.deepEqual(result, { handled: true, output: 'ok' });
 });

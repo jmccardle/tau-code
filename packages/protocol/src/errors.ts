@@ -1,101 +1,38 @@
+import type { Error as WireError } from './generated.js';
+
+/** The stable codes a `response` can fail with. Generated, so a removed one breaks the build. */
+export type ServeErrorCode = WireError['code'];
+
 /**
- * Error codes from tau's RPC protocol.
+ * A request the daemon answered with `ok: false`.
  *
- * Source of truth: `docs/RPC-PROTOCOL.md` "Error codes" in the tau repo, which
- * is itself generated from `tau_agent_core.rpc.commands`. These are transcribed
- * rather than generated because a client branches on them by name in ordinary
- * control flow, and a name that disappears should break the build.
+ * `message` is τ's own sentence, kept verbatim as `detail`: the daemon writes
+ * it for a person, and a head that replaced it with a guess would tell the
+ * reader something τ did not say. `code` is for branching.
  */
-export const RpcErrorCode = {
-  /** Bytes that are not valid JSON, or not valid UTF-8 at all. */
-  PARSE_ERROR: -32700,
-  /** Valid JSON, but not a Request object. */
-  INVALID_REQUEST: -32600,
-  /** No such method, OR a method tau deliberately declined. Check `declined`. */
-  METHOD_NOT_FOUND: -32601,
-  /** `params` failed the method's schema. */
-  INVALID_PARAMS: -32602,
-  /** The handler raised something it did not raise on purpose. */
-  INTERNAL_ERROR: -32603,
-  /** Admission refused the Submission. Expected, structured; not a crash. */
-  SUBMISSION_REJECTED: -32000,
-  /**
-   * `expand_commands: true` resolved to a frontend command. The core says WHAT
-   * it is and refuses to silently no-op it. THIS HEAD must implement the four:
-   * `/tree`, `/fork`, `/extensions`, `/compact`. See `FRONTEND_COMMANDS`.
-   */
-  COMMAND_NOT_SUPPORTED: -32001,
-  /** A session switch waited for the in-flight turn and it did not free the lock. */
-  TURN_STILL_RUNNING: -32002,
-  /** An appending verb was called on a session with no durable location. */
-  SESSION_NOT_PERSISTED: -32004,
-} as const;
+export class ServeError extends Error {
+  readonly request: string;
+  readonly code: ServeErrorCode;
+  readonly detail: string;
 
-export type RpcErrorCodeValue = (typeof RpcErrorCode)[keyof typeof RpcErrorCode];
-
-/**
- * The four commands tau resolves but refuses to perform over RPC, because the
- * wire has no screen to push a panel onto. A head that wants them implements
- * them itself; two of them have a verb that does the same job.
- */
-export const FRONTEND_COMMANDS = {
-  '/tree': 'No verb. This head renders the conversation tree itself.',
-  '/fork': 'Use the `fork` verb.',
-  '/compact': 'Use the `compact` verb.',
-  '/extensions': 'No verb. This head renders the extension list itself.',
-} as const;
-
-/** A JSON-RPC error object as it arrives on the wire. */
-export interface RpcErrorObject {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
-/** Thrown when tau answers a request with an error object. */
-export class TauRpcError extends Error {
-  readonly code: number;
-  readonly data: unknown;
-  readonly method: string;
-  /**
-   * The peer's own message, without the method name and code that `message`
-   * adds.
-   *
-   * Kept because some errors arrive as a finished sentence written for a
-   * person, and prefixing that with whichever request happened to receive it
-   * makes it worse to read. The caller picks the form it wants; neither is
-   * discarded.
-   */
-  readonly raw: string;
-
-  constructor(method: string, error: RpcErrorObject) {
-    super(`${method}: ${error.message} (${error.code})`);
-    this.name = 'TauRpcError';
+  constructor(request: string, error: WireError) {
+    super(`${request} failed (${error.code}): ${error.message}`);
+    this.name = 'ServeError';
+    this.request = request;
     this.code = error.code;
-    this.data = error.data;
-    this.method = method;
-    this.raw = error.message;
-  }
-
-  /** True when retrying later could plausibly succeed. */
-  get isRetryable(): boolean {
-    return this.code === RpcErrorCode.TURN_STILL_RUNNING;
+    this.detail = error.message;
   }
 }
 
-/**
- * Thrown when the peer's protocol MAJOR does not match what this client was
- * built against. Fail Early: refuse to send anything else rather than
- * discovering the mismatch on some later request's malformed result.
- */
+/** The daemon speaks a different protocol version than this client was generated against. */
 export class ProtocolVersionError extends Error {
   constructor(
-    readonly expected: string,
-    readonly actual: string,
+    readonly ours: string,
+    readonly detail: string,
   ) {
     super(
-      `tau speaks protocol ${actual}; this client was built against ${expected}. ` +
-        `MAJOR differs, so something already on the wire has changed meaning. Refusing to continue.`,
+      `This client speaks serve protocol ${ours} and the daemon refused it: ${detail} ` +
+        `Upgrade whichever of tau-code and τ is older.`,
     );
     this.name = 'ProtocolVersionError';
   }

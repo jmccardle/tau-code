@@ -1,47 +1,21 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { commandsOf, type Capabilities, type TauClient } from '@ffwf/tau-code-protocol';
-import type { Conversation, ConversationState, LiveToolCall } from './conversation.js';
-import { blocksToText, readEntries, type ContentBlock, type Entry } from './messages.js';
-import {
-  formatWhen,
-  readScope,
-  readSessionRows,
-  sessionLabel,
-  storeDirectory,
-  type SessionRow,
-  type SessionScope,
-} from './sessions.js';
-import {
-  applyCandidate,
-  commandSpan,
-  completeCommand,
-  completePath,
-  nextIndex,
-  type CommandInfo,
-  type Completions,
-} from './completion.js';
-import {
-  activeNames,
-  modelLabel,
-  readActiveModel,
-  readModelRows,
-  type ActiveModel,
-  type ModelRow,
-} from './models.js';
-import { loadCommands, performCommand, VIEWS, type CommandResult } from './commands.js';
-import { loadPendingRequest, type ExtensionRequest } from './requests.js';
-import { RequestPanel } from './request-panel.js';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CommandInfo, CursorState, ModelRecord, SessionRow } from '@ffwf/tau-code-protocol';
+import type { Daemon, DaemonState, Phase } from './daemon.js';
+import { messageOf } from './daemon.js';
+import type { LiveToolCall, SessionState, SessionStore } from './session.js';
+import { blocksToText, hasUserMessage, itemsOf, type ContentBlock, type Item } from './messages.js';
+import { formatWhen, groupByCwd, sessionLabel } from './sessions.js';
+import { applyCandidate, commandSpan, completeCommand, completePath, nextIndex, type Completions } from './completion.js';
+import { aliasesOf, modelLabel, recordFor } from './models.js';
+import { performCommand, type CommandResult } from './commands.js';
+import { initialValues, requestOf } from './requests.js';
+import { AskBody, Field, RequestPanel } from './request-panel.js';
 import { TreePanel } from './tree-panel.js';
 import type { FlowStep } from './flows.js';
 import { FlowDialog } from './flow-dialog.js';
 import { ExtensionPanel } from './extension-panel.js';
 import { LiveMarkdown, Markdown } from './markdown.js';
-import {
-  describe,
-  useSubmitter,
-  type AttachmentReport,
-  type ConnectionPhase,
-} from './useTau.js';
+import { useSession, useSubmitter } from './useTau.js';
 
 /* ------------------------------------------------------------------ blocks */
 
@@ -105,57 +79,89 @@ function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
-/* ---------------------------------------------------------------- entries */
 
-function EntryView({ entry }: { entry: Entry }): JSX.Element {
-  switch (entry.kind) {
+/* ------------------------------------------------------------------ items */
+
+function Blocks({ blocks, markdown = false }: { blocks: readonly ContentBlock[]; markdown?: boolean }): JSX.Element {
+  return (
+    <>
+      {blocks.map((block, i) => (
+        <Block key={i} block={block} markdown={markdown} />
+      ))}
+    </>
+  );
+}
+
+function ItemView({ item, writing }: { item: Item; writing: boolean }): JSX.Element {
+  switch (item.kind) {
     case 'user':
       return (
         <div className="tau-entry tau-entry-user">
           <div className="tau-role">You</div>
-          {entry.blocks.map((block, i) => (
-            <Block key={i} block={block} />
-          ))}
+          <Blocks blocks={item.blocks} />
         </div>
       );
     case 'assistant':
       return (
         <div className="tau-entry tau-entry-assistant">
           <div className="tau-role">Agent</div>
-          {entry.blocks.map((block, i) => (
-            <Block key={i} block={block} markdown />
-          ))}
+          <Blocks blocks={item.blocks} markdown />
+          {/* A stopped answer is a prefix, and looks finished unless it says so. */}
+          {item.stopReason === 'aborted' ? <div className="tau-muted">Stopped before it finished.</div> : null}
+          {item.error ? <div className="tau-notice tau-warn">The model call failed: {item.error}</div> : null}
         </div>
       );
     case 'toolResult':
       return (
-        <details className={`tau-entry tau-entry-result${entry.isError ? ' tau-error' : ''}`}>
+        <details className={`tau-entry tau-entry-result${item.isError ? ' tau-error' : ''}`}>
           <summary>
-            <span className="tau-tool-name">{entry.toolName}</span>
+            <span className="tau-tool-name">{item.toolName}</span>
             <span className="tau-tool-args-preview">
-              {entry.isError ? 'failed' : truncate(blocksToText(entry.blocks).split('\n')[0] ?? '', 80)}
+              {item.isError ? 'failed' : truncate(blocksToText(item.blocks).split('\n')[0] ?? '', 80)}
             </span>
           </summary>
-          {entry.blocks.map((block, i) => (
-            <Block key={i} block={block} />
-          ))}
-          {entry.details ? <pre className="tau-pre">{JSON.stringify(entry.details, null, 2)}</pre> : null}
+          <Blocks blocks={item.blocks} />
+          {item.details ? <pre className="tau-pre">{JSON.stringify(item.details, null, 2)}</pre> : null}
         </details>
       );
     case 'system':
       return (
         <details className="tau-entry tau-entry-system">
           <summary>System prompt</summary>
-          <div className="tau-text">{entry.text}</div>
+          <div className="tau-text">{item.text}</div>
         </details>
       );
-    case 'unknown':
-      // Rendered, not skipped. A message this client cannot read is a fact the
-      // reader should see, rather than a silent hole in the transcript.
+    case 'custom':
       return (
-        <div className="tau-entry tau-entry-unknown">
-          <div className="tau-role">Unreadable message</div>
-          <pre className="tau-pre">{JSON.stringify(entry.raw, null, 2)}</pre>
+        <div className="tau-entry tau-entry-custom">
+          <div className="tau-role">{item.customType}</div>
+          <Blocks blocks={item.blocks} markdown />
+        </div>
+      );
+    case 'marker':
+      return (
+        <details className="tau-entry tau-entry-marker">
+          <summary>{item.label}</summary>
+          {item.text ? <Markdown text={item.text} /> : null}
+        </details>
+      );
+    case 'incomplete':
+      // Being written, or never finished. Which one is a fact about the cursor,
+      // not the entry: the same `"status": "incomplete"` is a message in flight
+      // while the turn runs and an interrupted one once it is over.
+      return writing ? (
+        <div className="tau-entry tau-entry-assistant tau-live">
+          <div className="tau-role">Agent</div>
+          <Blocks blocks={item.blocks} markdown />
+        </div>
+      ) : (
+        <div className="tau-entry tau-entry-interrupted">
+          <div className="tau-role">Interrupted</div>
+          <Blocks blocks={item.blocks} markdown={item.entryType === 'message'} />
+          <div className="tau-muted">
+            This {item.entryType === 'message' ? 'message' : item.entryType} was being written when the turn
+            stopped, and was never finished.
+          </div>
         </div>
       );
   }
@@ -164,18 +170,11 @@ function EntryView({ entry }: { entry: Entry }): JSX.Element {
 /* ------------------------------------------------------------------- live */
 
 function LiveTool({ call }: { call: LiveToolCall }): JSX.Element {
-  const label =
-    call.status === 'running'
-      ? 'running…'
-      : call.status === 'blocked'
-        ? `blocked by ${call.blockedBy ?? 'an extension'}`
-        : call.status === 'error'
-          ? 'failed'
-          : 'done';
   return (
-    <div className={`tau-live-tool tau-status-${call.status}`}>
+    <div className="tau-live-tool tau-status-running">
       <span className="tau-tool-name">{call.name}</span>
-      <span className="tau-tool-args-preview">{label}</span>
+      <span className="tau-tool-args-preview">running…</span>
+      {call.args ? <span className="tau-live-args">{previewArgs(call.args)}</span> : null}
     </div>
   );
 }
@@ -183,11 +182,12 @@ function LiveTool({ call }: { call: LiveToolCall }): JSX.Element {
 /* ------------------------------------------------------------- transcript */
 
 export interface TranscriptProps {
-  state: ConversationState;
+  state: SessionState;
 }
 
 /**
- * The transcript.
+ * The transcript: the path from this head's cursor to the root, and the turn
+ * running on that cursor.
  *
  * Autoscroll follows the tail ONLY while the reader is already at the bottom.
  * The TUI learned this the hard way (TUI-STEERING.md section 1): a transcript
@@ -209,24 +209,34 @@ export function Transcript({ state }: TranscriptProps): JSX.Element {
     if (node && atTail.current) node.scrollTop = node.scrollHeight;
   });
 
-  const entries = readEntries(state.messages);
+  const items = useMemo(() => itemsOf(state.path), [state.path]);
+  const running = state.cursor?.busy === true;
+  const { live } = state;
+  const streaming = running && (live.blocks.length > 0 || live.tools.length > 0);
+  // The message being streamed is already an incomplete entry at the end of
+  // the path; the live blocks are its up-to-date text. Draw it once.
+  const last = items[items.length - 1];
+  const shown = streaming && last?.kind === 'incomplete' ? items.slice(0, -1) : items;
 
   return (
     <div className="tau-transcript" ref={ref} onScroll={onScroll}>
-      {entries.map((entry, i) => (
-        <EntryView key={i} entry={entry} />
+      {state.missingParent ? (
+        <div className="tau-notice tau-warn">
+          This view does not hold entry {state.missingParent}, so the conversation above it is not shown.
+        </div>
+      ) : null}
+      {shown.map((item) => (
+        <ItemView key={item.id} item={item} writing={running} />
       ))}
 
-      {state.live.length > 0 || state.liveTools.length > 0 ? (
+      {streaming ? (
         <div className="tau-entry tau-entry-assistant tau-live">
           <div className="tau-role">Agent</div>
           {/* Markdown while it streams, not only once the turn ends. A half
               written fence renders as a code block that grows, which is what
-              the reader expects; switching renderer at `agent_end` would
-              reflow the whole answer at the moment it finished. `LiveMarkdown`
-              rather than `Markdown` because a growing message defeats the memo
-              -- see the measurements in markdown.tsx. */}
-          {state.live.map((block, i) =>
+              the reader expects. `LiveMarkdown` because a growing message
+              defeats the memo -- see the measurements in markdown.tsx. */}
+          {live.blocks.map((block, i) =>
             block.kind === 'thinking' ? (
               <details key={i} className="tau-thinking" open>
                 <summary>Reasoning</summary>
@@ -236,20 +246,18 @@ export function Transcript({ state }: TranscriptProps): JSX.Element {
               <LiveMarkdown key={i} text={block.text} />
             ),
           )}
-          {state.liveTools.map((call) => (
+          {live.tools.map((call) => (
             <LiveTool key={call.toolCallId} call={call} />
           ))}
         </div>
       ) : null}
 
-      {state.endReason === 'max_turns' || state.endReason === 'repeat_tool_calls' ? (
+      {live.endReason === 'max_turns' || live.endReason === 'repeat_tool_calls' ? (
         <div className="tau-notice tau-warn">
-          The answer is truncated, not finished: the loop stopped because of{' '}
-          <code>{state.endReason}</code>.
+          The answer is truncated, not finished: the loop stopped because of <code>{live.endReason}</code>.
         </div>
       ) : null}
-      {state.error ? <div className="tau-notice tau-warn">The agent loop raised: {state.error}</div> : null}
-      {state.notice ? <div className="tau-notice">{state.notice}</div> : null}
+      {live.error ? <div className="tau-notice tau-warn">The agent loop raised: {live.error}</div> : null}
     </div>
   );
 }
@@ -319,50 +327,45 @@ function CompletionPopup({
   );
 }
 
+
 /* --------------------------------------------------------------- composer */
 
 export interface ComposerProps {
-  client: TauClient | null;
+  /** The session to send to; null before one is chosen (see `ensureSession`). */
+  session: SessionStore | null;
+  /** The session's state, for the attachment report. */
+  state: SessionState | null;
+  /** The link is up. False disables sending and changes the placeholder. */
+  ready: boolean;
+  phase: Phase;
+  /** This head's cursor is running a turn. Sending still works: it queues. */
   running: boolean;
   /** Enter sends. Set false for the tau TUI's convention (Ctrl+Enter sends). */
   enterSubmits?: boolean;
-  /** `get_commands`, for the `/` popup. Empty until the connection is ready. */
-  commands?: CommandInfo[];
+  /** The session's vocabulary, for the `/` popup. */
+  commands?: readonly CommandInfo[];
   /**
-   * False when the connected tau predates protocol 1.4, which has no
-   * `complete_path`. The composer then says `@` completion is unavailable
-   * rather than offering a popup that would error.
+   * Run a `/command`, in `target` when given (a session just created for it),
+   * else in the attached one. Absent means none can be run.
    */
-  pathCompletion?: boolean;
-  /** Perform a frontend command. Absent means none can be performed. */
-  onCommand?: (name: string, args: string) => Promise<CommandResult>;
+  onCommand?: (name: string, args: string, target?: SessionStore) => Promise<CommandResult>;
   /**
-   * The connection phase, used for the placeholder alone -- what the composer
-   * can DO is decided by `client` being null. The two are separate because
-   * "waiting" and "gone" are both unusable and need different words.
-   */
-  phase?: ConnectionPhase;
-  /**
-   * Text to put in the editor, from somewhere other than the keyboard.
+   * Make a session to send to, when there is none.
    *
-   * The tree browser's "ask this differently" is the one producer: it moves the
-   * cursor to a user message's parent and hands the message back here to be
-   * edited. Sent as a prop rather than as an imperative handle so the editor
-   * stays the one owner of what is in it.
+   * Opening a panel is not starting a conversation: a session is created when
+   * the reader SENDS, so an opened-and-abandoned panel leaves nothing behind in
+   * the store.
+   */
+  ensureSession?: () => Promise<SessionStore>;
+  /** Where a new session would start, for the placeholder. */
+  newSessionCwd?: string | null;
+  /**
+   * Text to put in the editor, from somewhere other than the keyboard. The tree
+   * browser's "ask this differently" is the one producer.
    */
   draft?: string | null;
   /** Called once `draft` has been taken, so the same text is not re-applied. */
   onDraftTaken?: () => void;
-  /**
-   * Called when tau refuses a submission.
-   *
-   * An extension lock is one of the causes, and the refusal is the first moment
-   * this head can know one arrived: a lock is appended by a hook mid-turn and
-   * nothing on the event stream announces it. The caller re-reads
-   * `get_pending_request` so the panel opens instead of leaving the reader with
-   * a sentence about a form they cannot see.
-   */
-  onRefused?: () => void;
 }
 
 /**
@@ -373,18 +376,27 @@ export interface ComposerProps {
  * feature existed. So repeated Tab cycles the candidates and writes each one
  * straight into the text, which means the editor always holds exactly what will
  * be sent. There is no mode to be in and no state to get out of.
+ *
+ * ## Sending while a turn runs
+ *
+ * Allowed, and queued: the prompt runs after the current turn (`enqueue`). The
+ * editor clears as soon as the text is sent rather than when the daemon
+ * answers, because the answer comes when the submission ENDS. A refusal puts
+ * the text back, so a prompt that was not taken is never lost.
  */
 export function Composer({
-  client,
+  session,
+  state,
+  ready,
+  phase,
   running,
   enterSubmits = true,
   commands = [],
-  pathCompletion = true,
   onCommand,
-  phase = 'ready',
+  ensureSession,
+  newSessionCwd = null,
   draft = null,
   onDraftTaken,
-  onRefused,
 }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
   /**
@@ -392,34 +404,34 @@ export function Composer({
    *
    * `baseText` is not redundant. Every Tab REWRITES the editor, so after the
    * first one the live text no longer contains the word the span describes.
-   * Applying the next candidate to the live text inserts it at an offset that
-   * moved -- measured, before this field existed: cycling `/compact` then
-   * Shift+Tab produced `/compact tree `. Each candidate is applied to the text
-   * as it stood when the popup opened, which is what makes cycling reversible.
+   * Each candidate is applied to the text as it stood when the popup opened,
+   * which is what makes cycling reversible.
    */
   const [open, setOpen] = useState<{ completions: Completions; baseText: string } | null>(null);
   const [selected, setSelected] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const { submit, abort, error } = useSubmitter(client);
-  useEffect(() => {
-    if (error !== null) onRefused?.();
-  }, [error, onRefused]);
+  const { submit, abort, error, lastSubmissionId } = useSubmitter(session);
   const area = useRef<HTMLTextAreaElement>(null);
   // Every path lookup is a round trip, and a stale one must not overwrite a
-  // newer answer. The counter is the only thing that makes the popup's contents
-  // correspond to the cursor as it is NOW rather than as it was two keystrokes
-  // ago.
+  // newer answer.
   const lookup = useRef(0);
 
   // A draft REPLACES what is typed, because it arrives from a gesture the reader
-  // just made in another panel -- appending would leave them editing two
-  // messages at once.
+  // just made in another panel.
   useEffect(() => {
     if (draft === null) return;
     setText(draft);
     onDraftTaken?.();
     requestAnimationFrame(() => area.current?.focus());
   }, [draft, onDraftTaken]);
+
+  // What `@file` expansion did to THIS head's last submission. τ reports it on
+  // `submission_start`, which is the moment the prompt was taken.
+  const attachments = state?.attachments;
+  useEffect(() => {
+    if (!attachments || attachments.submissionId !== lastSubmissionId) return;
+    setNotice(attachmentNotice(attachments.report));
+  }, [attachments, lastSubmissionId]);
 
   const completions = open?.completions ?? null;
 
@@ -428,7 +440,7 @@ export function Composer({
     setSelected(0);
   };
 
-  const write = (next: string, cursor: number): void => {
+  const write = (next: string, caret: number): void => {
     setText(next);
     // React re-renders before the DOM value is what we just set, so the
     // selection has to be applied after the paint or it lands on stale text.
@@ -436,7 +448,7 @@ export function Composer({
       const node = area.current;
       if (!node) return;
       node.focus();
-      node.setSelectionRange(cursor, cursor);
+      node.setSelectionRange(caret, caret);
     });
   };
 
@@ -448,31 +460,29 @@ export function Composer({
     const applied = applyCandidate(baseText, found, candidate);
     write(applied.text, applied.cursor);
     if (found.kind === 'path' && candidate.value.endsWith('/')) {
-      // Descending: the level below is a different listing, so re-ask against
-      // the text that now ends in the directory.
+      // Descending: the level below is a different listing.
       void openCompletions(applied.text, applied.cursor);
     }
   };
 
-  /**
-   * Open the popup and apply its FIRST candidate.
-   *
-   * Applying immediately is what makes Tab one key rather than two. There is no
-   * "accept" step, so the editor always holds what will be sent, and the reader
-   * never has to remember whether the highlighted row is committed.
-   */
+  /** Open the popup and apply its FIRST candidate, so Tab is one key, not two. */
   const openCompletions = async (source?: string, at?: number): Promise<void> => {
     const node = area.current;
-    if (!node || !client) return;
+    if (!node) return;
     const baseText = source ?? text;
-    const cursor = at ?? node.selectionStart;
+    const caret = at ?? node.selectionStart;
 
-    // Nothing is greyed today: this head performs both of tau's views, drives
-    // every flow through `next_step`, and sends the rest through `submit`. The
-    // set stays a parameter rather than becoming an empty literal, because the
-    // day tau declares a third view this head has no panel for, that name has to
-    // be able to appear greyed rather than falsely offered.
-    const command = completeCommand(baseText, commands, unavailableCommands(commands));
+    // Nothing is greyed: every command this session lists reaches the daemon,
+    // a flow through `next_step` and the rest through `submit`, and a view this
+    // head has no panel for is refused by name when τ asks for it.
+    if (!session && commandSpan(baseText) !== null) {
+      // The vocabulary is a session's: built-ins plus whatever its extensions
+      // registered. With none attached there is no honest list to show, and an
+      // empty popup would claim every command is unknown.
+      setNotice('Commands come from a session. Open one in Sessions, or send this to start one and run it there.');
+      return;
+    }
+    const command = completeCommand(baseText, commands, new Set());
     if (command !== null) {
       setOpen({ completions: command, baseText });
       setSelected(0);
@@ -480,15 +490,15 @@ export function Composer({
       return;
     }
 
-    if (!pathCompletion) {
+    if (!session) {
       // Said, not silently skipped. A Tab that does nothing reads as a bug.
-      setNotice('This tau is older than protocol 1.4, which is where @ completion lives.');
+      setNotice('@ completion lists files in a session’s working directory, and there is no session yet.');
       return;
     }
 
     const ticket = (lookup.current += 1);
     try {
-      const paths = await completePath(client, baseText, cursor);
+      const paths = await completePath(session, baseText, caret);
       if (ticket !== lookup.current) return;
       if (paths === null) {
         dismiss();
@@ -499,36 +509,44 @@ export function Composer({
       if (paths.candidates.length > 0) apply(paths, baseText, 0);
     } catch (raw) {
       if (ticket !== lookup.current) return;
-      setNotice(describe(raw));
+      setNotice(messageOf(raw));
     }
   };
 
   const cycle = (backwards: boolean): void => {
     if (!open || open.completions.candidates.length === 0) return;
-    apply(
-      open.completions,
-      open.baseText,
-      nextIndex(selected, open.completions.candidates.length, backwards),
-    );
+    apply(open.completions, open.baseText, nextIndex(selected, open.completions.candidates.length, backwards));
   };
 
   const send = async (): Promise<void> => {
     const trimmed = text.trim();
-    if (trimmed === '' || !client) return;
+    if (trimmed === '' || !ready) return;
     dismiss();
     setNotice(null);
 
-    // Every `/word` tau knows is dispatched HERE, not through `submit`. A
-    // built-in flow sent with `expand_commands` earns a COMMAND_NOT_SUPPORTED,
-    // correctly -- the wire has no screen to render a step on -- so this head
-    // steps it itself and calls the mutation the step names. A word tau does not
-    // know comes back as `prose` and falls through to the model, which is what
-    // tau would have done with it anyway.
+    let target = session;
+    if (!target) {
+      if (!ensureSession) return;
+      try {
+        target = await ensureSession();
+      } catch (raw) {
+        setNotice(`Could not start a session: ${messageOf(raw)}`);
+        return;
+      }
+    }
+
+    // Every `/word` the session knows is dispatched here: a flow is stepped,
+    // a view is opened, and the rest goes through `submit` with
+    // `expand_commands`. A word τ does not know comes back as `prose` and falls
+    // through to the model, which is what τ would have done with it anyway.
+    // The vocabulary is the TARGET's, which is not yet in props when the
+    // session was created a moment ago.
     const span = commandSpan(trimmed);
-    const named = commands.find((c) => c.name === span?.token);
+    const vocabulary = target === session ? commands : (target.state.attached?.surface.commands ?? []);
+    const named = vocabulary.find((c) => c.name === span?.token);
     if (span && named && onCommand) {
       const args = trimmed.slice(span.end).trim();
-      const outcome = await onCommand(named.name, args);
+      const outcome = await onCommand(named.name, args, target);
       if (outcome.kind !== 'prose') {
         if (outcome.kind !== 'cancelled' && outcome.notice !== '') setNotice(outcome.notice);
         if (outcome.kind === 'performed') setText('');
@@ -536,14 +554,30 @@ export function Composer({
       }
     }
 
-    // Clear only after tau accepts, so a rejected prompt is not lost. Fail
-    // Early applies to the editor too: never discard the user's text on a
-    // failure they can retry.
-    const report = await submit(trimmed);
     setText('');
-    setNotice(attachmentNotice(report));
     area.current?.focus();
+    const outcome = await submit(trimmed, target);
+    if (outcome.kind === 'refused' || outcome.kind === 'failed') {
+      // Never discard text the reader can retry -- unless they have already
+      // started typing something else.
+      setText((current) => (current === '' ? trimmed : current));
+    } else if (outcome.kind === 'command') {
+      const output = outcome.command['data'];
+      if (output && typeof output === 'object' && typeof (output as Record<string, unknown>)['output'] === 'string') {
+        setNotice(String((output as Record<string, unknown>)['output']));
+      }
+    }
   };
+
+  const placeholder = !ready
+    ? phase === 'connecting' || phase === 'reconnecting'
+      ? 'Connecting to tau serve…'
+      : 'Not connected — see the message above.'
+    : !session
+      ? `Send to start a new session${newSessionCwd ? ` in ${newSessionCwd}` : ''} — / for commands`
+      : running
+        ? 'A turn is running — what you send now runs after it.'
+        : 'Ask tau something — / for commands, @ for files';
 
   return (
     <div className="tau-composer">
@@ -565,22 +599,10 @@ export function Composer({
         className="tau-input"
         rows={3}
         value={text}
-        placeholder={
-          // A composer inviting a question it cannot send is the same defect
-          // one level down: it looks ready and is not. Waiting and gone are
-          // told apart, because only one of them has a message above to read.
-          client === null
-            ? phase === 'connecting'
-              ? 'Connecting to tau…'
-              : 'No agent is connected — see the message above.'
-            : running
-              ? 'A turn is running…'
-              : 'Ask tau something — / for commands, @ for files'
-        }
+        placeholder={placeholder}
         onChange={(event) => {
           setText(event.target.value);
-          // Typing invalidates whatever the popup was describing. It reopens on
-          // the next Tab, against the text as it is then.
+          // Typing invalidates whatever the popup was describing.
           dismiss();
         }}
         onKeyDown={(event) => {
@@ -603,8 +625,8 @@ export function Composer({
         }}
       />
       <div className="tau-composer-row">
-        <button className="tau-button" onClick={() => void send()} disabled={!client || text.trim() === ''}>
-          Send
+        <button className="tau-button" onClick={() => void send()} disabled={!ready || text.trim() === ''}>
+          {running ? 'Queue' : 'Send'}
         </button>
         <button className="tau-button tau-button-quiet" onClick={() => void abort()} disabled={!running}>
           Stop
@@ -622,60 +644,29 @@ export function Composer({
  * every message is noise, and the attachment is visible in the transcript
  * anyway. The two failure kinds are NOT silent, for the opposite reason.
  */
-function attachmentNotice(report: AttachmentReport | null): string | null {
-  if (!report) return null;
+function attachmentNotice(report: { unresolved: readonly string[]; failures: readonly string[] }): string | null {
   const parts: string[] = [];
   if (report.unresolved.length > 0) {
-    parts.push(
-      `Not a file, so sent as ordinary text: ${report.unresolved.map((t) => `@${t}`).join(', ')}.`,
-    );
+    parts.push(`Not a file, so sent as ordinary text: ${report.unresolved.map((t) => `@${t}`).join(', ')}.`);
   }
   for (const failure of report.failures) parts.push(`Attachment failed: ${failure}`);
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
-/**
- * The commands this head cannot perform, for greying in the popup.
- *
- * A VIEW is the only kind that can be missing: a flow reaches its mutation over
- * the wire, and an extension command goes through `submit`. This head has a
- * panel for both of tau's views, so the set is empty today -- and it is computed
- * rather than written as `new Set()` so that a third view, declared by a later
- * tau, appears greyed instead of falsely offered.
- */
-function unavailableCommands(commands: CommandInfo[]): ReadonlySet<string> {
-  const missing = new Set<string>();
-  for (const command of commands) {
-    if (command.origin !== 'builtin' || command.flow) continue;
-    if (!VIEWS.has(command.name)) missing.add(command.name);
-  }
-  return missing;
-}
-
 /* ---------------------------------------------------------- session picker */
 
-/**
- * Has anyone said anything in this session?
- *
- * A user message, specifically. A fresh session is not empty on the wire: it
- * carries the system prompt, and tau's own store adds a `model_change` entry
- * before a word is typed. Counting messages would call that a conversation.
- */
-function hasUserMessage(messages: unknown[]): boolean {
-  return readEntries(messages).some((entry) => entry.kind === 'user');
-}
-
 export interface SessionPickerProps {
-  client: TauClient | null;
-  conversation: Conversation | null;
+  daemon: Daemon | null;
   currentSessionId: string | null;
-  running: boolean;
+  /** The cwd a new session starts in, and the group listed first. */
+  cwd: string | null;
+  /** The model a new session starts on, or null for the daemon's default. */
+  model: string | null;
   onClose(): void;
   /**
-   * Why the picker is open, when the reader did not open it.
-   *
-   * A panel that lands on a list nobody asked for reads as a lost transcript.
-   * One sentence is the difference between that and an offer.
+   * Why the picker is open, when the reader did not open it. A panel that
+   * lands on a list nobody asked for reads as a lost transcript; one sentence
+   * is the difference between that and an offer.
    */
   reason?: string;
   /** The word on the close button. "Close" when the reader opened this. */
@@ -683,63 +674,59 @@ export interface SessionPickerProps {
 }
 
 /**
- * Switch, start, and fork sessions.
+ * Open, start and fork sessions.
  *
- * `list_sessions` is scoped to this process's working directory, because
- * `switch_session` could not reach anything else. The scope line says so rather
- * than leaving the reader to wonder where the rest of their sessions went.
- *
- * The store directory is shown for the same reason. `--mode rpc` defaults to a
- * private `<tmp>/.tau-<uid>/sessions` and the TUI to `~/.tau/sessions`, so two
- * identical-looking lists can be two different universes. That is a fact about
- * the setup, and it is displayed rather than assumed.
+ * The daemon lists every session it holds, across every working directory, so
+ * the list is grouped by cwd -- this head's cwd first. Opening one ATTACHES:
+ * the session keeps running for every other head on it, and a turn running in
+ * it is not stopped.
  */
 export function SessionPicker({
-  client,
-  conversation,
+  daemon,
   currentSessionId,
-  running,
+  cwd,
+  model,
   onClose,
   reason,
   closeLabel = 'Close',
 }: SessionPickerProps): JSX.Element {
   const [rows, setRows] = useState<SessionRow[] | null>(null);
-  const [scope, setScope] = useState<SessionScope>({ store: null, cwd: null });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [newCwd, setNewCwd] = useState(cwd ?? '');
+
+  useEffect(() => setNewCwd(cwd ?? ''), [cwd]);
 
   const load = useCallback(async () => {
+    const client = daemon?.client;
     if (!client) return;
     setError(null);
     try {
-      const result = await client.call('list_sessions', {});
-      setRows(readSessionRows(result.sessions ?? []));
-      setScope(readScope(result.scope));
+      setRows((await client.request('list_sessions', {})).sessions);
     } catch (raw) {
-      setError(describe(raw));
+      setError(messageOf(raw));
       setRows([]);
     }
-  }, [client]);
+  }, [daemon]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const act = async (what: () => Promise<boolean>): Promise<void> => {
-    if (!conversation) return;
+  const act = async (what: () => Promise<unknown>): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
-      if (await what()) onClose();
-      else await load();
+      await what();
+      onClose();
     } catch (raw) {
-      setError(describe(raw));
+      setError(messageOf(raw));
     } finally {
       setBusy(false);
     }
   };
 
-  const storeDir = rows?.map((r) => storeDirectory(r.ref)).find((d) => d !== null) ?? null;
+  const groups = rows ? groupByCwd(rows, cwd) : [];
 
   return (
     <div className="tau-sessions">
@@ -752,31 +739,25 @@ export function SessionPicker({
 
       {reason ? <div className="tau-sessions-reason">{reason}</div> : null}
 
-      <div className="tau-sessions-scope">
-        {scope.cwd ? (
-          <div>
-            Working directory: <code>{scope.cwd}</code>
-          </div>
-        ) : null}
-        {storeDir ? (
-          <div>
-            Store: <code>{storeDir}</code>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="tau-composer-row">
+      <div className="tau-composer-row tau-sessions-new">
+        <input
+          className="tau-sessions-cwd"
+          value={newCwd}
+          onChange={(event) => setNewCwd(event.target.value)}
+          placeholder="Working directory on the daemon's machine"
+          aria-label="Working directory for a new session"
+        />
         <button
           className="tau-button"
-          disabled={busy || running || !conversation}
-          onClick={() => void act(() => conversation!.newSession())}
+          disabled={busy || !daemon || newCwd.trim() === ''}
+          onClick={() => void act(() => daemon!.create(newCwd.trim(), model))}
         >
           New session
         </button>
         <button
           className="tau-button tau-button-quiet"
-          disabled={busy || running || !conversation}
-          onClick={() => void act(() => conversation!.fork())}
+          disabled={busy || !daemon || currentSessionId === null}
+          onClick={() => void act(() => daemon!.fork(daemon!.state.session?.state.cursor?.leaf ?? null))}
         >
           Fork this one
         </button>
@@ -785,48 +766,46 @@ export function SessionPicker({
         </button>
       </div>
 
-      {running ? (
-        <div className="tau-notice tau-warn">
-          A turn is running. Switching sessions has to stop it first, so those actions wait.
-        </div>
-      ) : null}
       {error ? <div className="tau-notice tau-warn">{error}</div> : null}
 
       {rows === null ? (
         <div className="tau-notice">Loading…</div>
       ) : rows.length === 0 ? (
-        <div className="tau-notice">
-          No sessions in this working directory yet. tau writes this one to the store as soon
-          as the agent starts, so it appears here after the next reload whether or not you
-          send anything.
-        </div>
+        <div className="tau-notice">The daemon holds no sessions yet. Start one above, or just send a message.</div>
       ) : (
-        <ul className="tau-session-list">
-          {rows.map((row) => {
-            const current = row.sessionId === currentSessionId;
-            return (
-              <li key={row.sessionId}>
-                <button
-                  className={`tau-session-row${current ? ' tau-session-current' : ''}`}
-                  disabled={busy || running || current || !conversation}
-                  onClick={() => void act(() => conversation!.switchTo(row.sessionId))}
-                  title={row.ref ?? row.sessionId}
-                >
-                  <span className="tau-session-title">{sessionLabel(row)}</span>
-                  <span className="tau-session-meta">
-                    {current ? 'current · ' : ''}
-                    {row.messageCount !== null ? `${row.messageCount} msg · ` : ''}
-                    {formatWhen(row.modified)}
-                    {row.parent ? ' · forked' : ''}
-                  </span>
-                  {/* tau lists a session it could not read and says why. Hiding
-                      that row would undo the reporting it did on purpose. */}
-                  {row.error ? <span className="tau-session-error">unreadable: {row.error}</span> : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        groups.map(([group, list]) => (
+          <div key={group}>
+            <div className="tau-session-group">
+              <code>{group}</code>
+            </div>
+            {list.length === 0 ? (
+              <div className="tau-muted">No sessions here yet.</div>
+            ) : (
+              <ul className="tau-session-list">
+                {list.map((row) => {
+                  const current = row.id === currentSessionId;
+                  return (
+                    <li key={row.id}>
+                      <button
+                        className={`tau-session-row${current ? ' tau-session-current' : ''}`}
+                        disabled={busy || current || !daemon}
+                        onClick={() => void act(() => daemon!.open(row.id))}
+                        title={row.id}
+                      >
+                        <span className="tau-session-title">{sessionLabel(row)}</span>
+                        <span className="tau-session-meta">
+                          {current ? 'current · ' : ''}
+                          {`${row.message_count} msg · `}
+                          {formatWhen(row.modified)}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ))
       )}
     </div>
   );
@@ -835,80 +814,36 @@ export function SessionPicker({
 /* ---------------------------------------------------------- model picker */
 
 export interface ModelPickerProps {
-  client: TauClient | null;
-  /** What `get_state` says is running, or null when that read failed. */
-  active: ActiveModel | null;
+  session: SessionStore | null;
+  models: readonly ModelRecord[];
+  /** The name this head's cursor runs on. */
+  active: string | null;
   running: boolean;
   onClose: () => void;
-  /**
-   * The model `set_model` installed. Its result is the projection tau publishes
-   * after the switch, so it is taken as authoritative and nothing re-reads
-   * `get_state` to confirm it.
-   */
-  onSwitched: (active: ActiveModel) => void;
 }
 
 /**
- * Switch the model this session uses.
+ * Switch the model this head's cursor uses.
  *
- * The list is tau's, not this head's: `get_models` resolves every config name
- * through the same component `set_model` itself calls, so what is offered here
- * is what a switch would actually install. This client reads no config file.
- *
- * **No capability gate.** `@` completion checks the peer's command list before
- * offering anything, because it has to decide before the reader types and a
- * silently wrong completion is invisible. Here the reader clicks and gets an
- * answer, so a tau without `get_models` produces one visible sentence from
- * `describe` rather than a control that quietly is not there.
- *
- * Switching is refused while a turn runs -- tau's own guard, and the rows say
- * so rather than failing on the click. A switch that lands takes effect on the
- * next turn; tau never changes model mid-stream.
+ * The list is the daemon's: every name in its config, with the model each
+ * resolves to, as the attach answer carried it. This client reads no config
+ * file. A switch is per CURSOR -- another head on the same session keeps its
+ * own -- and takes effect on that cursor's next turn.
  */
-export function ModelPicker({
-  client,
-  active,
-  running,
-  onClose,
-  onSwitched,
-}: ModelPickerProps): JSX.Element {
-  const [rows, setRows] = useState<ModelRow[] | null>(null);
+export function ModelPicker({ session, models, active, running, onClose }: ModelPickerProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!client) return;
-    setError(null);
-    try {
-      const result = await client.call('get_models', {});
-      setRows(readModelRows(result.models ?? []));
-    } catch (raw) {
-      setError(describe(raw));
-      setRows([]);
-    }
-  }, [client]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
   const choose = async (name: string): Promise<void> => {
-    if (!client) return;
+    if (!session) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await client.call('set_model', { name });
-      const installed = readActiveModel(result.model);
-      // A switch tau reported without a model projection is a switch this head
-      // cannot describe. Say so instead of leaving the old name on the bar.
-      if (!installed) {
-        setError('tau switched the model but did not say to what. Reload to read the current one.');
-        return;
-      }
-      onSwitched(installed);
+      const { client, session_id, cursor_id } = session.at();
+      await client.request('set_model', { session_id, cursor_id, model: name });
       onClose();
     } catch (raw) {
-      setError(describe(raw));
+      setError(messageOf(raw));
     } finally {
       setBusy(false);
     }
@@ -916,52 +851,35 @@ export function ModelPicker({
 
   return (
     <ModelPanel
-      rows={rows}
+      models={models}
       active={active}
       running={running}
-      busy={busy || !client}
+      busy={busy || !session}
       error={error}
       onClose={onClose}
-      onReload={() => void load()}
       onChoose={(name) => void choose(name)}
     />
   );
 }
 
 export interface ModelPanelProps {
-  /** The list, or null while `get_models` has not answered yet. */
-  rows: ModelRow[] | null;
-  active: ActiveModel | null;
+  models: readonly ModelRecord[];
+  active: string | null;
   running: boolean;
-  /** A call is in flight, or there is no client to make one with. */
+  /** A call is in flight, or there is no session to make one with. */
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onReload: () => void;
   onChoose: (name: string) => void;
 }
 
 /**
- * What the model picker looks like. Everything, and no calls.
- *
- * Split from `ModelPicker` so the markup can be rendered from a fixture. The
- * interesting states -- a name that matches nothing, two names that match the
- * same model -- are reachable only after an async load, and a panel whose
- * appearance can only be checked by clicking through it is a panel nothing
- * checks.
+ * What the model picker looks like. Everything, and no calls -- split out so
+ * the markup can be rendered from a fixture.
  */
-export function ModelPanel({
-  rows,
-  active,
-  running,
-  busy,
-  error,
-  onClose,
-  onReload,
-  onChoose,
-}: ModelPanelProps): JSX.Element {
-  const names = rows ? activeNames(rows, active) : [];
-  const label = modelLabel(active);
+export function ModelPanel({ models, active, running, busy, error, onClose, onChoose }: ModelPanelProps): JSX.Element {
+  const record = recordFor(models, active);
+  const aliases = aliasesOf(models, active).filter((name) => name !== active);
 
   return (
     <div className="tau-sessions">
@@ -973,60 +891,45 @@ export function ModelPanel({
       </div>
 
       <div className="tau-sessions-scope">
-        {label ? (
+        {active === null ? (
+          <div>This view has no cursor yet, so no model.</div>
+        ) : record ? (
           <div>
-            Running: <code>{label}</code>
+            Running: <code>{active}</code> → <code>{modelLabel(record)}</code>
           </div>
         ) : (
-          <div>tau did not report a running model.</div>
+          <div>
+            Running: <code>{active}</code>, which is no longer a name in the daemon&apos;s config.
+          </div>
         )}
       </div>
 
-      {/* The three cases are three different facts, and only the first one lets
-          a row be marked. See `activeNames` for why guessing is not on. */}
-      {rows !== null && rows.length > 0 && names.length === 0 ? (
+      {aliases.length > 0 ? (
         <div className="tau-sessions-reason">
-          The running model has no entry in tau&apos;s config, so it was set at startup rather
-          than chosen from this list. Switching away from it is one way: nothing below can
-          bring it back.
+          {aliases.join(', ')} {aliases.length === 1 ? 'resolves' : 'resolve'} to the same model, so switching
+          to {aliases.length === 1 ? 'it' : 'one of them'} changes nothing the model does.
         </div>
       ) : null}
-      {names.length > 1 ? (
-        <div className="tau-sessions-reason">
-          {names.length} names resolve to the running model. Which of them is active is not
-          something tau reports, so all of them are marked.
-        </div>
-      ) : null}
-
-      <div className="tau-composer-row">
-        <button className="tau-button tau-button-quiet" disabled={busy} onClick={onReload}>
-          Reload
-        </button>
-      </div>
 
       {running ? (
-        <div className="tau-notice tau-warn">
-          A turn is running. tau will not change model mid-stream, so switching waits.
-        </div>
+        <div className="tau-notice">A turn is running. A switch takes effect on this cursor&apos;s next turn.</div>
       ) : null}
       {error ? <div className="tau-notice tau-warn">{error}</div> : null}
 
-      {rows === null ? (
-        <div className="tau-notice">Loading…</div>
-      ) : rows.length === 0 ? (
+      {models.length === 0 ? (
         <div className="tau-notice">
-          tau&apos;s config declares no models to switch between. They live in the
-          <code> models </code> map of <code>~/.tau/config.json</code>.
+          The daemon&apos;s config declares no models to switch between. They live in the
+          <code> models </code> map of <code>~/.tau/config.json</code> on the daemon&apos;s machine.
         </div>
       ) : (
         <ul className="tau-session-list">
-          {rows.map((row) => {
-            const current = names.includes(row.name);
+          {models.map((row) => {
+            const current = row.name === active;
             return (
               <li key={row.name}>
                 <button
                   className={`tau-session-row${current ? ' tau-session-current' : ''}`}
-                  disabled={busy || running || current}
+                  disabled={busy || current}
                   onClick={() => onChoose(row.name)}
                   title={`set_model ${row.name}`}
                 >
@@ -1035,8 +938,7 @@ export function ModelPanel({
                     {current ? 'active · ' : ''}
                     {/* The id is what the name RESOLVED to, and it is often a
                         different string. Showing both is the point. */}
-                    {row.provider ? `${row.provider}/` : ''}
-                    {row.id ?? '(tau reported no id)'}
+                    {modelLabel(row)}
                   </span>
                 </button>
               </li>
@@ -1051,41 +953,61 @@ export function ModelPanel({
 /* ----------------------------------------------------------- disconnected */
 
 export interface DisconnectedProps {
-  phase: ConnectionPhase;
+  phase: Phase;
   /** The reason, as a whole sentence, from whoever knows it. */
   detail: string | null;
-  /**
-   * One host-specific line about where to look next -- the command palette
-   * entry in VS Code, a server log in the browser. Optional, and supplied by
-   * the host: this component is shared, so it must not name one.
-   */
+  /** One host-specific line about where to look next. */
   hint?: string;
+  /** The daemon refused the token: offer a field for one. */
+  needsToken?: boolean;
+  onRetry?: (token?: string) => void;
 }
 
 /**
- * Why there is no agent, said where the reader is looking.
- *
- * The status bar has room for one word and a fragment. That was enough while
- * the only failures were connection-shaped, and it stopped being enough the
- * first time a start was REFUSED for a reason the reader could act on -- no
- * folder open, a `tau-code.binary` naming nothing. Those need a sentence, and
- * a sentence needs a block.
+ * Why there is no link, said where the reader is looking.
  *
  * `detail` is shown verbatim and never summarised. The summary is what the
- * status bar already is, and the whole defect this fixes was a summary standing
- * in for a reason.
+ * status bar already is, and a summary standing in for a reason is the defect
+ * this block exists to prevent.
  */
-export function Disconnected({ phase, detail, hint }: DisconnectedProps): JSX.Element | null {
+export function Disconnected({ phase, detail, hint, needsToken, onRetry }: DisconnectedProps): JSX.Element | null {
+  const [token, setToken] = useState('');
   if (phase === 'ready' || phase === 'connecting') return null;
   return (
     <div className="tau-disconnected" role="alert">
       <div className="tau-disconnected-head">
-        {phase === 'failed' ? 'No agent is running.' : 'The agent stopped.'}
+        {phase === 'failed' ? 'Not connected to tau serve.' : 'Reconnecting to tau serve…'}
       </div>
       <div className="tau-disconnected-why">
-        {detail ??
-          'No reason was reported, which is itself a fault — nothing should fail without saying why.'}
+        {detail ?? 'No reason was reported, which is itself a fault — nothing should fail without saying why.'}
       </div>
+      {needsToken && onRetry ? (
+        <form
+          className="tau-composer-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onRetry(token.trim());
+          }}
+        >
+          <input
+            className="tau-input"
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="The daemon's serve.token"
+            aria-label="Token"
+          />
+          <button className="tau-button" type="submit" disabled={token.trim() === ''}>
+            Connect
+          </button>
+        </form>
+      ) : phase === 'failed' && onRetry ? (
+        <div className="tau-composer-row">
+          <button className="tau-button tau-button-quiet" onClick={() => onRetry()}>
+            Try again
+          </button>
+        </div>
+      ) : null}
       {hint ? <div className="tau-disconnected-hint">{hint}</div> : null}
     </div>
   );
@@ -1094,11 +1016,10 @@ export function Disconnected({ phase, detail, hint }: DisconnectedProps): JSX.El
 /* -------------------------------------------------------------- statusbar */
 
 export interface StatusBarProps {
-  phase: ConnectionPhase;
-  detail: string | null;
-  state: ConversationState;
-  /** The running model's id. Not its config name: the two differ, often. */
-  model?: string | null;
+  phase: Phase;
+  cursor: CursorState | null;
+  /** How many other cursors on this session are running a turn right now. */
+  othersBusy: number;
   onToggleSessions?: () => void;
   sessionsOpen?: boolean;
   onToggleModels?: () => void;
@@ -1109,9 +1030,8 @@ export interface StatusBarProps {
 
 export function StatusBar({
   phase,
-  detail,
-  state,
-  model,
+  cursor,
+  othersBusy,
   onToggleSessions,
   sessionsOpen,
   onToggleModels,
@@ -1119,33 +1039,26 @@ export function StatusBar({
   onToggleTree,
   treeOpen,
 }: StatusBarProps): JSX.Element {
-  const label =
-    phase === 'ready'
-      ? state.running
-        ? `running${state.turnIndex !== null ? ` · turn ${state.turnIndex}` : ''}`
-        : 'idle'
-      : phase;
+  const label = phase === 'ready' ? (cursor === null ? 'no session' : cursor.busy ? 'running' : 'idle') : phase;
   return (
     <div className={`tau-status tau-status-${phase}`}>
       <span className="tau-status-dot" />
       <span>{label}</span>
-      {detail ? <span className="tau-status-detail">{detail}</span> : null}
+      {othersBusy > 0 ? (
+        <span className="tau-status-detail">
+          {othersBusy} other {othersBusy === 1 ? 'cursor' : 'cursors'} running
+        </span>
+      ) : null}
       <span className="tau-status-spacer" />
-      {/* The label is the model ID, because that is what tau reports as
-          running and the config NAME cannot be derived from it. When the read
-          failed there is still a control, named rather than valued: an empty
-          space would be a picker the reader cannot find. */}
       {onToggleModels ? (
         <button
           className="tau-status-button tau-status-model"
           onClick={onToggleModels}
           aria-pressed={modelsOpen === true}
-          title="Switch the model this session uses"
+          title="Switch the model this view's cursor uses"
         >
-          {model ?? 'Model'}
+          {cursor?.model ?? 'Model'}
         </button>
-      ) : model ? (
-        <span className="tau-status-model">{model}</span>
       ) : null}
       {onToggleTree ? (
         <button
@@ -1162,7 +1075,7 @@ export function StatusBar({
           className="tau-status-button"
           onClick={onToggleSessions}
           aria-pressed={sessionsOpen === true}
-          title="Switch, start, or fork a session"
+          title="Open, start, or fork a session"
         >
           Sessions
         </button>
@@ -1170,6 +1083,61 @@ export function StatusBar({
     </div>
   );
 }
+
+/* -------------------------------------------------------- extension forms */
+
+/**
+ * An extension's form (`request` event): answered by whichever head answers
+ * first, so every head on the session draws it and the first `answer` wins.
+ */
+function FormPanel({
+  session,
+  form,
+}: {
+  session: SessionStore;
+  form: { requestId: string; spec: { title?: string; fields: readonly FieldSpec[] } };
+}): JSX.Element {
+  const [values, setValues] = useState<Record<string, unknown>>(() => initialValues(form.spec));
+  const [error, setError] = useState<string | null>(null);
+
+  const reply = async (value: Record<string, unknown> | null): Promise<void> => {
+    try {
+      const { client, session_id } = session.at();
+      await client.request('answer', { session_id, request_id: form.requestId, value });
+    } catch (raw) {
+      setError(messageOf(raw));
+    }
+  };
+
+  return (
+    <section className="tau-panel tau-request">
+      <header className="tau-panel-head">
+        <h2>{form.spec.title ?? 'An extension asks'}</h2>
+      </header>
+      <div className="tau-request-fields">
+        {form.spec.fields.map((field) => (
+          <Field
+            key={field.name}
+            field={field}
+            value={values[field.name]}
+            onChange={(value) => setValues((previous) => ({ ...previous, [field.name]: value }))}
+          />
+        ))}
+      </div>
+      {error ? <p className="tau-notice tau-warn">{error}</p> : null}
+      <div className="tau-composer-row">
+        <button className="tau-button" onClick={() => void reply(values)}>
+          Submit
+        </button>
+        <button className="tau-button tau-button-quiet" onClick={() => void reply(null)}>
+          Cancel
+        </button>
+      </div>
+    </section>
+  );
+}
+
+type FieldSpec = Parameters<typeof Field>[0]['field'];
 
 /* ---------------------------------------------------------- host notices */
 
@@ -1245,155 +1213,177 @@ function NoticeStrip({
   );
 }
 
+
+/* ------------------------------------------------------- extension display */
+
+/**
+ * What extensions asked every head to show: notifications, status lines and
+ * panels (`ui` events). A status or panel is keyed, and a later one with the
+ * same key replaces it -- or removes it, when its text or spec is null.
+ */
+function ExtensionDisplay({
+  state,
+  onAction,
+}: {
+  state: SessionState;
+  onAction: (command: string, args: string) => void;
+}): JSX.Element | null {
+  const statuses = new Map<string, string>();
+  const panels = new Map<string, NonNullable<Extract<SessionState['ui'][number]['data'], { op: 'panel' }>['spec']>>();
+  const notes: Array<{ seq: number; level: string; message: string }> = [];
+  for (const call of state.ui) {
+    const data = call.data;
+    if (data.op === 'status') {
+      if (data.text === null) statuses.delete(data.key);
+      else statuses.set(data.key, data.text);
+    } else if (data.op === 'panel') {
+      if (data.spec === null) panels.delete(data.key);
+      else panels.set(data.key, data.spec);
+    } else {
+      notes.push({ seq: call.seq, level: data.level, message: data.message });
+    }
+  }
+  const recent = notes.slice(-3);
+  if (statuses.size === 0 && panels.size === 0 && recent.length === 0) return null;
+
+  return (
+    <div className="tau-extension-display">
+      {[...statuses.entries()].map(([key, text]) => (
+        <div key={`status-${key}`} className="tau-notice">
+          <strong>{key}</strong> {text}
+        </div>
+      ))}
+      {recent.map((note) => (
+        <div key={note.seq} className={`tau-notice${note.level === 'warning' || note.level === 'error' ? ' tau-warn' : ''}`}>
+          {note.message}
+        </div>
+      ))}
+      {[...panels.entries()].map(([key, spec]) => (
+        <section key={`panel-${key}`} className="tau-panel">
+          <header className="tau-panel-head">
+            <h2>{spec.title}</h2>
+          </header>
+          <AskBody body={spec.body} />
+          {spec.actions.length > 0 ? (
+            <div className="tau-composer-row">
+              {spec.actions.map((action) => (
+                <button key={action.label} className="tau-button tau-button-quiet" onClick={() => onAction(action.command, action.args)}>
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /* --------------------------------------------------------------- chat app */
 
 export interface ChatProps {
-  client: TauClient | null;
-  conversation?: Conversation | null;
-  phase: ConnectionPhase;
-  detail: string | null;
-  state: ConversationState;
+  daemon: Daemon | null;
+  daemonState: DaemonState;
   enterSubmits?: boolean;
   /**
-   * The connected tau's capability document. Used for ONE decision: whether
-   * `complete_path` is on this peer's command list, which is how `@` completion
-   * finds out it is talking to a pre-1.4 tau without calling and failing.
+   * The cwd a new session starts in. The VS Code host passes its workspace
+   * folder; the browser passes nothing and the daemon's own cwd is used.
    */
-  capabilities?: Capabilities | null;
+  defaultCwd?: string | null;
+  /** The model a new session starts on; null for the daemon's default. */
+  defaultModel?: string | null;
+  /** A session to attach to on connect -- a restored editor tab's. */
+  initialSession?: string | null;
+  /** Told whenever this head moves to another session, so a host can remember it. */
+  onSessionChanged?: (sessionId: string | null) => void;
   /**
-   * Where to look when there is no agent. Host-specific, so the host supplies
-   * it: this component runs in a browser tab and in an editor panel, and only
-   * one of those has a command palette.
+   * Where to look when there is no link. Host-specific, so the host supplies
+   * it: this component runs in a browser tab and in an editor panel.
    */
   disconnectedHint?: string;
-  /**
-   * Sentences from the host about its own decisions -- which tau it chose, and
-   * what else it found. Empty or absent in the browser client, which makes no
-   * such decision: the server is told one binary and spawns it.
-   */
+  /** Sentences from the host about its own decisions -- which τ it found. */
   notices?: readonly HostNotice[];
   /** Run a notice's action. The host decides what its `command` means. */
   onNoticeAction?: (notice: HostNotice) => void;
 }
 
-/** The whole chat head: status, session picker, transcript, composer. */
+type Panel = 'sessions' | 'models' | 'tree' | 'extensions' | null;
+
+/** The whole chat head: status, panels, transcript, composer. */
 export function Chat({
-  client,
-  conversation,
-  phase,
-  detail,
-  state,
+  daemon,
+  daemonState,
   enterSubmits,
-  capabilities,
+  defaultCwd = null,
+  defaultModel = null,
+  initialSession = null,
+  onSessionChanged,
   disconnectedHint,
   notices,
   onNoticeAction,
 }: ChatProps): JSX.Element {
-  const [model, setModel] = useState<ActiveModel | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
-  // Two panels, one slot. Both push the transcript down, and opening the second
-  // over the first would leave the reader with two lists and one status bar.
-  const [modelsOpen, setModelsOpen] = useState(false);
-  const [commands, setCommands] = useState<CommandInfo[]>([]);
-  const [treeOpen, setTreeOpen] = useState(false);
-  const [extensionsOpen, setExtensionsOpen] = useState(false);
-  const [revised, setRevised] = useState<string | null>(null);
-  /**
-   * The extension request at the cursor, and whether it has been set aside.
-   *
-   * A lock is a TREE NODE, not a modal: it survives the process and refuses
-   * every prompt until it is answered. Re-read at every cursor move -- after a
-   * turn, after a command, after a session change -- because that is the only
-   * place it can appear or vanish.
-   */
-  const [request, setRequest] = useState<ExtensionRequest | null>(null);
-  const [requestDismissed, setRequestDismissed] = useState<string | null>(null);
-  /** Bumped by anything that could have made a request appear. */
-  const [requestPoll, setRequestPoll] = useState(0);
-  /** The flow step waiting for an answer, and the promise it will settle. */
-  const [flowStep, setFlowStep] = useState<{
-    step: FlowStep;
-    settle: (value: unknown | null) => void;
-  } | null>(null);
-  // True only while the picker is up because nothing was there to show. Clicking
-  // `Sessions` later is a different thing and must not inherit the sentence.
+  const { phase, detail, needsToken, session, hello } = daemonState;
+  const state = useSession(session);
+  const ready = phase === 'ready';
+  const [panel, setPanel] = useState<Panel>(null);
+  // True only while the picker is up because nothing was there to show.
   const [landed, setLanded] = useState(false);
-  const decided = useRef(false);
+  const [revised, setRevised] = useState<string | null>(null);
+  const [requestDismissed, setRequestDismissed] = useState<string | null>(null);
+  const [flowStep, setFlowStep] = useState<{ step: FlowStep; settle: (value: unknown | null) => void } | null>(null);
+  const tried = useRef(false);
+
+  const cwd = defaultCwd ?? hello?.cwd ?? null;
+  const cursor = state?.cursor ?? null;
+  const running = cursor?.busy === true;
+  const commands = state?.attached?.surface.commands ?? [];
+
+  useEffect(() => onSessionChanged?.(session?.sessionId ?? null), [session, onSessionChanged]);
 
   /**
-   * Land on the session picker when this session has nothing in it.
-   *
-   * The agent is started when the panel opens, and tau writes the session to
-   * the store at that moment rather than at the first message -- so a user who
-   * opens the panel four times has four sessions, all empty, and the picker
-   * fills with rows that are indistinguishable from each other. Opening the
-   * panel is not the same act as starting a conversation, and this is what
-   * separates them: an empty session shows the list it belongs to, so the
-   * obvious next click is an existing conversation rather than a fifth blank
-   * one.
-   *
-   * Decided ONCE, on the first pull. Re-deciding would reopen the picker every
-   * time `new_session` empties the transcript, which is the one moment the
-   * reader has already said what they want.
+   * On the first connect: re-attach to the session this view was on, else land
+   * on the picker. Decided ONCE -- a reconnect re-attaches by itself, and a
+   * reader who closed the picker has said what they want.
    */
   useEffect(() => {
-    if (decided.current || phase !== 'ready' || !state.loaded) return;
-    decided.current = true;
-    if (hasUserMessage(state.messages)) return;
-    setSessionsOpen(true);
-    setLanded(true);
-  }, [phase, state.loaded, state.messages]);
-
-  // The vocabulary is per-session: an extension can register commands, and
-  // switching sessions can load a different set. Re-read at every session
-  // change rather than once at connect.
-  useEffect(() => {
-    if (!client || phase !== 'ready') return;
-    let cancelled = false;
-    loadCommands(client)
-      .then((loaded) => {
-        if (!cancelled) setCommands(loaded);
-      })
-      .catch(() => {
-        // An empty vocabulary means the popup offers nothing, which is the
-        // truthful rendering of "this head could not read the command list".
-        // Every slash then falls through to the model as prose, exactly as an
-        // unknown one already does.
-        if (!cancelled) setCommands([]);
+    if (!ready || !daemon || tried.current) return;
+    tried.current = true;
+    if (session) return;
+    if (initialSession) {
+      daemon.open(initialSession).catch(() => {
+        setPanel('sessions');
+        setLanded(true);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, phase, state.notice]);
+      return;
+    }
+    setPanel('sessions');
+    setLanded(true);
+  }, [ready, daemon, session, initialSession]);
 
-  const pathCompletion =
-    capabilities === undefined || capabilities === null
-      ? true
-      : commandsOf(capabilities).some((command) => command.name === 'complete_path');
+  // Land on the picker for an attached session with nothing said in it yet.
+  const empty = state !== null && state.loaded && !hasUserMessage(state.path);
+  useEffect(() => {
+    if (empty && panel === null && !tried.current) setPanel('sessions');
+  }, [empty, panel]);
+
+  const openView = useCallback((name: string): boolean => {
+    if (name !== 'tree' && name !== 'extensions') return false;
+    setLanded(false);
+    setPanel(name);
+    return true;
+  }, []);
 
   const onCommand = useCallback(
-    async (name: string, args: string): Promise<CommandResult> => {
-      if (!client || !conversation) {
-        return { kind: 'refused', notice: 'Not connected.' };
-      }
-      return performCommand(name, args, commands, {
-        client,
-        refresh: () => conversation.refresh(),
-        openSessions: () => setSessionsOpen(true),
-        openTree: () => {
-          setSessionsOpen(false);
-          setModelsOpen(false);
-          setTreeOpen(true);
-        },
-        openExtensions: () => {
-          setSessionsOpen(false);
-          setModelsOpen(false);
-          setExtensionsOpen(true);
-        },
+    async (name: string, args: string, target?: SessionStore): Promise<CommandResult> => {
+      const on = target ?? session;
+      if (!daemon || !on) return { kind: 'refused', notice: 'Start or open a session first.' };
+      return performCommand(name, args, on.state.attached?.surface.commands ?? commands, {
+        daemon,
+        session: on,
+        openSessions: () => setPanel('sessions'),
+        openView,
         // One step at a time, and the promise is what the flow loop awaits. A
-        // dialog rather than a second composer: two prompts must never coexist,
-        // and the flow's question is not something to type into the chat box.
+        // dialog rather than a second composer: two prompts must never coexist.
         askStep: (step) =>
           new Promise<unknown | null>((resolve) => {
             setFlowStep({
@@ -1406,180 +1396,146 @@ export function Chat({
           }),
       });
     },
-    [client, conversation, commands],
+    [daemon, session, commands, openView],
   );
 
-  // The cursor moved if a turn ended, a command ran, or the session changed.
-  // Each of those is what `state.notice`/`state.cursor`/`state.running` report.
-  useEffect(() => {
-    if (!client || phase !== 'ready') return;
-    let cancelled = false;
-    loadPendingRequest(client)
-      .then((found) => {
-        if (!cancelled) setRequest(found);
-      })
-      .catch(() => {
-        // An older tau has no such verb. A head that cannot ask has no request
-        // to draw, which is the truthful rendering -- and the composer still
-        // reports the refusal if one arrives.
-        if (!cancelled) setRequest(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, phase, state.running, state.notice, state.cursor, requestPoll]);
+  const ensureSession = useCallback(async (): Promise<SessionStore> => {
+    if (!daemon) throw new Error('Not connected to tau serve.');
+    if (!cwd) throw new Error('No working directory to start a session in; pick one in Sessions.');
+    setPanel(null);
+    setLanded(false);
+    return daemon.create(cwd, defaultModel);
+  }, [daemon, cwd, defaultModel]);
 
-  useEffect(() => {
-    if (!client || phase !== 'ready') return;
-    let cancelled = false;
-    client
-      .call('get_state', {})
-      .then((result) => {
-        if (cancelled) return;
-        setModel(readActiveModel(result.model));
-        setSessionId(typeof result.session_id === 'string' ? result.session_id : null);
-      })
-      .catch(() => {
-        // The status bar shows no model rather than a wrong one. The
-        // connection phase already reports whether the link is healthy.
-      });
-    return () => {
-      cancelled = true;
-    };
-    // `notice` is in the deps because a session change sets it -- that is the
-    // signal the session id may have moved under this component.
-  }, [client, phase, state.running, state.notice]);
+  const toggle = (which: Exclude<Panel, null>) => (): void => {
+    setLanded(false);
+    setPanel((open) => (open === which ? null : which));
+  };
+
+  const request = cursor?.request ? requestOf(cursor.request) : null;
+  const othersBusy = (state?.cursors ?? []).filter((c) => c.busy && c.cursor_id !== cursor?.cursor_id).length;
 
   return (
     <div className="tau-app">
       <StatusBar
         phase={phase}
-        detail={detail}
-        state={state}
-        model={model?.id ?? null}
-        sessionsOpen={sessionsOpen}
-        modelsOpen={modelsOpen}
-        treeOpen={treeOpen}
-        {...(phase === 'ready'
+        cursor={cursor}
+        othersBusy={othersBusy}
+        sessionsOpen={panel === 'sessions'}
+        modelsOpen={panel === 'models'}
+        treeOpen={panel === 'tree'}
+        {...(ready
           ? {
-              onToggleSessions: () => {
-                setModelsOpen(false);
-                setSessionsOpen((open) => !open);
-              },
-              onToggleModels: () => {
-                setSessionsOpen(false);
-                setLanded(false);
-                setModelsOpen((open) => !open);
-              },
-              onToggleTree: () => {
-                setSessionsOpen(false);
-                setModelsOpen(false);
-                setLanded(false);
-                setTreeOpen((open) => !open);
-              },
+              onToggleSessions: toggle('sessions'),
+              ...(session ? { onToggleModels: toggle('models'), onToggleTree: toggle('tree') } : {}),
             }
           : {})}
       />
-      {/* First, above the disconnection notice as well: "which tau is this"
+      {/* First, above the disconnection notice as well: "which τ is this"
           explains a failure to connect at least as often as it accompanies a
           working one. */}
       <NoticeStrip notices={notices ?? []} onAction={onNoticeAction} />
-      <Disconnected phase={phase} detail={detail} {...(disconnectedHint ? { hint: disconnectedHint } : {})} />
-      {sessionsOpen ? (
+      <Disconnected
+        phase={phase}
+        detail={detail}
+        needsToken={needsToken}
+        onRetry={(token) => daemon?.retry(token)}
+        {...(disconnectedHint ? { hint: disconnectedHint } : {})}
+      />
+      {state?.failure ? <div className="tau-notice tau-warn">{state.failure}</div> : null}
+      {panel === 'sessions' ? (
         <SessionPicker
-          client={client}
-          conversation={conversation ?? null}
-          currentSessionId={sessionId}
-          running={state.running}
+          daemon={ready ? daemon : null}
+          currentSessionId={session?.sessionId ?? null}
+          cwd={cwd}
+          model={defaultModel}
           onClose={() => {
-            setSessionsOpen(false);
+            setPanel(null);
             setLanded(false);
           }}
           {...(landed
             ? {
-                reason:
-                  'This session is empty. Pick one to carry on with, or dismiss this and start typing here.',
+                reason: 'Pick a session to carry on with, or close this and start typing to begin a new one.',
                 closeLabel: 'Start here',
               }
             : {})}
         />
       ) : null}
-      {modelsOpen ? (
+      {panel === 'models' && state ? (
         <ModelPicker
-          client={client}
-          active={model}
-          running={state.running}
-          onClose={() => setModelsOpen(false)}
-          onSwitched={setModel}
+          session={session}
+          models={state.attached?.models ?? []}
+          active={cursor?.model ?? null}
+          running={running}
+          onClose={() => setPanel(null)}
         />
       ) : null}
-      {/* A lock refuses every prompt, so it goes ABOVE the transcript rather
-          than below it: a reader who has to scroll to find out why their
-          message bounced has been told nothing in time to act on. */}
+      {/* A lock refuses every prompt, so it goes ABOVE the transcript: a reader
+          who has to scroll to find out why their message bounced has been told
+          nothing in time to act on. It is the cursor's own state, so it comes
+          and goes with the cursor and nothing here asks for it. */}
       {request !== null && requestDismissed !== request.entryId ? (
         <RequestPanel
-          client={client}
+          session={session}
           request={request}
-          onAnswered={async () => {
-            setRequestDismissed(null);
-            await conversation?.refresh();
-          }}
+          onAnswered={() => setRequestDismissed(null)}
           onDismiss={() => setRequestDismissed(request.entryId)}
         />
       ) : null}
-      {treeOpen ? (
+      {session && state
+        ? state.forms.map((form) => <FormPanel key={form.requestId} session={session} form={form} />)
+        : null}
+      {panel === 'tree' && state ? (
         <TreePanel
-          client={client}
-          running={state.running}
-          onChanged={() => conversation?.refresh() ?? Promise.resolve()}
+          session={session}
+          revision={state.revision}
+          running={running}
           onRevise={setRevised}
-          onClose={() => setTreeOpen(false)}
+          onClose={() => setPanel(null)}
         />
       ) : null}
-      {extensionsOpen ? (
-        <ExtensionPanel client={client} onClose={() => setExtensionsOpen(false)} />
+      {panel === 'extensions' ? (
+        <ExtensionPanel session={session} surface={state?.attached?.surface ?? null} onClose={() => setPanel(null)} />
       ) : null}
       {flowStep !== null ? (
         <FlowDialog
-          client={client}
+          session={session}
           step={flowStep.step}
           onSubmit={(value) => flowStep.settle(value)}
           onCancel={() => flowStep.settle(null)}
         />
       ) : null}
-      <Transcript state={state} />
-      {/* Both notices are tau's own readings, and both say something the
+      {state ? <ExtensionDisplay state={state} onAction={(command, args) => void onCommand(command, args)} /> : null}
+      {state ? <Transcript state={state} /> : <div className="tau-transcript" />}
+      {/* Both notices are τ's own readings, and both say something the
           transcript cannot: a completion cut off by the output cap reads
           exactly like one that finished, and a prompt cache that was never
           consulted is invisible except in the bill. */}
-      {state.truncation ? (
+      {state?.live.truncation ? (
         <div className="tau-notice tau-warn">
           The model hit its output cap, so that answer is a PREFIX and not a finished one
-          {state.truncation.droppedToolCalls !== null
-            ? `, and ${state.truncation.droppedToolCalls} tool call${
-                state.truncation.droppedToolCalls === 1 ? '' : 's'
+          {state.live.truncation.droppedToolCalls !== null
+            ? `, and ${state.live.truncation.droppedToolCalls} tool call${
+                state.live.truncation.droppedToolCalls === 1 ? '' : 's'
               } were dropped mid-argument`
             : ''}
-          . Raise <code>max_tokens</code> for this model in <code>~/.tau/config.json</code>, or ask
-          for less at a time.
+          . Raise <code>max_tokens</code> for this model in the daemon&apos;s <code>~/.tau/config.json</code>, or
+          ask for less at a time.
         </div>
       ) : null}
-      {state.cacheNotice ? <div className="tau-notice tau-warn">{state.cacheNotice}</div> : null}
+      {state?.live.cacheNotice ? <div className="tau-notice tau-warn">{state.live.cacheNotice}</div> : null}
       <Composer
-        // Null once the phase leaves `ready`, which disables Send and changes
-        // the placeholder. `useTauConnection` keeps the client object across a
-        // close so the transcript survives, but every call it can make now
-        // fails -- and a composer that invites a message it cannot deliver is
-        // the same defect as a status bar that says `connecting` forever.
-        client={phase === 'ready' ? client : null}
+        session={session}
+        state={state}
+        ready={ready}
         phase={phase}
-        running={state.running}
+        running={running}
         commands={commands}
-        pathCompletion={pathCompletion}
         onCommand={onCommand}
+        ensureSession={ensureSession}
+        newSessionCwd={cwd}
         draft={revised}
         onDraftTaken={() => setRevised(null)}
-        onRefused={() => setRequestPoll((n) => n + 1)}
         {...(enterSubmits === undefined ? {} : { enterSubmits })}
       />
     </div>

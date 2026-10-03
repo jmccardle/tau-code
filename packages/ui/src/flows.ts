@@ -1,4 +1,5 @@
-import type { TauClient } from '@ffwf/tau-code-protocol';
+import type { FlowStep as WireStep, Ready } from '@ffwf/tau-code-protocol';
+import type { SessionStore } from './session.js';
 
 /**
  * The flow loop's data, read off the wire.
@@ -52,95 +53,68 @@ export interface FlowStep {
   flow: string;
   argument: FlowArgument;
   domain: FlowDomain;
-  cursor: string | null;
+  /**
+   * The entry the step was computed at -- a LEAF, despite the name, which is
+   * the core dataclass's. `enumerate_domain` takes it as `leaf`, so a scoped
+   * domain (`ancestors_of_cursor`) lists from the same place.
+   */
+  leaf: string | null;
   bound: Record<string, unknown>;
 }
 
-/** Every required argument is bound; this is what to perform, and with what. */
-export interface FlowReady {
-  flow: string;
-  mutation: string;
-  arguments: Record<string, unknown>;
-}
+/** A flow's mutation with every argument bound: the generated `Ready`, sent back as-is. */
+export type FlowReady = Ready;
 
-/** One option in a rendered field. */
 export interface DomainValue {
   value: string;
   label: string;
 }
 
-function record(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) {
-    throw new TypeError(`${what} is not an object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function str(source: Record<string, unknown>, key: string, what: string): string {
-  const value = source[key];
-  if (typeof value !== 'string') throw new TypeError(`${what}.${key} is not a string.`);
-  return value;
-}
-
 const FIELD_KINDS = new Set(['text', 'number', 'confirm', 'select', 'multiselect']);
 
 /**
- * Read a `next_step` step.
+ * The step this head renders, from the wire's `FlowStep` (or a submit's
+ * `FlowStep` arm, which carries the same fields).
  *
- * Checks before it narrows, the discipline `capabilities.ts` uses on every array
- * tau's schemas leave unrefined: a shape change surfaces here, once, naming the
- * field, rather than as `undefined` in a form field the reader is looking at.
+ * `field_kind`, `free` and `required` are optional in the schema and always
+ * sent; one that is missing, or a field kind this head cannot draw, is refused
+ * by name rather than guessed at.
  */
-export function stepOf(value: unknown): FlowStep {
-  const step = record(value, 'next_step().step');
-  const argument = record(step['argument'], 'next_step().step.argument');
-  const domain = record(step['domain'], 'next_step().step.domain');
-  const fieldKind = str(domain, 'field_kind', 'next_step().step.domain');
-  if (!FIELD_KINDS.has(fieldKind)) {
-    throw new TypeError(`next_step().step.domain.field_kind is '${fieldKind}', which this head cannot render.`);
+export function stepOf(step: WireStep): FlowStep {
+  const { argument, domain } = step;
+  const fieldKind = domain.field_kind;
+  if (fieldKind === undefined || !FIELD_KINDS.has(fieldKind)) {
+    throw new TypeError(
+      `next_step's domain ${domain.name} has field_kind ${JSON.stringify(fieldKind)}, which this head cannot render.`,
+    );
   }
-  const values = domain['values'];
+  if (domain.free === undefined) throw new TypeError(`next_step's domain ${domain.name} does not say whether it is free.`);
+  if (argument.required === undefined) {
+    throw new TypeError(`next_step's argument ${argument.name} does not say whether it is required.`);
+  }
   return {
-    flow: str(step, 'flow', 'next_step().step'),
-    cursor: typeof step['cursor'] === 'string' ? step['cursor'] : null,
-    bound: typeof step['bound'] === 'object' && step['bound'] !== null ? (step['bound'] as Record<string, unknown>) : {},
+    flow: step.flow,
+    leaf: step.cursor,
+    bound: step.bound,
     argument: {
-      name: str(argument, 'name', 'next_step().step.argument'),
-      domain: str(argument, 'domain', 'next_step().step.argument'),
-      description: typeof argument['description'] === 'string' ? argument['description'] : '',
-      cardinality: argument['cardinality'] === 'many' ? 'many' : 'one',
-      required: argument['required'] === true,
-      scope: typeof argument['scope'] === 'string' ? argument['scope'] : null,
+      name: argument.name,
+      domain: argument.domain,
+      description: argument.description,
+      cardinality: argument.cardinality ?? 'one',
+      required: argument.required,
+      scope: argument.scope ?? null,
     },
     domain: {
-      name: str(domain, 'name', 'next_step().step.domain'),
-      description: typeof domain['description'] === 'string' ? domain['description'] : '',
-      free: domain['free'] === true,
-      values: Array.isArray(values) ? values.map(String) : null,
-      enumerator: typeof domain['enumerator'] === 'string' ? domain['enumerator'] : null,
+      name: domain.name,
+      description: domain.description,
+      free: domain.free,
+      values: domain.values ?? null,
+      enumerator: domain.enumerator ?? null,
       fieldKind: fieldKind as FlowDomain['fieldKind'],
     },
   };
 }
 
-/** Read a `next_step` ready. */
-export function readyOf(value: unknown): FlowReady {
-  const ready = record(value, 'next_step().ready');
-  const args = ready['arguments'];
-  return {
-    flow: str(ready, 'flow', 'next_step().ready'),
-    mutation: str(ready, 'mutation', 'next_step().ready'),
-    arguments: typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {},
-  };
-}
-
-/**
- * The values a field offers, and whether the list is all of them.
- *
- * `total` above `values.length` means tau capped the listing, and saying so is
- * the difference between "these are the values" and "these are some of them".
- * A `free` domain has none, and that is the answer rather than a failure.
- */
 export interface DomainListing {
   values: DomainValue[];
   total: number;
@@ -148,39 +122,21 @@ export interface DomainListing {
 
 /** Ask tau for a domain's live values. */
 export async function enumerateDomain(
-  client: TauClient,
+  session: SessionStore,
   domain: string,
-  options: { query?: string; cursor?: string | null; limit?: number } = {},
+  options: { query?: string; leaf?: string | null; limit?: number } = {},
 ): Promise<DomainListing> {
-  const result = await client.call('enumerate_domain', {
+  const { client, session_id } = session.at();
+  const result = await client.request('enumerate_domain', {
+    session_id,
     domain,
     ...(options.query === undefined ? {} : { query: options.query }),
-    ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    ...(options.leaf === undefined ? {} : { leaf: options.leaf }),
     ...(options.limit === undefined ? {} : { limit: options.limit }),
   });
-  if (!Array.isArray(result.values)) {
-    throw new TypeError('enumerate_domain().values is not an array.');
-  }
-  return {
-    total: Number(result.total ?? result.values.length),
-    values: result.values.map((entry, index) => {
-      const row = record(entry, `enumerate_domain().values[${index}]`);
-      return {
-        value: str(row, 'value', `enumerate_domain().values[${index}]`),
-        label: typeof row['label'] === 'string' ? row['label'] : str(row, 'value', `enumerate_domain().values[${index}]`),
-      };
-    }),
-  };
+  return { total: result.total, values: result.values };
 }
 
-/**
- * Whether this head offers a picker for a field tau declared as a text box.
- *
- * The richer-not-poorer rule, applied where tau's own TUI applies it. A domain
- * with an enumerator has a list behind it; asking the reader to type a value out
- * of a list they have not been shown is the poorer control, whatever the
- * declared `field_kind` says.
- */
 export function offersPicker(domain: FlowDomain): boolean {
   return domain.fieldKind === 'select' || (!domain.free && domain.enumerator !== null);
 }

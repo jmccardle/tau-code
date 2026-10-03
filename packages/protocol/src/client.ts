@@ -1,243 +1,180 @@
-import { ProtocolVersionError, RpcErrorCode, TauRpcError, type RpcErrorObject } from './errors.js';
+import { ProtocolVersionError, ServeError } from './errors.js';
 import type { Transport } from './transport.js';
-import { uiMethodsOf } from './capabilities.js';
 import { PROTOCOL_VERSION } from './generated.js';
-import type { Capabilities, CommandName, CommandParams, CommandResult, WireEvent } from './generated.js';
+import type {
+  Error as WireError,
+  Event,
+  RequestFields,
+  RequestType,
+  Results,
+} from './generated.js';
 
 /**
- * The protocol MAJOR.MINOR this client was generated against.
+ * The serve protocol version this client was generated against.
  *
- * Read off the generated file rather than written here. It used to be a literal,
- * and a literal is a second copy of a number `npm run generate` already wrote --
- * it said 1.4 for as long as it took someone to notice tau had moved on, and a
- * stale version check is worse than none because it passes.
+ * Read off the generated file rather than written here: a literal is a second
+ * copy of a number `npm run generate` already wrote.
  */
 export const BUILT_AGAINST: string = PROTOCOL_VERSION;
 
-/**
- * A `compaction_end` notification. It is NOT an `event`: it is its own method
- * with its own params shape, correlated by both `compaction_id` and
- * `request_id`. A client that treats every non-`event` notification as a
- * protocol violation drops it and sees `compact` never finish.
- */
-export interface CompactionEnd {
-  compaction_id: string;
-  request_id?: number | string | null;
-  performed?: boolean;
-  cancelled?: boolean;
-  [key: string]: unknown;
-}
-
-export interface TauClientEvents {
-  /** One agent lifecycle event. Ten types; see `WireEvent`. */
-  event: (event: WireEvent) => void;
-  /** The deferred completion of a `compact` call. */
-  compactionEnd: (params: CompactionEnd) => void;
-  /** A notification whose method this client does not know. Additive MINOR. */
-  unknownNotification: (method: string, params: unknown) => void;
-  /** A line that did not parse, or a message that is not a JSON-RPC shape. */
+export interface ServeClientEvents {
+  /** One event for an attached session. */
+  event: (event: Event) => void;
+  /** A frame that is neither a response nor an event, or a response for no request. */
   protocolViolation: (detail: string, raw: unknown) => void;
   /** The peer is gone. */
-  close: (reason: string) => void;
+  close: (reason: string, code: number | null) => void;
 }
 
 type Pending = {
-  method: string;
+  type: string;
   resolve: (value: never) => void;
   reject: (reason: unknown) => void;
 };
 
 /**
- * A JSON-RPC 2.0 client for tau.
+ * A client for one connection to `tau serve`.
  *
- * Deliberately thin. It correlates requests, routes notifications, and enforces
- * three contracts that are cheap now and expensive to retrofit:
+ * Deliberately thin. It numbers requests, correlates responses, routes events,
+ * and enforces the one contract that is cheap now and expensive later:
+ * **`hello` first**, naming the protocol version, and a refusal is final.
  *
- *  - **Version negotiation** (Fail Early). `connect()` calls `get_capabilities`
- *    first and refuses on a MAJOR mismatch.
- *  - **RC1** — a server-originated request is ANSWERED, at minimum with
- *    `METHOD_NOT_FOUND`. tau's reverse channel does not exist yet
- *    (`ui_methods` is `[]`), and a client that silently ignores the request
- *    when it arrives would hang the agent. Answering lets tau fail fast.
- *  - **RC2** — server ids live in their own namespace. This client's ids are
- *    positive integers, so an inbound id never collides with one of ours.
+ * It does not reconnect. A connection is one transport's lifetime; resuming is
+ * the replica's job (`attach` with the held `epoch` and `since`), on a new
+ * client over a new transport.
  *
- * It does NOT cache the session cursor. F3: no host may cache "the tip". Every
- * mutating response carries the resulting cursor and callers must re-read it.
+ * There is no deadline on a request, on purpose: `submit` answers when the
+ * submission ENDS, which is as long as a turn takes. The price is that a
+ * request nobody will answer must be rejected some other way, and that way is
+ * the transport closing -- every pending request is rejected with the close's
+ * reason. A relay with nothing behind it closes; it never drops.
  */
-export class TauClient {
+export class ServeClient {
   #transport: Transport;
   #nextId = 1;
   #pending = new Map<number, Pending>();
-  #listeners: { [K in keyof TauClientEvents]: Set<TauClientEvents[K]> } = {
+  #listeners: { [K in keyof ServeClientEvents]: Set<ServeClientEvents[K]> } = {
     event: new Set(),
-    compactionEnd: new Set(),
-    unknownNotification: new Set(),
     protocolViolation: new Set(),
     close: new Set(),
   };
-  #capabilities: Capabilities | null = null;
-  #closed = false;
   /**
    * Why this connection ended, kept after the `close` event has been emitted.
    *
-   * A close can happen before anyone is listening for one -- a stdio transport
-   * that learns of a dead process during construction, for instance -- and the
-   * event is then emitted to nobody. The reason is not a message that was
-   * missed, it is a permanent fact about this client, so it is remembered and
-   * every later refusal is phrased with it.
+   * A close can happen before anyone is listening -- a relay that learns there
+   * is no daemon while the page is still loading -- and the event is then
+   * emitted to nobody. The reason is a permanent fact about this client, so it
+   * is remembered and every later refusal is phrased with it.
    */
   #closedReason: string | null = null;
+  #closed = false;
 
   constructor(transport: Transport) {
     this.#transport = transport;
-    transport.onMessage((message) => this.#receive(message));
-    transport.onClose((reason) => this.#handleClose(reason));
+    transport.onMessage((frame) => this.#receive(frame));
+    transport.onClose((reason, code) => this.#handleClose(reason, code));
   }
 
-  on<K extends keyof TauClientEvents>(name: K, handler: TauClientEvents[K]): () => void {
+  on<K extends keyof ServeClientEvents>(name: K, handler: ServeClientEvents[K]): () => void {
     this.#listeners[name].add(handler);
     return () => {
       this.#listeners[name].delete(handler);
     };
   }
 
-  #emit<K extends keyof TauClientEvents>(name: K, ...args: Parameters<TauClientEvents[K]>): void {
+  #emit<K extends keyof ServeClientEvents>(name: K, ...args: Parameters<ServeClientEvents[K]>): void {
     for (const handler of this.#listeners[name]) {
       (handler as (...a: unknown[]) => void)(...args);
     }
   }
 
   /**
-   * Negotiate and return capabilities.
+   * Say `hello`, which the daemon serves before anything else.
    *
-   * tau's own instruction: call this first on every new connection, before any
-   * mutating command, and refuse on a MAJOR mismatch rather than discovering it
-   * on the first failing request.
+   * A `protocol_mismatch` refusal closes this client and throws
+   * `ProtocolVersionError`; an `unauthorized` one throws the `ServeError` as it
+   * is, because the caller can fix that one by asking for a token.
    */
-  async connect(): Promise<Capabilities> {
-    const caps = await this.call('get_capabilities', {});
-    const theirs = caps.protocol_version;
-    const ourMajor = BUILT_AGAINST.split('.')[0];
-    const theirMajor = String(theirs).split('.')[0];
-    if (ourMajor !== theirMajor) {
-      this.close();
-      throw new ProtocolVersionError(BUILT_AGAINST, String(theirs));
+  async hello(client: string, token: string | null): Promise<Results['hello']> {
+    try {
+      return await this.request('hello', { protocol: BUILT_AGAINST, client, token });
+    } catch (error) {
+      if (error instanceof ServeError && error.code === 'protocol_mismatch') {
+        this.close();
+        throw new ProtocolVersionError(BUILT_AGAINST, error.detail);
+      }
+      throw error;
     }
-    this.#capabilities = caps;
-    return caps;
-  }
-
-  /** Capabilities from the last `connect()`, or null before one. */
-  get capabilities(): Capabilities | null {
-    return this.#capabilities;
-  }
-
-  /**
-   * Whether this connection has a reverse channel. `false` against every tau
-   * shipped so far; the check exists so a feature can be gated on the answer
-   * instead of on a version number.
-   */
-  get hasReverseChannel(): boolean {
-    const caps = this.#capabilities;
-    return caps !== null && uiMethodsOf(caps).length > 0;
   }
 
   /** Send one request and await its response. */
-  call<M extends CommandName>(method: M, params: CommandParams<M>): Promise<CommandResult<M>> {
+  request<T extends RequestType>(type: T, fields: RequestFields<T>): Promise<Results[T]> {
     if (this.#closed) {
       // The reason, not the state. "The connection is closed" is the one thing
-      // the caller can already see; what it cannot see is that tau exited with
-      // code 0 a moment ago and can be restarted from the command palette. A
-      // close that arrived before `connect()` was even called is exactly the
-      // case that reaches here, and it is the case where the reason matters
-      // most, because no pending request exists to carry it instead.
-      // `||`, not `??`: a transport that closes with an empty string has given
-      // no reason, whatever its type says, and a refusal has to be a sentence.
+      // the caller can already see; what it cannot see is why.
       const why = this.#closedReason?.trim() || 'the connection is closed.';
-      return Promise.reject(new Error(`Cannot call ${method}: ${why}`));
+      return Promise.reject(new Error(`Cannot send ${type}: ${why}`));
     }
     const id = this.#nextId++;
-    return new Promise<CommandResult<M>>((resolve, reject) => {
-      this.#pending.set(id, { method, resolve: resolve as (v: never) => void, reject });
-      this.#transport.send({ jsonrpc: '2.0', id, method, params });
+    return new Promise<Results[T]>((resolve, reject) => {
+      this.#pending.set(id, { type, resolve: resolve as (v: never) => void, reject });
+      this.#transport.send({ ...fields, type, id });
     });
+  }
+
+  get closed(): boolean {
+    return this.#closed;
   }
 
   close(): void {
     if (this.#closed) return;
     this.#transport.close();
-    this.#handleClose('closed by this client');
+    this.#handleClose('closed by this client', null);
   }
 
-  #handleClose(reason: string): void {
+  #handleClose(reason: string, code: number | null): void {
     if (this.#closed) return;
     this.#closed = true;
     this.#closedReason = reason;
     for (const [, pending] of this.#pending) {
-      pending.reject(new Error(`Connection closed before ${pending.method} answered: ${reason}`));
+      pending.reject(new Error(`The connection closed before ${pending.type} answered: ${reason}`));
     }
     this.#pending.clear();
-    this.#emit('close', reason);
+    this.#emit('close', reason, code);
   }
 
-  #receive(message: unknown): void {
-    if (typeof message !== 'object' || message === null) {
-      this.#emit('protocolViolation', 'message is not an object', message);
+  #receive(frame: unknown): void {
+    if (typeof frame !== 'object' || frame === null) {
+      this.#emit('protocolViolation', 'frame is not an object', frame);
       return;
     }
-    const m = message as Record<string, unknown>;
+    const record = frame as Record<string, unknown>;
 
-    // A server-originated REQUEST: has both `method` and `id`. The reverse
-    // channel does not exist yet, so the only correct answer is
-    // METHOD_NOT_FOUND -- and answering at all is the whole point (RC1).
-    if (typeof m['method'] === 'string' && m['id'] !== undefined && m['id'] !== null) {
-      this.#answerUnsupported(m['id'], m['method'] as string);
+    if (record['type'] === 'event') {
+      this.#emit('event', frame as Event);
       return;
     }
-
-    // A NOTIFICATION: `method`, no `id`.
-    if (typeof m['method'] === 'string') {
-      const method = m['method'] as string;
-      if (method === 'event') {
-        this.#emit('event', m['params'] as WireEvent);
-      } else if (method === 'compaction_end') {
-        this.#emit('compactionEnd', m['params'] as CompactionEnd);
-      } else {
-        this.#emit('unknownNotification', method, m['params']);
-      }
+    if (record['type'] !== 'response') {
+      this.#emit('protocolViolation', `frame of unknown type ${JSON.stringify(record['type'])}`, frame);
       return;
     }
 
-    // A RESPONSE: correlated by id.
-    const id = m['id'];
-    if (typeof id !== 'number') {
-      this.#emit('protocolViolation', 'response has no numeric id', message);
-      return;
-    }
-    const pending = this.#pending.get(id);
+    const id = record['id'];
+    const pending = typeof id === 'number' ? this.#pending.get(id) : undefined;
     if (!pending) {
-      this.#emit('protocolViolation', `response for unknown id ${id}`, message);
+      this.#emit('protocolViolation', `response for unknown id ${JSON.stringify(id)}`, frame);
       return;
     }
-    this.#pending.delete(id);
-    if (m['error'] !== undefined) {
-      pending.reject(new TauRpcError(pending.method, m['error'] as RpcErrorObject));
+    this.#pending.delete(id as number);
+    if (record['ok'] === true) {
+      pending.resolve(record['result'] as never);
       return;
     }
-    pending.resolve(m['result'] as never);
-  }
-
-  #answerUnsupported(id: unknown, method: string): void {
-    this.#transport.send({
-      jsonrpc: '2.0',
-      id,
-      error: {
-        code: RpcErrorCode.METHOD_NOT_FOUND,
-        message:
-          `This client implements no reverse-channel methods (RC1). ` +
-          `Method '${method}' is not supported.`,
-      },
-    });
+    const error = record['error'] as WireError | null | undefined;
+    if (!error) {
+      pending.reject(new Error(`${pending.type} answered ok:false with no error.`));
+      return;
+    }
+    pending.reject(new ServeError(pending.type, error));
   }
 }

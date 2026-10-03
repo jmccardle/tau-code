@@ -63,7 +63,7 @@
       },
       {
         "command": "tau-code.restart",
-        "title": "Restart Agent",
+        "title": "Reconnect to tau serve",
         "category": "tau",
         "icon": "$(debug-restart)"
       },
@@ -74,7 +74,7 @@
       },
       {
         "command": "tau-code.chooseRuntime",
-        "title": "Choose Which tau to Run",
+        "title": "Choose Which tau Starts the Daemon",
         "category": "tau"
       },
       {
@@ -123,7 +123,7 @@
             "Only the bundled runtime extension. Refuses to start when it is absent, rather than running a different tau.",
             "Only tau on PATH, or whatever tau-code.binary names. The runtime extension is ignored even if installed."
           ],
-          "markdownDescription": "Which tau to run when more than one is available.\n\n`ffwf.tau-runtime` is a separate, optional extension that ships its own CPython with tau installed into it. When it and a system tau are both present, this decides — and if the two are different versions, the panel says so rather than picking quietly.\n\nA `tau-code.binary` you have set explicitly, or `TAU_BIN`, wins over all three: naming a path is an instruction, and a path that does not work is an error rather than a reason to run something else."
+          "markdownDescription": "Which tau starts the daemon (`tau serve -d`) when more than one is available. A daemon that is already running is used whichever tau started it.\n\n`ffwf.tau-runtime` is a separate, optional extension that ships its own CPython with tau installed into it. When it and a system tau are both present, this decides — and if the two are different versions, the panel says so rather than picking quietly.\n\nA `tau-code.binary` you have set explicitly, or `TAU_BIN`, wins over all three: naming a path is an instruction, and a path that does not work is an error rather than a reason to run something else."
         },
         "tau-code.binary": {
           "type": "string",
@@ -133,17 +133,12 @@
         "tau-code.model": {
           "type": "string",
           "default": "",
-          "description": "Passed to tau as --model. Empty uses tau's own configured default."
+          "markdownDescription": "The model a session this extension creates starts on: a name from the daemon's `~/.tau/config.json`. Empty uses the daemon's default. Switch an existing session's model from the panel."
         },
-        "tau-code.provider": {
+        "tau-code.token": {
           "type": "string",
           "default": "",
-          "description": "Passed to tau as --provider. Empty uses tau's own configured default."
-        },
-        "tau-code.sessionDir": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Where session logs are written (`--session-dir`).\n\nEmpty uses tau's default for RPC hosts: a private `<tmp>/.tau-<uid>/sessions`, so this extension does not fill the session list you see in the TUI. **Those sessions do not survive a reboot on a system that clears its temp directory.**\n\nSet this to `~/.tau/sessions` to share one store with the tau TUI and `tau -p`. The two are then fully interchangeable in both directions: this extension can resume a session the TUI wrote, and the TUI's `--continue` resumes one written here."
+          "markdownDescription": "The token to send when the daemon has `serve.token` set. Empty sends none, which is right for a daemon without one (the default)."
         }
       }
     }
@@ -154,19 +149,20 @@
     "watch": "node esbuild.mjs --watch",
     "package": "npx --yes @vscode/vsce package --no-dependencies --out ../../ffwf-tau-code-$npm_package_version.vsix"
   },
-  "//dependencies": "The three @ffwf/* entries are workspace siblings, unpublished by design, so they are ranged `*` rather than pinned -- see `//internal-deps` in the root package.json. Nothing resolves them at install time for a user anyway: esbuild bundles them into dist/extension.js and the .vsix is built --no-dependencies.",
+  "//dependencies": "The two @ffwf/* entries are workspace siblings, unpublished by design, so they are ranged `*` rather than pinned -- see `//internal-deps` in the root package.json. Nothing resolves them at install time for a user anyway: esbuild bundles them into dist/extension.js and the .vsix is built --no-dependencies.",
   "dependencies": {
     "@ffwf/tau-code-protocol": "*",
-    "@ffwf/tau-code-runner": "*",
     "@ffwf/tau-code-ui": "*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.12",
     "@vitejs/plugin-react": "^4.3.0",
     "esbuild": "^0.24.0",
     "vite": "^5.4.0"

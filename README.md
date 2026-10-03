@@ -1,30 +1,28 @@
 # ffwf-tau-code
 
 Clients for [τ](https://github.com/jmccardle/tau), the Python agent harness: a
-connection server, a standalone web client, and a VS Code / VSCodium extension.
+web client and a VS Code / VSCodium extension, both speaking to `tau serve`.
 
-τ itself is not in this repository. This repository talks to it over τ's
-documented JSON-RPC protocol, and spawns it as a child process.
+τ itself is not in this repository. `tau serve` is τ's daemon: it owns the
+sessions and streams them over a WebSocket to any number of clients. A browser
+tab, a VS Code panel and `tau --connect` attached to one session see one tree,
+and each can drive it.
 
 **Status: chat and the conversation tree both work end to end**, in the browser
 and in the editor, with Tab completion for `/commands` and `@files`. The editor
 integrations — jump-to-edit, diff views — are designed for but not built:
 `docs/ARCHITECTURE.md` §7.1 says what τ still computes and discards.
 
-Requires τ at **protocol 1.5** (τ 0.10.1, `pip install ffwf-tau`) for the tree
-browser and the extension request panel. `@file` completion, flow-driven
-commands and `/extensions` need 1.4 (τ 0.10.0). Built and tested against 1.6
-(τ 0.10.3), which is what the bundled runtime ships and what the `/` popup reads
-`hidden` from. Against an older τ each of those
-says which verb is missing rather than failing blankly, and the chat works
-regardless.
+Requires **τ 0.12.0** (`pip install 'ffwf-tau[serve]'`), the first release with
+`tau serve`. The client says which serve protocol it speaks in its first frame,
+and a daemon speaking another refuses it with a sentence naming both versions.
 
 ## Artifacts
 
 | Artifact | Build it with | What it is |
 |---|---|---|
 | `ffwf-tau-code-<version>.vsix` | `npm run package:vsix` | The editor extension |
-| `ffwf/tau-code:<version>` | `npm run package:image` | τ and the web client, in one container |
+| `ffwf/tau-code:<version>` | `npm run package:image` | `tau serve` and the web client, in one container |
 | `ffwf-tau-runtime-<version>-<target>.vsix` | `npm run package:runtime` | An optional CPython with τ in it, per platform |
 | this checkout | `npm install && npm run build` | All of the above, run from source |
 
@@ -36,11 +34,9 @@ here not built purely from this checkout. See `docs/ARCHITECTURE.md` §14.
 
 | Package | What it is | Runs where |
 |---|---|---|
-| `@ffwf/tau-code-protocol` | Generated types and a JSON-RPC client | anywhere |
-| `@ffwf/tau-code-runner` | Owns a `tau --mode rpc` child process | Node |
-| `@ffwf/tau-code-ui` | React components | anywhere |
-| `@ffwf/tau-code-server` | WebSocket server for browser clients | Node |
-| `@ffwf/tau-code-web` | The standalone browser client | browser |
+| `@ffwf/tau-code-protocol` | Generated types, a serve-protocol client, and the session replica | anywhere |
+| `@ffwf/tau-code-ui` | React components and the stores they read | anywhere |
+| `@ffwf/tau-code-web` | The standalone browser client, which `tau serve` hosts | browser |
 | `tau-code` (publisher `ffwf`) | The editor extension | VS Code |
 | `tau-runtime` (publisher `ffwf`) | An optional CPython with τ in it | VS Code |
 
@@ -53,15 +49,15 @@ is why it can be installed, removed and versioned without touching anything
 else.
 
 The dependency direction is one way. `@ffwf/tau-code-ui` imports no host: it is
-handed a `Transport` and does not learn whether it is a WebSocket or the
-webview's `postMessage` channel. That is what lets the same components run in
-the browser and in the editor.
+handed a way to open a `Transport` and does not learn whether it is a WebSocket
+or the webview's relay through the extension host. That is what lets the same
+components run in the browser and in the editor.
 
 ## Requirements
 
 - Node 20 or later.
-- τ installed, with its `tau` console script reachable. Set `TAU_BIN` if it is
-  not on `PATH`:
+- τ 0.12.0 or later with its `serve` extra, and its `tau` console script
+  reachable. Set `TAU_BIN` if it is not on `PATH`:
 
   ```bash
   export TAU_BIN=/path/to/agent-harness-py/venv/bin/tau
@@ -76,99 +72,82 @@ the browser and in the editor.
 
 ```bash
 npm install
-npm run generate     # reads the protocol from a live tau process
+npm run generate     # reads the protocol from the installed tau
 npm run build
 ```
 
-`npm run generate` spawns τ, sends one `get_capabilities` request, and writes
-`packages/protocol/src/generated.ts` from the answer. The wire is the source of
-truth; nothing in that file is hand-maintained. `npm run check:protocol` fails
-if the committed file and the installed τ disagree.
+`npm run generate` runs `tau serve --schema` and writes
+`packages/protocol/src/generated.ts` from the JSON Schema τ prints — every
+request, what each answers, every event and every entry. τ's protocol
+dataclasses are the source of truth; nothing in that file is hand-maintained.
+`npm run check:protocol` fails if the committed file and the installed τ
+disagree.
 
 ## Run the web client
 
+`tau serve` hosts it. Point `serve.web_root` in `~/.tau/config.json` at the
+built client, or pass it on the command line:
+
 ```bash
 npm run build --workspace @ffwf/tau-code-web
-node packages/server/dist/cli.js --cwd /path/to/your/project
+tau serve --web-root packages/web/dist-web
 ```
 
-The server prints an authenticated URL. Open it.
+Then open `http://127.0.0.1:8256/` (or whatever `serve.listen` says). The page
+and its socket are one origin, so the daemon's Origin check passes with nothing
+to configure.
 
-```
-  tau-code server is running.
-
-  Open this link:
-
-      http://127.0.0.1:8791/?token=6f1c...
-
-  Press Ctrl+C to stop.
-```
-
-A token is always required, including on loopback. `--bind 0.0.0.0` exposes the
-server to your network and prints a warning saying so; there is no TLS, so put a
-reverse proxy in front of it if the network is not one you control.
-
-### Sharing sessions with the τ TUI
-
-By default τ writes an RPC host's sessions to a private
-`<tmp>/.tau-<uid>/sessions`, so this client does not fill the session list you
-see in the TUI. **Those do not survive a reboot that clears the temp
-directory.** To share one store instead:
-
-```bash
-node packages/server/dist/cli.js --session-dir ~/.tau/sessions
-```
-
-or, in the extension, set `tau-code.sessionDir` to `~/.tau/sessions`.
-
-Resume then works in both directions — the picker in this client lists sessions
-the TUI wrote, and `tau --continue` resumes ones written here. See
-`docs/ARCHITECTURE.md` §5.2 for what was measured.
-
-`node packages/server/dist/cli.js --help` lists the rest.
+- **Sessions are the daemon's.** The picker lists every session in its store,
+  across every working directory, grouped by directory — the same list
+  `tau --connect` shows. A new session starts in the daemon's own working
+  directory unless you type another; a session is created when you send, not
+  when you open the page.
+- **A token is opt-in**, as it is for τ everywhere: set `serve.token` in τ's
+  config and open the page with `?token=...`. The page sends it in its first
+  frame; without one the daemon refuses and the page asks for it.
+- **Serving the page from somewhere else** — a Vite dev server on :5173, say —
+  needs that origin in `serve.allowed_origins`, and `?daemon=HOST:PORT` on the
+  page's URL to say where the daemon is.
 
 ## Run the container
 
-The container is the whole web instance in one artifact: Python runs τ, Node
-runs the connection server, and the browser gets the web client. Nothing has to
-be installed on the host except a container runtime.
+The container is the whole web instance in one artifact: `tau serve`, with the
+web client it hosts. Nothing has to be installed on the host except a container
+runtime, and there is no Node in it.
 
 ```bash
 npm run package:image                 # -> ffwf/tau-code:<version>
 
-docker run --rm -p 127.0.0.1:8791:8791 -v "$PWD:/work" \
+docker run --rm -p 127.0.0.1:8256:8256 -v "$PWD:/work" \
   -e TAU_MODEL_BASE_URL=http://host.docker.internal:8000/v1 \
   -e TAU_MODEL_NAME=your-model \
   ffwf/tau-code
 ```
 
-It prints the same authenticated URL the server always prints. Open it.
+Then open `http://127.0.0.1:8256/`.
 
 - **`-v "$PWD:/work"` is the working directory the agent's tools resolve
-  against.** Without it the agent can see nothing of yours. The image runs as
-  uid 1000; build with `--build-arg TAU_UID=$(id -u) --build-arg TAU_GID=$(id -g)`
+  against.** The daemon runs there, so new sessions start there. The image runs
+  as uid 1000; build with `--build-arg TAU_UID=$(id -u) --build-arg TAU_GID=$(id -g)`
   if that is not you.
 - **`TAU_MODEL_BASE_URL` is required**, unless you mount your own config at
-  `/home/node/.tau/config.json`. τ's first-run template points at
-  `localhost:8000`, which inside a container is wrong and wrong quietly — the
-  server would start and the first turn would fail. The entrypoint refuses
-  instead. `TAU_API_KEY` and `TAU_SYSTEM_PROMPT` are the other two knobs.
-- **The server binds `0.0.0.0` inside the container and says so in a warning.**
-  That warning describes the container's network, not yours: what is actually
-  exposed is set by `-p`. `-p 127.0.0.1:8791:8791` keeps it on your loopback.
-- **A remapped port breaks the printed link.** The server prints the port it
-  listens on (8791), not the one you published. Set `TAU_CODE_TOKEN` to a value
-  you choose and build the URL yourself. The token then shows up in
-  `docker inspect`.
-- Which τ is baked in is the `TAU_SPEC` build argument, `ffwf-tau==0.10.3` — the
-  protocol 1.6 release, so the image has every panel including the tree browser.
-  Build with `--build-arg TAU_SPEC=...` to pin another release or a path to a
-  local checkout. Never bump this default past what PyPI can resolve: a default
-  that does not install is a container nobody can build.
+  `/home/tau/.tau/config.json`. τ's first-run template points at
+  `localhost:8000`, which inside a container is wrong and wrong quietly. The
+  entrypoint refuses instead. `TAU_API_KEY` and `TAU_SYSTEM_PROMPT` are the
+  other two knobs.
+- **The daemon listens on `0.0.0.0` inside the container**; what is actually
+  exposed is set by `-p`. `-p 127.0.0.1:8256:8256` keeps it on your loopback. A
+  remapped port (`-p 9000:8256`) works: the daemon's Origin check compares a
+  page's origin with the host it dialled, not with the port it listens on.
+- Which τ is baked in is the `TAU_SPEC` build argument,
+  `ffwf-tau[serve]==0.12.0`. Until a release is on PyPI, build against local
+  wheels with `docker build --build-context tau-wheels=DIR .`, or
+  `TAU_WHEELS=DIR npm run package:image`.
 
 `docker build --target verify -t ffwf/tau-code-verify . && docker run --rm
-ffwf/tau-code-verify` starts τ inside the image and reads back its protocol
-version. It contacts no model. `npm run package:image` runs it for you.
+ffwf/tau-code-verify` starts the daemon inside the image, says hello at the
+protocol this client was generated against, and fetches the page. It contacts no
+model. `npm run package:image` runs it for you.
 
 ## Run the extension
 
@@ -177,8 +156,11 @@ npm run build --workspace packages/vscode
 code --extensionDevelopmentPath=packages/vscode
 ```
 
-Then open the τ view in the activity bar. Settings live under `tau-code.*`:
-`binary`, `model`, `provider`.
+Then open the τ view in the activity bar. The extension runs `tau serve -d`,
+which finds the daemon τ's config names or starts one, and every panel in the
+window connects to it. Settings live under `tau-code.*`: `runtime` and `binary`
+(which τ starts the daemon), `model` (the model a new session starts on), and
+`token` (for a daemon with `serve.token` set).
 
 To build an installable `.vsix` instead:
 
@@ -199,53 +181,49 @@ code --uninstall-extension tau-code.tau-code-vscode
 does not update the other. Installing a version that is already present is a
 no-op — bump `packages/vscode/package.json`, or pass `--force`.
 
-**The extension needs a folder or workspace open.** With none there is no honest
-working directory for the agent's tools, so it refuses to start and the panel
-says so.
+**New sessions start in the workspace folder** — the active file's folder in a
+multi-root workspace. The panel lists every session the daemon holds; with no
+folder open you can still open one of those, but there is no folder to start a
+new one in, and the composer says so.
 
 The extension declares `extensionKind: ["workspace"]`, so over SSH, in WSL, or
-in a devcontainer the agent runs where the code is while the panel renders
-locally. That split is the one thing the standalone web client cannot
-reproduce.
+in a devcontainer the daemon starts where the code is while the panel renders
+locally, and the extension host relays between them. That split is the one thing
+the standalone web client cannot reproduce. A daemon outlives the window that
+started it, so a window reload re-attaches to the session it was on — a turn
+that was running is still running.
 
 ## Verify
 
 ```bash
 npm run typecheck        # every package
-npm test                 # the store, the completion logic, and the tree rules
-npm run smoke            # spawn tau, negotiate, read state and tools
-npm run smoke:tree       # read a COPY of a real session's tree over the wire,
+npm test                 # the stores, the completion logic, and the tree rules
+npm run smoke            # start a throwaway tau serve, say hello, open a session
+npm run smoke:tree       # read a COPY of a real session's tree through the daemon,
                          # and run the row planner and fold reader over it
-npm run smoke:server     # auth, static serving, a WebSocket round trip,
-                         # and @file expansion end to end
 
-# With a server already running, load the page in real headless Chrome:
-npm run smoke:browser -- 'http://127.0.0.1:8791/?token=...' shot.png
+# With a daemon already serving the web client, load the page in real headless
+# Chrome:
+npm run smoke:browser -- 'http://127.0.0.1:8256/' shot.png
 
 # ...and drive Tab completion in it -- real key events, real popup, real tau.
-npm run smoke:completion -- 'http://127.0.0.1:8791/?token=...' shot.png
+npm run smoke:completion -- 'http://127.0.0.1:8256/' shot.png
 
 # ...and the tree browser: rows, zones, keys, the detail pane.
-npm run smoke:tree-ui -- 'http://127.0.0.1:8791/?token=...' shot.png
+npm run smoke:tree-ui -- 'http://127.0.0.1:8256/' shot.png
 
 # ...and the flow dialog and the extension panel.
-npm run smoke:panels -- 'http://127.0.0.1:8791/?token=...' shot.png
+npm run smoke:panels -- 'http://127.0.0.1:8256/' shot.png
 ```
 
-`smoke:tree` and `smoke:tree-ui` want a real session to read: point the server's
-`--session-dir` at a directory holding a **copy** of one, filed under the dashed
-form of the working directory (`--home-you-code--`). Both read only — no verb
-that appends is called — so neither can damage what it is pointed at.
-
-`smoke:server` submits one prompt and aborts it immediately, to check that the
-`@file` a user completed actually reaches the model as content. It does that
-against whatever model your config names, so it is one short local call rather
-than free. Nothing else here sends a prompt.
+`smoke` and `smoke:tree` start their own daemon in a throwaway HOME on a free
+port (`scripts/lib/daemon.mjs`), so neither touches `~/.tau`; `smoke:tree`
+copies the session it reads into that HOME. Neither sends a prompt.
 
 `npm run package` runs the version check, `typecheck`, `test` and
 `check:protocol` before it builds anything, and stops at the first failure.
 `check:protocol` is skipped, loudly, when no τ is reachable — it is the only one
-of the four that needs a live agent.
+of the four that needs τ installed.
 
 ## Publishing
 
@@ -360,33 +338,27 @@ TAU_RUNTIME_TARGETS='linux-x64 darwin-arm64 win32-x64' \
 npm run smoke:runtime                                    # drive the built payload
 ```
 
-It downloads a CPython from python-build-standalone, installs τ's RPC closure
-into it with `pip --platform`, prunes, and proves the result negotiates
-protocol 1.6 with none of your environment reaching it. Measured on linux-x64:
+It downloads a CPython from python-build-standalone, installs τ with its
+`serve` extra into it with `pip --platform`, prunes, and proves the result
+starts `tau serve` and answers hello, with none of your environment reaching
+it. Measured on linux-x64:
 78.3 MB extracted, 52.2 MB after pruning, **18.1 MB packaged**. Which τ it
 installs is `tauSpec` in `packages/runtime/package.json`, one copy, and the
 payload's `manifest.json` records what pip actually resolved.
 
 All nine of VS Code's desktop targets build from one Linux machine, because
-nothing here compiles: the only native wheel in the closure is `pydantic-core`,
-and it publishes one for every target. That is what CI does on a tag — see
+nothing here compiles: the two native wheels in the closure, `pydantic-core` and
+`websockets`, publish one for every target. That is what CI does on a tag — see
 [Releases](#releases) — so building nine by hand is for when you want them
 before there is a tag.
 
 ## Changing the model
 
 The model in the status bar opens a picker, in the extension and in the web
-client alike. It lists what `get_models` reports — every model name in tau's
-config, each resolved through the same component `set_model` itself calls — and
-a choice takes effect on the next turn. This client reads no config file.
-
-Two things the panel says rather than guesses, both from tau's own protocol
-notes. A config **name** is not a model **id**: `local-llm` can resolve to
-`qwen38-27B`, so the status bar shows the id that is running and the rows show
-the name you would ask for. And `get_models` does not flag which entry is
-active, because two names can alias one model and a startup `--model
-provider/id` has no config key at all — so the panel marks every name that
-matches, and when none does it says the running model cannot be returned to.
+client alike. It lists every model name in the daemon's config with the model
+each resolves to — a config **name** is not a model **id**: `local-llm` can
+resolve to `qwen38-27B`, and the rows show both. A switch applies to this
+panel's cursor, from its next turn; this client reads no config file.
 
 See `docs/ARCHITECTURE.md` §11.
 
@@ -496,14 +468,11 @@ Named here rather than discovered later:
   from the text.
 - **Jump-to-edit and diff views.** τ's tools compute the data and the agent loop
   discards it before a message is built.
-- **Live tool arguments.** They are not on the event stream, by design. During a
-  call the UI shows the tool's name and that it is running; the arguments arrive
-  with the pull at turn end.
-- **Backpressure.** The server does not bound a slow client's queue.
-- **Restarting the agent from the panel.** When there is no agent the panel says
-  why and names the command that fixes it; it does not run it. In VS Code that
-  is `tau: Restart Agent`; for the standalone server it is a restart of the
-  server process, which does not respawn τ on its own.
+- **Parallel turns from the panel.** A busy cursor queues what you send behind
+  the running turn. A second cursor for a parallel turn is on the wire
+  (`open_cursor`) and in the session store, and not yet a button.
+- **Stopping the daemon from the panel.** It outlives every window by design;
+  stop it the way you started it.
 
 `docs/ARCHITECTURE.md` has the detail, including what has to change in τ first.
 

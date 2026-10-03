@@ -1,119 +1,107 @@
-# tau-code as a container: a tau agent, served to a browser.
+# tau-code as a container: `tau serve`, with the web client it hosts.
 #
-# The image holds two runtimes, because that is what this is. Python runs tau
-# itself, installed from PyPI. Node runs the connection server, which owns the
-# `tau --mode rpc` child process and serves the web client to browsers.
+# The image is τ and a directory of static files. `tau serve` is the daemon
+# that owns the sessions, speaks the serve protocol on its port, and answers a
+# plain HTTP GET on the same port with the web client from --web-root -- so the
+# page and its socket are one origin and nothing else runs. Node builds the web
+# client and is not in the image.
 #
 #   docker build -t ffwf/tau-code .
-#   docker run --rm -p 127.0.0.1:8791:8791 -v "$PWD:/work" \
+#   docker run --rm -p 127.0.0.1:8256:8256 -v "$PWD:/work" \
 #     -e TAU_MODEL_BASE_URL=http://host.docker.internal:8000/v1 \
 #     ffwf/tau-code
 #
-# The container prints an authenticated URL. Open it.
+# Then open http://127.0.0.1:8256/.
 
-# The Node this image runs, which is a different decision from the Node that
-# builds the .vsix files -- that one is NODE_VERSION in the release workflow,
-# and it is 24 for the actions' sake. This one is 24 because bookworm-slim's
-# node:20 line stops getting security updates when Node 20 leaves maintenance,
-# and an image is a thing a user runs rather than a thing a build throws away.
-#
-# Both stages take it, and they take the same one on purpose: the server that
-# gets built and the server that gets run should not be two Nodes.
+# The Node that builds the web client. It is not shipped, so this is only a
+# build tool's version; it matches NODE_VERSION in the release workflow so the
+# image and the .vsix are built by one Node.
 ARG NODE_VERSION=24
+
+# ------------------------------------------------------------ τ wheels (opt.)
+# Empty unless the build is given a directory of wheels:
+#
+#   docker build --build-context tau-wheels=PATH/TO/WHEELS .
+#
+# Then `pip install` looks there before PyPI. This is how the image is built
+# against a τ that is not released yet -- a local `python -m build` of
+# agent-harness-py -- without a path to a checkout written into this file.
+FROM scratch AS tau-wheels
 
 # ---------------------------------------------------------------- build stage
 FROM node:${NODE_VERSION}-bookworm-slim AS build
 WORKDIR /src
 
-# package.json files first, so a source edit does not re-run npm ci.
+# package.json files first, so a source edit does not re-run npm ci. npm ci
+# wants every workspace's manifest, including the two this stage never builds.
 COPY package.json package-lock.json ./
 COPY packages/protocol/package.json packages/protocol/
-COPY packages/runner/package.json   packages/runner/
 COPY packages/ui/package.json       packages/ui/
 COPY packages/web/package.json      packages/web/
-COPY packages/server/package.json   packages/server/
+COPY packages/runtime/package.json  packages/runtime/
 COPY packages/vscode/package.json   packages/vscode/
 RUN npm ci
 
 COPY . .
-# `generate` is NOT run here: it needs a live tau, and generated.ts is committed
-# precisely so a build does not. `npm run check:protocol` is the guard against
-# that file drifting, and it belongs in the checkout, not in an image build.
-RUN npm run build
+# Only the web client and what it is built from. `generate` is NOT run here:
+# it needs a live τ, and generated.ts is committed precisely so a build does
+# not. `npm run check:protocol` is the guard against drift, in the checkout.
+RUN npx tsc --build packages/web \
+ && npm run build --workspace @ffwf/tau-code-web
 
 # -------------------------------------------------------------- runtime stage
-FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
-# Which tau. Bump this line when a release adds a verb this client uses, but
-# never past what PyPI can resolve: a default that does not install is an image
-# nobody can build.
+# Which τ. `[serve]` brings the WebSocket daemon. 0.12.0 is the first release
+# with `tau serve`; until it is on PyPI this pin does not resolve from there,
+# and the image builds only with --build-context tau-wheels (above).
 #
-# 0.10.3 speaks protocol 1.6, which is every verb this client calls -- the
-# conversation tree browser (get_tree, get_entry) and the extension request
-# panel (get_pending_request, answer_request) included. It is what
-# packages/protocol/src/generated.ts is generated from, so this pin and that
-# file agree by construction; `npm run check:protocol` is what proves it.
-#
-# It is also the same release packages/runtime pins. Those two move together:
-# two artifacts shipping two taus is how a client ends up tested against
-# neither.
-ARG TAU_SPEC=ffwf-tau==0.10.3
+# packages/runtime pins the same release. Those two move together: two
+# artifacts shipping two τs is how a client ends up tested against neither.
+ARG TAU_SPEC=ffwf-tau[serve]==0.12.0
 
 # The agent's tools resolve against a bind-mounted /work, so the container user
-# has to match the host user who owns it. -o allows a duplicate id; the node
-# image already has a user at 1000, which is why this modifies rather than adds.
+# has to match the host user who owns it.
 ARG TAU_UID=1000
 ARG TAU_GID=1000
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-venv \
- && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,from=tau-wheels,target=/wheels \
+    python -m venv /opt/tau \
+ && /opt/tau/bin/pip install --no-cache-dir --find-links /wheels "${TAU_SPEC}"
 
-RUN python3 -m venv /opt/tau \
- && /opt/tau/bin/pip install --no-cache-dir "${TAU_SPEC}"
-
-RUN groupmod -o -g "${TAU_GID}" node \
- && usermod  -o -u "${TAU_UID}" -g "${TAU_GID}" node \
+RUN groupadd -o -g "${TAU_GID}" tau \
+ && useradd -o -m -u "${TAU_UID}" -g "${TAU_GID}" -d /home/tau tau \
  && mkdir -p /work \
- && chown -R "${TAU_UID}:${TAU_GID}" /work /home/node
+ && chown -R "${TAU_UID}:${TAU_GID}" /work
 
-# Only the server's runtime closure, laid out as node_modules so Node's own
-# resolution finds it: /app/node_modules is on the walk-up path from
-# .../tau-code-server/dist. ws is the one third-party dependency; react and vite
-# built the web client and are not needed to serve it.
-COPY --from=build /src/node_modules/ws                /app/node_modules/ws
-COPY --from=build /src/packages/protocol/dist         /app/node_modules/@ffwf/tau-code-protocol/dist
-COPY --from=build /src/packages/protocol/package.json /app/node_modules/@ffwf/tau-code-protocol/
-COPY --from=build /src/packages/runner/dist           /app/node_modules/@ffwf/tau-code-runner/dist
-COPY --from=build /src/packages/runner/package.json   /app/node_modules/@ffwf/tau-code-runner/
-COPY --from=build /src/packages/server/dist           /app/node_modules/@ffwf/tau-code-server/dist
-COPY --from=build /src/packages/server/dist-web       /app/node_modules/@ffwf/tau-code-server/dist-web
-COPY --from=build /src/packages/server/package.json   /app/node_modules/@ffwf/tau-code-server/
+COPY --from=build /src/packages/web/dist-web /opt/tau-code/web
 
-ENV HOME=/home/node \
-    TAU_BIN=/opt/tau/bin/tau \
-    TAU_CODE_SERVER=/app/node_modules/@ffwf/tau-code-server/dist/cli.js \
-    NODE_ENV=production
+ENV HOME=/home/tau \
+    PATH=/opt/tau/bin:$PATH \
+    TAU_CODE_WEB=/opt/tau-code/web
 
 COPY docker/write-config.sh /usr/local/bin/tau-code-config
 COPY docker/entrypoint.sh   /usr/local/bin/tau-code-entrypoint
 
-USER node
+USER tau
 WORKDIR /work
-EXPOSE 8791
+EXPOSE 8256
 ENTRYPOINT ["/usr/local/bin/tau-code-entrypoint"]
 CMD []
 
 # --------------------------------------------------------------- verify stage
-# Proves the image can start tau and speak the protocol. No model is contacted,
-# but tau still refuses to start without one configured, so this stage bakes an
-# address nothing listens on -- which is honest, because nothing calls it.
+# Proves the image serves: the daemon starts, says hello at the protocol
+# version this client was generated against, and serves the web client's page
+# on the same port. No model is contacted, but τ refuses to start without one
+# configured, so this stage bakes an address nothing listens on -- which is
+# honest, because nothing calls it.
 #
 #   docker build --target verify -t ffwf/tau-code-verify . \
 #     && docker run --rm ffwf/tau-code-verify
 FROM runtime AS verify
-COPY docker/verify.mjs /app/verify.mjs
+COPY packages/protocol/src/generated.ts /opt/tau-code/generated.ts
+COPY docker/verify.py /opt/tau-code/verify.py
 ENV TAU_MODEL_BASE_URL=http://127.0.0.1:1/v1 \
     TAU_MODEL_NAME=unused-by-verify
 ENTRYPOINT []
-CMD ["sh", "-c", "tau-code-config && node /app/verify.mjs"]
+CMD ["sh", "-c", "tau-code-config && python /opt/tau-code/verify.py"]

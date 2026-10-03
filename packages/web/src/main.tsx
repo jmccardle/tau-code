@@ -1,27 +1,22 @@
-import { StrictMode, useMemo } from 'react';
+import { StrictMode, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Transport } from '@ffwf/tau-code-protocol';
-import { Chat, useConversation, useTauConnection } from '@ffwf/tau-code-ui';
+import { Chat, useDaemon } from '@ffwf/tau-code-ui';
 import '@ffwf/tau-code-ui/styles.css';
 import './app.css';
-import { WebSocketTransport, socketUrlFromLocation } from './ws-transport.js';
+import { WebSocketTransport, socketUrlFromLocation, tokenFromLocation } from './ws-transport.js';
 
 function App(): JSX.Element {
-  // Built once, on purpose. A transport rebuilt on each render would open a
-  // socket per render, and `useTauConnection` keys its effect on this identity.
-  const transport = useMemo<Transport>(() => new WebSocketTransport(socketUrlFromLocation()), []);
-  const { client, conversation, phase, detail, capabilities } = useTauConnection(transport);
-  const state = useConversation(conversation);
+  // Stable on purpose: `useDaemon` keys its link on this identity, and each
+  // call opens a socket -- which is what a reconnect wants and a render does not.
+  const open = useCallback((): Transport => new WebSocketTransport(socketUrlFromLocation()), []);
+  const { daemon, state } = useDaemon(open, 'tau-code-web', tokenFromLocation());
 
   return (
     <Chat
-      client={client}
-      conversation={conversation}
-      phase={phase}
-      detail={detail}
-      state={state}
-      capabilities={capabilities}
-      disconnectedHint="The connection server holds the agent's output; its terminal has the rest."
+      daemon={daemon}
+      daemonState={state}
+      disconnectedHint="`tau serve` logs to its terminal, or to ~/.tau/serve.log when started with -d."
     />
   );
 }

@@ -5,16 +5,17 @@
  * `smoke-tree.mjs` drives them over the real wire. What this checks is the layer
  * neither of those reaches: that the rows actually MOUNT, that the keys are
  * bound, that a zone reaches an element's class list, and that the detail pane
- * fills from `get_entry`. Every one of those has been the thing that was broken
+ * fills from the replica. Every one of those has been the thing that was broken
  * while the logic underneath was right.
  *
  * Reads only -- no verb that appends is called -- so it costs no API credits and
  * cannot damage the session it is pointed at.
  *
- *   node scripts/smoke-tree-ui.mjs 'http://127.0.0.1:8791/?token=...' [shot.png]
+ *   node scripts/smoke-tree-ui.mjs 'http://127.0.0.1:8256/' [shot.png]
  *
- * Start the server with `--session-dir` pointing at a directory holding a COPY
- * of a real session, filed under this cwd's dashed-path key.
+ * Point it at a `tau serve` whose store holds a COPY of a real session -- a
+ * daemon started with a throwaway HOME, with the copy filed under
+ * `~/.tau/sessions/<the session cwd's dashed-path key>/`.
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -156,7 +157,7 @@ try {
   if (!biggest || biggest.messages === 0) {
     throw new Error(
       `no session in the picker has any messages: ${JSON.stringify(rows.map((r) => r.text))}. ` +
-        `Point the server's --session-dir at a directory holding a COPY of a real session, ` +
+        `Point it at a daemon whose store holds a COPY of a real session, ` +
         `filed under this cwd's dashed-path key.`,
     );
   }
@@ -167,7 +168,7 @@ try {
   await new Promise((r) => setTimeout(r, 2500));
 
   const entries = await evaluate(`document.querySelectorAll('.tau-entry').length`);
-  check('the transcript filled from get_messages', entries > 0, `${entries} entries`);
+  check('the transcript filled from the replica', entries > 0, `${entries} entries`);
 
   // ── open the tree ───────────────────────────────────────────────────
   console.log('\n=== the tree browser ===');
@@ -211,7 +212,7 @@ try {
   // ── the detail pane ─────────────────────────────────────────────────
   console.log('\n=== the detail pane ===');
   check('the pane is beside the tree', view.pane === true);
-  check('it filled from get_entry', view.paneBoxes > 0, `${view.paneBoxes} boxes`);
+  check('it filled from the replica', view.paneBoxes > 0, `${view.paneBoxes} boxes`);
   const paneText = await evaluate(
     `document.querySelector('.tau-tree-detail-selected .tau-pre')?.textContent ?? ''`,
   );

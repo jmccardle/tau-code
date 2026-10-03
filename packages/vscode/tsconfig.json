@@ -16,5 +16,5 @@
     "emitDeclarationOnly": true
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../protocol" }, { "path": "../runner" }, { "path": "../ui" }]
+  "references": [{ "path": "../protocol" }, { "path": "../ui" }]
 }

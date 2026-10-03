@@ -1,86 +1,54 @@
 import { randomBytes } from 'node:crypto';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import * as vscode from 'vscode';
-import { LineFramer, relayRefusal } from '@ffwf/tau-code-protocol';
-import { TauProcess } from '@ffwf/tau-code-runner';
-import { describe, tauRuntime, versionMismatch } from './runtime.js';
-
-/** A sentence from the host, drawn above the transcript. See `runtime.ts`. */
-interface HostNotice {
-  id: string;
-  level: 'info' | 'warn';
-  text: string;
-  action?: { label: string; command: string; argument?: string };
-}
-
-/** Expand a leading `~` in a configured path. Returns undefined for empty. */
-function expandHome(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  if (value === '~') return homedir();
-  if (value.startsWith('~/')) return join(homedir(), value.slice(2));
-  return value;
-}
+import WebSocket from 'ws';
+import { CLOSE_NOTHING_TO_DIAL } from '@ffwf/tau-code-protocol';
+import { findDaemon, forgetDaemon, NoDaemon, socketUrl } from './daemon.js';
+import { versionMismatch, type TauResolution } from './runtime.js';
+import type { FromWebview, HostNotice, ToWebview, WebviewContext } from './webview/messages.js';
 
 /**
- * One agent, bound to one webview.
+ * One webview's link to `tau serve`, relayed through the extension host.
  *
- * The extension host owns the tau process and speaks stdio to it. The webview
- * speaks the SAME JSON-RPC over `postMessage`, so `@ffwf/tau-code-ui` runs
- * unchanged
- * here and in the browser -- the only difference is which `Transport` it is
- * handed. This is why the shared UI never imports `acquireVsCodeApi`.
+ * The webview cannot dial the daemon itself: under Remote SSH, WSL or a
+ * devcontainer it renders on the user's machine while the daemon runs next to
+ * the files, and even locally a webview's origin is not one the daemon would
+ * accept. So the host dials -- from Node, which sends no Origin header -- and
+ * moves frames both ways without reading them.
  *
- * The bridge is a relay and not a client: it does not parse or interpret the
- * messages, it moves them. Request ids belong to the webview and come back
- * untouched, so there is no id rewriting here (unlike the server's Hub, which
- * has several browser clients to keep apart).
+ * ## Connections, not a connection
  *
- * **One session per webview.** The sidebar view and each editor tab get their
- * own tau process and therefore their own conversation. That is deliberate:
- * sharing one process between two webviews would mean two writers on one
- * conversation, which tau's own rule forbids. The cost is that opening a tab
- * while the sidebar is open gives you two agents in the same working directory
- * -- which is a legitimate workflow, and is why the status bar names the
- * session.
+ * The webview asks for a connection (`open`, numbered) and gets frames tagged
+ * with that number until it closes. A reconnect is a new number, so a frame
+ * from a socket the webview has already given up on can never be mistaken for
+ * one from its replacement.
+ *
+ * ## A request is answered, never dropped
+ *
+ * The client in the webview waits on requests with no deadline, because a turn
+ * takes as long as it takes. A relay that dropped a request would leave it
+ * waiting forever. So when there is nothing to dial, the relay CLOSES the
+ * connection with the reason -- which rejects every pending request with that
+ * sentence -- and uses `CLOSE_NOTHING_TO_DIAL`, so the webview knows a retry
+ * would give the same answer until the user changes something.
+ *
+ * **Many panels, one daemon, shared sessions.** Unlike the RPC child each
+ * panel used to own, the daemon holds the sessions; two panels on the same
+ * session both see it and both can drive it, as the TUI under `--connect` can.
  */
-export class TauSession implements vscode.Disposable {
-  #proc: TauProcess | null = null;
-  #framer: LineFramer | null = null;
+export class DaemonRelay implements vscode.Disposable {
   #webview: vscode.Webview;
+  /**
+   * Every connection the webview has asked for and not closed. `socket` is
+   * null while the daemon is being found and dialled; frames that arrive then
+   * wait in `queue`, because the webview says `hello` in the same tick it asks
+   * for the connection.
+   */
+  #connections = new Map<number, { socket: WebSocket | null; queue: string[] }>();
   #disposed = false;
-  /**
-   * Why there is no agent, as a sentence, or null while one is running.
-   *
-   * DURABLE, and that is the whole point. `#tellWebview` is a one-shot message
-   * into a document that, at `start()` time, has not loaded yet -- so every
-   * refusal announced that way was posted to nobody, and the panel sat on
-   * `connecting` while the log held the reason. Holding the reason instead
-   * means the webview gets it whenever it asks, which is the first thing it
-   * does.
-   */
-  #stopped: string | null = null;
-  /**
-   * Settled once `start()` has finished deciding and spawning.
-   *
-   * Resolving which tau to run costs up to two `--version` subprocesses, so
-   * `start()` is asynchronous while the webview it belongs to is already live
-   * and may send. `#toTau` awaits this before doing anything, which turns a
-   * race into a queue -- messages are relayed in the order they arrived, after
-   * the process they are addressed to exists.
-   */
-  #starting: Promise<void> | null = null;
-  /**
-   * Notices waiting for a webview that can hear them.
-   *
-   * Same durability problem `#stopped` solves, and the same shape of answer.
-   * These are computed during `start()`, which finishes before the webview
-   * document has loaded, so posting them immediately posts them to nobody. They
-   * are flushed on the first message the webview sends, which is proof it is
-   * listening.
-   */
+  /** Notices from the last daemon lookup, re-sent to a reloaded page. */
   #notices: HostNotice[] = [];
-  #flushed = false;
+  /** Which τ this window would start, from the last lookup. */
+  #resolution: TauResolution | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -91,22 +59,16 @@ export class TauSession implements vscode.Disposable {
     this.#webview = webview;
     webview.options = {
       enableScripts: true,
-      // The webview may load only what this extension ships. Nothing else is
-      // reachable, which is what makes the strict CSP enforceable.
       localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist-webview')],
     };
+    webview.onDidReceiveMessage((message: FromWebview) => this.#fromWebview(message));
     webview.html = this.html();
-    webview.onDidReceiveMessage((message: unknown) => void this.#toTau(message));
   }
 
-  /** The directory the agent's tools resolve relative paths against. */
+  /** The directory new sessions are created in: the active file's folder, else the first. */
   static workingDirectory(): string | null {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return null;
-
-    // With one folder open the answer is obvious. With several, the folder
-    // containing the active editor's file is the one the user is looking at;
-    // falling straight to folders[0] would silently pick a different project.
     const active = vscode.window.activeTextEditor?.document.uri;
     if (active) {
       const owner = vscode.workspace.getWorkspaceFolder(active);
@@ -115,247 +77,199 @@ export class TauSession implements vscode.Disposable {
     return folders[0]?.uri.fsPath ?? null;
   }
 
-  start(): void {
-    if (this.#proc || this.#starting) return;
-    this.#starting = this.#start().finally(() => {
-      this.#starting = null;
+  /** Close every connection and reload the page, which dials again. */
+  restart(): void {
+    forgetDaemon();
+    this.#closeAll('restarting');
+    this.#webview.html = this.html();
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#closeAll('the panel closed');
+  }
+
+  #post(message: ToWebview): void {
+    void this.#webview.postMessage(message);
+  }
+
+  #fromWebview(message: FromWebview): void {
+    switch (message.tauCode) {
+      case 'open':
+        this.#connections.set(message.connection, { socket: null, queue: [] });
+        void this.#open(message.connection);
+        return;
+      case 'frame': {
+        const connection = this.#connections.get(message.connection);
+        const text = JSON.stringify(message.frame);
+        if (connection?.socket?.readyState === WebSocket.OPEN) {
+          connection.socket.send(text);
+          return;
+        }
+        if (connection && (connection.socket === null || connection.socket.readyState === WebSocket.CONNECTING)) {
+          connection.queue.push(text);
+          return;
+        }
+        // A frame for a connection that is gone is a request that would never
+        // be answered. Close that connection, so the client rejects it.
+        this.#post({
+          tauCode: 'closed',
+          connection: message.connection,
+          reason: 'The connection to tau serve is not open.',
+          code: null,
+        });
+        return;
+      }
+      case 'close': {
+        const connection = this.#connections.get(message.connection);
+        this.#connections.delete(message.connection);
+        connection?.socket?.close(1000, 'client closed');
+        return;
+      }
+      case 'command':
+        void vscode.commands.executeCommand(message.command, ...(message.argument === undefined ? [] : [message.argument]));
+        return;
+      case 'daemon':
+        this.#compareDaemon(message.version, message.pid);
+        return;
+    }
+  }
+
+  async #open(connection: number): Promise<void> {
+    let url: string;
+    try {
+      const found = await findDaemon(this.output);
+      this.#noticesFor(found.resolution);
+      url = socketUrl(found.start.address);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.output.error(`[${this.label}] ${reason}`);
+      if (error instanceof NoDaemon && error.resolution && !error.resolution.chosen) {
+        this.#notices = [
+          {
+            id: 'tau-missing',
+            level: 'warn',
+            text: reason,
+            action: { label: 'Install the runtime extension', command: 'tau-code.installRuntime' },
+          },
+        ];
+        this.#flushNotices();
+      }
+      this.#connections.delete(connection);
+      this.#post({ tauCode: 'closed', connection, reason, code: CLOSE_NOTHING_TO_DIAL });
+      return;
+    }
+    const entry = this.#connections.get(connection);
+    // The webview gave up on this connection while the daemon was being found.
+    if (this.#disposed || !entry) return;
+
+    const socket = new WebSocket(url, { maxPayload: 0 });
+    entry.socket = socket;
+    let opened = false;
+
+    socket.on('open', () => {
+      opened = true;
+      this.output.info(`[${this.label}] connection ${connection} open to ${url}`);
+      for (const text of entry.queue.splice(0)) socket.send(text);
+    });
+    socket.on('message', (data, isBinary) => {
+      if (isBinary) {
+        this.output.warn(`[${this.label}] the daemon sent a binary frame; dropped.`);
+        return;
+      }
+      let frame: unknown;
+      try {
+        frame = JSON.parse(data.toString());
+      } catch {
+        this.output.error(`[${this.label}] the daemon sent an unparseable frame: ${data.toString().slice(0, 400)}`);
+        return;
+      }
+      this.#post({ tauCode: 'frame', connection, frame });
+    });
+    socket.on('error', (error) => {
+      this.output.warn(`[${this.label}] connection ${connection}: ${error.message}`);
+    });
+    socket.on('close', (code, reasonBuffer) => {
+      if (this.#connections.get(connection)?.socket !== socket) return; // closed by the webview
+      this.#connections.delete(connection);
+      if (!opened) {
+        // The address went stale: the daemon stopped since it was found. Ask
+        // τ again on the next open, which starts one if none answers.
+        forgetDaemon();
+      }
+      const reason = opened
+        ? `tau serve closed the connection (code ${code}${reasonBuffer.length ? `: ${reasonBuffer.toString()}` : ''}).`
+        : `Could not connect to tau serve at ${url}.`;
+      this.#post({ tauCode: 'closed', connection, reason, code });
     });
   }
 
-  async #start(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('tau-code');
-    const model = config.get<string>('model')?.trim();
-    const provider = config.get<string>('provider')?.trim();
-    // `~` is not expanded by the shell here -- tau is spawned directly, with no
-    // shell in between -- so the setting would land as a literal `~` directory
-    // in the workspace. Expanding it is the difference between the setting
-    // working as written and silently creating a folder called `~`.
-    const sessionDir = expandHome(config.get<string>('sessionDir')?.trim());
-    const cwd = TauSession.workingDirectory();
+  /**
+   * Say so when the daemon answering is not the τ this window would start.
+   *
+   * `tau serve -d` reuses a daemon that is already running, whichever τ
+   * started it -- last week's PATH install, say, while the bundled runtime is
+   * newer. That is the right behaviour (one daemon per store), and it is
+   * exactly the "two τs" case the banner exists for, so it is reported against
+   * the τ that is actually serving rather than the one that was resolved.
+   */
+  #compareDaemon(version: string, pid: number): void {
+    const chosen = this.#resolution?.chosen;
+    if (!chosen || chosen.version === null || chosen.version === version) return;
+    const notice: HostNotice = {
+      id: `tau-daemon-${version}-${chosen.version}`,
+      level: 'warn',
+      text:
+        `The daemon serving this panel is τ ${version} (pid ${pid}), which was already running. ` +
+        `This window would have started τ ${chosen.version}, from ${chosen.where}. ` +
+        `Stop that daemon to switch; the next panel starts the other one.`,
+    };
+    this.#notices = [...this.#notices.filter((old) => !old.id.startsWith('tau-daemon-')), notice];
+    this.output.warn(`[${this.label}] ${notice.text}`);
+    this.#flushNotices();
+  }
 
-    if (!cwd) {
-      // Fail Early: with no folder open there is no honest working directory,
-      // and starting in whatever directory the editor happened to launch from
-      // would let the agent write somewhere the user never chose.
-      //
-      // Recorded rather than posted. The webview does not exist yet, so a
-      // message would be lost; `#toTau` hands this sentence back on the first
-      // request instead.
-      this.#stopped =
-        'No folder is open, so there is no working directory for the agent. ' +
-        'Open a folder or workspace, then run "tau: Restart Agent".';
-      this.output.warn('Refused to start: no workspace folder is open.');
-      return;
-    }
-
-    // Which tau, and what else was there. Both, because picking between two
-    // installed taus without saying so is the one thing this client can get
-    // wrong in a way the user has no way to see.
-    const resolution = await tauRuntime(this.output);
-    this.output.info(`[${this.label}] ${describe(resolution)}`);
-
-    if (!resolution.chosen) {
-      this.#stopped = resolution.problem ?? 'No tau was found.';
-      this.output.error(`Refused to start: ${this.#stopped}`);
-      this.#notices = [
-        {
-          id: 'tau-missing',
-          level: 'warn',
-          text: this.#stopped,
-          action: { label: 'Install the runtime extension', command: 'tau-code.installRuntime' },
-        },
-      ];
-      return;
-    }
-
+  #noticesFor(resolution: TauResolution): void {
+    this.#resolution = resolution;
     const mismatch = versionMismatch(resolution);
     this.#notices = mismatch
       ? [
           {
-            id: `tau-version-${resolution.chosen.version ?? '?'}-${resolution.other?.version ?? '?'}`,
+            id: `tau-version-${resolution.chosen?.version ?? '?'}-${resolution.other?.version ?? '?'}`,
             level: 'warn',
             text: mismatch,
             action: { label: 'Choose', command: 'tau-code.chooseRuntime' },
           },
         ]
       : [];
-
-    const proc = new TauProcess({
-      bin: resolution.chosen.command,
-      ...(resolution.chosen.args.length > 0 ? { baseArgs: resolution.chosen.args } : {}),
-      cwd,
-      ...(model ? { model } : {}),
-      ...(provider ? { provider } : {}),
-      ...(sessionDir ? { sessionDir } : {}),
-    });
-
-    this.#framer = new LineFramer(
-      (value) => {
-        void this.#webview.postMessage(value);
-      },
-      (line) => this.output.error(`tau sent an unparseable line: ${line.slice(0, 400)}`),
-    );
-
-    try {
-      proc.start((chunk) => this.output.append(chunk));
-    } catch (error) {
-      this.#report(error);
-      return;
-    }
-
-    proc.child.stdout.on('data', (chunk: string) => this.#framer?.push(chunk));
-
-    void proc.waitForExit().then((exit) => {
-      if (this.#disposed) return;
-      const how = exit.signal !== null ? `killed by ${exit.signal}` : `exited with code ${exit.code}`;
-      // Only the CURRENT process gets to say the agent is gone. A restart stops
-      // the old one and this handler is still attached to it, so without the
-      // guard the corpse announces its own death onto the page that replaced it
-      // -- and it lands during that page's boot, before the client has attached
-      // anything, where `VsCodeTransport` used to lose it and then refuse to
-      // send. The panel sat on "connecting" until the window was reloaded. The
-      // transport no longer loses a close; this is why one is not sent.
-      if (this.#proc !== proc) {
-        this.output.info(`[${this.label}] the previous tau ${how}.`);
-        return;
-      }
-      this.output.warn(`[${this.label}] tau ${how}`);
-      // Both: the message reaches a webview that is certainly alive by now, and
-      // the record answers anything it sends afterwards.
-      this.#stopped = `tau ${how}. Run "tau: Restart Agent" to start it again.`;
-      this.#tellWebview(this.#stopped);
-    });
-
-    this.#stopped = null;
-    this.#proc = proc;
-    this.output.info(`[${this.label}] tau started in ${cwd} (pid ${proc.pid ?? '?'}): ${proc.argv.join(' ')}`);
+    this.#flushNotices();
   }
 
-  /** Stop the agent and start a new one, on a fresh page. */
-  restart(): void {
-    void this.#stop().then(() => {
-      if (this.#disposed) return;
-      // A fresh page, so the webview's client renegotiates from nothing rather
-      // than holding state from a process that no longer exists.
-      this.#webview.html = this.html();
-      // A fresh page has heard nothing, so whatever `start()` decides this time
-      // has to be said again. Without this the banner appears once per window
-      // and never after a restart -- which is exactly when a user who has just
-      // installed or removed a tau is looking for it.
-      this.#flushed = false;
-      this.start();
-    });
+  #flushNotices(): void {
+    for (const notice of this.#notices) this.#post({ tauCode: 'notice', notice });
   }
 
-  dispose(): void {
-    this.#disposed = true;
-    void this.#stop();
-  }
-
-  async #toTau(message: unknown): Promise<void> {
-    // The webview is live before `start()` has finished choosing a tau, so this
-    // waits rather than refusing something that is about to exist. Awaiting one
-    // shared promise also keeps the order: every message queued here is relayed
-    // in the order it arrived.
-    if (this.#starting) await this.#starting;
-
-    // The first thing the webview sends is proof it is listening, which is the
-    // earliest moment a notice posted to it would actually be seen.
-    if (!this.#flushed) {
-      this.#flushed = true;
-      for (const notice of this.#notices) {
-        void this.#webview.postMessage({
-          jsonrpc: '2.0',
-          method: 'tau_code/notice',
-          params: notice,
-        });
-      }
-    }
-
-    // A notice's button. The webview names a command and the host runs it,
-    // because a webview cannot reach the command palette itself.
-    //
-    // An ALLOWLIST, not a pass-through. The webview runs our code behind a
-    // strict CSP and is not an attacker today, but "the webview may execute any
-    // editor command" is a capability nothing here needs, and the cost of not
-    // granting it is this array.
-    const method =
-      typeof message === 'object' && message !== null
-        ? (message as Record<string, unknown>)['method']
-        : undefined;
-    if (method === 'tau-code.chooseRuntime' || method === 'tau-code.installRuntime') {
-      void vscode.commands.executeCommand(method);
-      return;
-    }
-
-    const proc = this.#proc;
-    if (!proc || !proc.running) {
-      // A request is answered, never dropped: this relay is the only thing that
-      // knows why tau is not there, and a pending request never fails on its
-      // own. See `relayRefusal`.
-      const refusal = relayRefusal(
-        message,
-        this.#stopped ?? 'The agent is not running. Run "tau: Restart Agent" to start it.',
-      );
-      if (refusal) {
-        void this.#webview.postMessage(refusal);
-        return;
-      }
-      this.output.warn(`[${this.label}] a webview notification arrived with no running tau; dropped.`);
-      return;
-    }
-    proc.child.stdin.write(JSON.stringify(message) + '\n');
-  }
-
-  async #stop(): Promise<void> {
-    const proc = this.#proc;
-    this.#proc = null;
-    this.#framer = null;
-    if (proc) await proc.stop();
-  }
-
-  /**
-   * Tell the webview the connection is gone.
-   *
-   * A stdio transport has no close frame, so the host says so out of band and
-   * `VsCodeTransport` turns it into the client's `close`. Without this the
-   * webview sits on a dead process looking healthy.
-   */
-  #tellWebview(reason: string): void {
-    void this.#webview.postMessage({
-      jsonrpc: '2.0',
-      method: 'tau_code/process_exit',
-      params: { reason },
-    });
-  }
-
-  #report(error: unknown): void {
-    const detail = error instanceof Error ? error.message : String(error);
-    this.output.error(detail);
-    // Recorded, not posted: a spawn failure happens in the same tick as
-    // `start()`, so the webview is not listening yet. This is the case where
-    // `tau-code.binary` names something that is not on PATH.
-    this.#stopped = `tau could not start: ${detail}`;
-    void vscode.window
-      .showErrorMessage(`tau could not start: ${detail}`, 'Show log', 'Open settings')
-      .then((choice) => {
-        if (choice === 'Show log') this.output.show();
-        if (choice === 'Open settings') {
-          void vscode.commands.executeCommand('workbench.action.openSettings', 'tau-code.binary');
-        }
-      });
+  #closeAll(reason: string): void {
+    const connections = [...this.#connections.values()];
+    this.#connections.clear();
+    for (const { socket } of connections) socket?.close(1000, reason);
   }
 
   html(): string {
     const asset = (name: string): vscode.Uri =>
-      this.#webview.asWebviewUri(
-        vscode.Uri.joinPath(this.context.extensionUri, 'dist-webview', name),
-      );
+      this.#webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'dist-webview', name));
     const nonce = randomBytes(16).toString('base64');
+    const config = vscode.workspace.getConfiguration('tau-code');
+    const context: WebviewContext = {
+      cwd: DaemonRelay.workingDirectory(),
+      model: config.get<string>('model')?.trim() || null,
+      token: config.get<string>('token')?.trim() || null,
+    };
 
     // `default-src 'none'` and then only what is genuinely needed. Styles need
     // 'unsafe-inline' because the editor injects its theme variables as an
-    // inline style block; scripts do not, so they are nonce-gated.
+    // inline style block; scripts do not, so they are nonce-gated. There is no
+    // `connect-src`: the webview opens no socket, the host does.
     const csp = [
       `default-src 'none'`,
       `img-src ${this.#webview.cspSource} data:`,
@@ -376,9 +290,13 @@ export class TauSession implements vscode.Disposable {
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root" data-context="${escapeAttribute(JSON.stringify(context))}"></div>
     <script nonce="${nonce}" type="module" src="${asset('webview.js').toString()}"></script>
   </body>
 </html>`;
   }
+}
+
+function escapeAttribute(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }

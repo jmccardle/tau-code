@@ -2,14 +2,14 @@
 /**
  * End-to-end smoke test for the tree browser, against a REAL session.
  *
- * Drives `get_tree` and `get_entry` over the wire and runs this client's own
- * row planner, fold reader and mark expansion over the answer. Reads only --
- * every mutating verb is left alone -- so it costs no tokens, needs no
- * reachable model, and cannot damage the session it reads.
+ * Drives `get_tree` over the wire and runs this client's own row planner,
+ * fold reader and mark expansion over the answer, and reads entry bodies from
+ * the replica the way the detail pane does. Reads only -- every mutation is
+ * left alone -- so it costs no tokens, needs no reachable model, and cannot
+ * damage the session it reads.
  *
- * It works on a COPY. tau resolves a session by cwd, so the copy is placed in a
- * scratch session directory under the same cwd key and tau is started with
- * `--session-dir` pointing at it. The original is never opened.
+ * It works on a COPY, in a throwaway daemon's store (scripts/lib/daemon.mjs).
+ * The original is never opened.
  *
  * Synthetic fixtures cannot replace this. The shapes that make the browser worth
  * having -- a `navigate` between an answer and the turn forked off it, a
@@ -21,18 +21,17 @@
  *
  * With no argument it picks the largest session under ~/.tau/sessions.
  */
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
-import { TauClient } from '../packages/protocol/dist/index.js';
-import { TauProcess, StdioTransport } from '../packages/runner/dist/index.js';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { Replica } from '../packages/protocol/dist/index.js';
+import { check, connect, startDaemon } from './lib/daemon.mjs';
 import {
   foldAt,
-  loadTree,
   marksSummary,
   planElide,
   planRows,
   toolGroup,
+  treeOf,
 } from '../packages/ui/dist/tree.js';
 
 const HOME_SESSIONS = join(process.env.HOME ?? '', '.tau', 'sessions');
@@ -58,56 +57,35 @@ if (!picked) {
   process.exit(1);
 }
 
-// The copy is filed under THIS process's cwd, not the session's original one:
-// tau's catalog is scoped by cwd, so a copy filed under the directory it came
-// from would not be listed here and the switch below would land somewhere else.
-// The key is `session_dir_for_cwd`: `--` + the absolute path with its leading
-// separator stripped and `/`, `\` and `:` flattened to `-` + `--`.
-const scopeName = `--${process
-  .cwd()
-  .replace(/^[/\\]+/, '')
-  .replace(/[/\\:]/g, '-')}--`;
-const scratch = mkdtempSync(join(tmpdir(), 'tau-code-smoke-tree-'));
-const scopeDir = join(scratch, scopeName);
-mkdirSync(scopeDir, { recursive: true });
-cpSync(picked, join(scopeDir, basename(picked)));
+// The session's own cwd, from its header line: the daemon files a session
+// under the cwd it belongs to, and that is where the copy goes.
+const header = JSON.parse(readFileSync(picked, 'utf8').split('\n')[0]);
 console.log(`reading a copy of ${picked}`);
-
-const proc = new TauProcess({ sessionDir: scratch, extraArgs: ['--no-extensions'] });
-proc.start((chunk) => process.stderr.write(`[tau stderr] ${chunk}`));
-
-const transport = new StdioTransport(proc, (detail) => console.error('VIOLATION:', detail));
-const client = new TauClient(transport);
+const daemon = await startDaemon({ sessions: [{ path: picked, cwd: header.cwd }] });
+const client = await connect(daemon.url, 'smoke-tree');
 client.on('protocolViolation', (detail, raw) => console.error('VIOLATION:', detail, raw));
 
-function check(claim, ok) {
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${claim}`);
-  if (!ok) process.exitCode = 1;
-}
-
 try {
-  const caps = await client.connect();
-  console.log(`protocol ${caps.protocol_version}`);
+  console.log(`protocol ${client.helloResult.protocol}`);
 
-  const sessions = await client.call('list_sessions', {});
-  const rows = sessions.sessions ?? [];
-  if (rows.length === 0) throw new Error('the copy was not listed; --session-dir did not take');
+  const { sessions: rows } = await client.request('list_sessions', {});
   // Named, never defaulted. Falling back to "some session" here is how the
   // first run of this script reported OK against a one-entry session it had
   // just created, with every check passing and nothing measured.
-  const wanted = basename(picked).replace(/\.jsonl$/, '').split('_').pop();
-  const target = rows.find((row) => String(row.session_id) === wanted);
+  const wanted = header.id;
+  const target = rows.find((row) => row.id === wanted);
   if (!target) {
     throw new Error(
       `the copy (${wanted}) is not in list_sessions, which returned ` +
-        `${rows.map((r) => String(r.session_id).slice(0, 8)).join(', ') || '(nothing)'}. ` +
-        `tau scopes its catalog by cwd; the copy was filed under ${scopeName}.`,
+        `${rows.map((r) => r.id.slice(0, 8)).join(', ') || '(nothing)'}.`,
     );
   }
-  const switched = await client.call('switch_session', { session_id: String(target.session_id) });
-  if (switched.cancelled) throw new Error('an extension vetoed the switch');
+  const attached = await client.request('attach', { session_id: wanted });
+  const replica = new Replica(wanted);
+  replica.applyAttached(attached);
+  const cursorId = attached.head_cursor_id;
 
-  const tree = await loadTree(client);
+  const tree = treeOf(await client.request('get_tree', { session_id: wanted, cursor_id: cursorId }));
   console.log(`\ntree: ${tree.nodes.length} entries, cursor ${tree.cursor?.slice(0, 8) ?? 'none'}`);
 
   const kinds = {};
@@ -175,34 +153,19 @@ try {
   const plan = planElide(tree, tree.cursor, new Set());
   console.log(`elide from the cursor: ${'refusal' in plan ? plan.refusal : JSON.stringify(plan)}`);
 
-  // The detail pane's read, on a node the ACTIVE PATH does not contain -- which
-  // is what `get_messages` could not have served.
-  const path = new Set();
-  let walk = tree.cursor;
-  while (walk) {
-    path.add(walk);
-    walk = tree.byId.get(walk)?.parentId ?? null;
-  }
-  const offPath = tree.nodes.find((node) => !path.has(node.entryId));
-  if (offPath) {
-    const entry = await client.call('get_entry', { entry_id: offPath.entryId });
-    check('get_entry reaches a node off the active path', entry.entry?.id === offPath.entryId);
-  } else {
-    console.log('get_entry: this session has no node off the active path');
-  }
-
-  let refused = false;
-  try {
-    await client.call('get_entry', { entry_id: 'no-such-entry' });
-  } catch (error) {
-    refused = String(error.message).includes('no-such-entry');
-  }
-  check('an unknown id refuses rather than answering null', refused);
+  // The detail pane reads bodies from the replica, including nodes the active
+  // path does not contain. Every row get_tree drew has to be there.
+  check(
+    'the replica holds every entry the tree names',
+    tree.nodes.every((node) => replica.entries.has(node.entryId)),
+  );
+  check('the replica and the tree agree on the size of the session', replica.entries.size === tree.nodes.length);
 
   console.log(process.exitCode ? '\nFAILED' : '\nOK');
 } catch (error) {
   console.error('\nFAILED:', error instanceof Error ? error.message : error);
   process.exitCode = 1;
 } finally {
-  await proc.stop();
+  client.close();
+  await daemon.stop();
 }
