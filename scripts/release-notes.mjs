@@ -129,8 +129,8 @@ for (const row of rows) {
 }
 lines.push('');
 lines.push(
-  `Every runtime here was built from one Linux runner. Nothing in τ's RPC closure compiles — ` +
-    `the interpreters are prebuilt and the one native wheel, \`pydantic_core\`, publishes for all ` +
+  `Every runtime here was built from one Linux runner. Nothing in what \`tau serve\` imports compiles — ` +
+    `the interpreters are prebuilt and the two native wheels, \`pydantic_core\` and \`websockets\`, publish for all ` +
     `${String(rows.length)} targets — so a cross build is a download and a wheel tag, not a ` +
     `compiler. The build fails on a target rather than shipping a payload missing a module.`,
 );

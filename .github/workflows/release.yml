@@ -144,11 +144,11 @@ jobs:
           key: pbs-${{ matrix.target }}-${{ hashFiles('packages/runtime/scripts/build-payload.mjs') }}
 
       - name: build the extension entry
-        # Only what this job needs. protocol and runner are here for the
-        # linux-x64 smoke test below, which drives the payload through the same
-        # code the extension uses; runtime is the few-kilobyte host bundle that
-        # the .vsix names as its `main`.
-        run: npm run build --workspace packages/protocol --workspace packages/runner --workspace packages/runtime
+        # Only what this job needs. protocol is here for the linux-x64 smoke
+        # test below, which says hello to the payload's daemon with the same
+        # client the extension uses; runtime is the few-kilobyte host bundle
+        # that the .vsix names as its `main`.
+        run: npm run build --workspace packages/protocol --workspace packages/runtime
 
       - name: build the payload
         env:
@@ -163,32 +163,11 @@ jobs:
       # --- the host's own target, which is the only one that can be run ------
       #
       # Eight of the nine payloads get structural checks and say so. This one
-      # can actually be executed, so it is, twice over: the protocol it speaks
-      # is compared against the committed generated.ts, and TauProcess drives
-      # it end to end. Both need a tau that will start, and tau will not start
-      # without a model in its config -- so this writes a throwaway one naming
-      # an address nothing listens on. Honest, because neither check contacts a
-      # model. build-payload.mjs's own verify() writes the same fixture for the
-      # same reason; they are independent because the checks are.
-      - name: a config that names nothing
-        if: matrix.target == 'linux-x64'
-        run: |
-          mkdir -p "$HOME/.tau"
-          cat > "$HOME/.tau/config.json" <<'JSON'
-          {
-            "models": {
-              "ci-llm": {
-                "backend": "openai",
-                "model": "unused-by-ci",
-                "base_url": "http://127.0.0.1:1/v1",
-                "api_key": "not-needed"
-              }
-            },
-            "default_model": "ci-llm",
-            "system_prompt": "unused"
-          }
-          JSON
-
+      # can actually be executed, so it is, twice over: the schema it prints is
+      # compared against the committed generated.ts, and `tau serve -d --json`
+      # is driven end to end the way the extension starts it. `--schema` reads
+      # no config, and the smoke test brings its own throwaway HOME, so neither
+      # needs a config here.
       - name: the protocol the shipped tau speaks
         if: matrix.target == 'linux-x64'
         # Against the payload, not against a pip install of tau: this proves

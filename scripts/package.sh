@@ -92,8 +92,9 @@ if [ "$WHAT" = runtime ]; then
 
   say "runtime verify"
   # The payload proved itself during its own build, in isolation. This proves
-  # the OTHER half: that TauProcess drives it through the same code path the
-  # extension uses. Only possible for this machine's target.
+  # the OTHER half: that `tau serve -d --json` from it starts a daemon this
+  # client can say hello to, the way the extension does. Only possible for this
+  # machine's target.
   node scripts/smoke-runtime.mjs
 
   ls -lh ffwf-tau-runtime-"$VERSION"-*.vsix

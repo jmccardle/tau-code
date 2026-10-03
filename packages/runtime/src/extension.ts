@@ -127,7 +127,7 @@ export function activate(context: vscode.ExtensionContext): TauRuntimeApi {
         '',
         `interpreter  ${api.interpreter}`,
         `shim         ${api.shim}`,
-        `spawned as   ${[api.command, ...api.args].join(' ')} --mode rpc`,
+        `daemon via   ${[api.command, ...api.args].join(' ')} serve -d`,
       ].join('\n');
       // A modal, because this is a block of paths someone is reading to copy
       // out of, and a toast expires while they are still looking at it.

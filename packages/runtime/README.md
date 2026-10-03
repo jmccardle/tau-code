@@ -16,10 +16,11 @@ runtime/
   python/
     bin/python3.11                 the interpreter
     lib/python3.11/                the standard library
-      site-packages/               tau, pydantic, httpx, and pip
+      site-packages/               tau, pydantic, httpx, websockets, and pip
 ```
 
-One interpreter, one copy of τ's RPC closure — 13 packages — and `pip`. No
+One interpreter, one copy of what `tau serve` imports, and `pip`. The extension
+starts the daemon from it (`tau serve -d`) when none is already running. No
 Textual: τ's TUI is not what an editor extension runs, and leaving it out is 12
 packages and ~18 MB.
 

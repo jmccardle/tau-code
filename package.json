@@ -23,7 +23,6 @@
     "test": "node --test",
     "smoke": "node scripts/smoke.mjs",
     "smoke:tree": "node scripts/smoke-tree.mjs",
-    "smoke:server": "node scripts/smoke-server.mjs",
     "smoke:browser": "node scripts/smoke-browser.mjs",
     "smoke:panels": "node scripts/smoke-panels.mjs",
     "smoke:completion": "node scripts/smoke-completion.mjs",

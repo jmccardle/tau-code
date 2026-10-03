@@ -7,8 +7,8 @@
  *
  * Every target is built from ONE machine, and that is not a convenience: the
  * whole payload is a prebuilt interpreter plus wheels, and the only compiled
- * thing in tau's rpc closure is pydantic-core, which publishes a wheel for all
- * nine of VS Code's desktop targets. Nothing here compiles, so nothing here
+ * things in tau's serve closure are pydantic-core and websockets' C speedups,
+ * both of which publish a wheel for all nine of VS Code's desktop targets. Nothing here compiles, so nothing here
  * needs a machine of the target's architecture. If that ever stops being true
  * -- a dependency with no wheel for some target -- this script fails on that
  * target rather than quietly shipping a payload missing a module.
@@ -30,6 +30,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -581,18 +582,24 @@ function writeShim(payload, layout) {
 }
 
 /**
- * Prove the payload runs and speaks the protocol, the way docker/verify.mjs
- * proves it for the image. Only possible for the host's own target -- a
- * win32-arm64 payload cannot be executed here -- so cross builds get the
- * structural checks and say so rather than reporting a pass they did not do.
+ * Prove the payload runs a daemon and speaks the serve protocol, the way
+ * docker/verify.py proves it for the image. Only possible for the host's own
+ * target -- a win32-arm64 payload cannot be executed here -- so cross builds
+ * get the structural checks and say so rather than reporting a pass they did
+ * not do.
+ *
+ * Both ends are the payload: `tau serve` from it, and the hello sent by its own
+ * interpreter through its own `websockets`. That is the closure the extension
+ * depends on now, and `websockets` is the second compiled package in it
+ * (its C speedups), so importing it here is the check that its wheel matched.
  */
 async function verify(interpreter, args) {
   const version = capture(interpreter, [...args, '--version']);
   say(`  verify  ${version}`);
 
-  // tau refuses to start without a model configured, so this bakes an address
+  // τ refuses to start without a model configured, so this bakes an address
   // nothing listens on into a throwaway HOME. Honest, because nothing calls it:
-  // get_capabilities contacts no model.
+  // hello contacts no model.
   const home = mkdtempSync(join(tmpdir(), 'tau-runtime-verify-'));
   mkdirSync(join(home, '.tau'), { recursive: true });
   writeFileSync(
@@ -610,74 +617,85 @@ async function verify(interpreter, args) {
       system_prompt: 'unused',
     }),
   );
+  // Isolated from this shell on purpose: the payload has to work with none of a
+  // developer's Python environment reaching it -- a bundled runtime that
+  // silently resolves against the host's is one that works on every machine
+  // that builds it and no machine that installs it.
+  //
+  // PYTHONDONTWRITEBYTECODE because this runs INSIDE the tree being shipped.
+  // Without it, verifying the payload writes __pycache__ back into it, every
+  // .pyc stamping this build machine's absolute paths into co_filename -- so
+  // the check would be the thing that spoiled what it checked.
+  const env = { HOME: home, PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' };
+
+  const port = await freePort();
+  const daemon = spawn(interpreter, [...args, 'serve', '--listen', `127.0.0.1:${port}`], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env,
+  });
+  let daemonOutput = '';
+  daemon.stdout.setEncoding('utf8');
+  daemon.stderr.setEncoding('utf8');
+  daemon.stdout.on('data', (chunk) => (daemonOutput += chunk));
+  daemon.stderr.on('data', (chunk) => (daemonOutput += chunk));
+
+  // The protocol version is whatever the daemon answers; hello names the one
+  // this client was generated against, so a payload pinned to a τ that speaks
+  // another refuses here, at build time.
+  const hello = [
+    'import json, sys, time',
+    'from websockets.sync.client import connect',
+    `deadline = time.monotonic() + 30`,
+    'while True:',
+    '    try:',
+    `        with connect("ws://127.0.0.1:${port}/", open_timeout=2) as socket:`,
+    `            socket.send(json.dumps({"type": "hello", "id": 1, "protocol": sys.argv[1], "client": "runtime-verify"}))`,
+    '            answer = json.loads(socket.recv(timeout=10))',
+    '        break',
+    '    except OSError:',
+    '        if time.monotonic() > deadline: raise',
+    '        time.sleep(0.2)',
+    'print(json.dumps(answer))',
+  ].join('\n');
 
   try {
-    const protocol = await new Promise((resolve, reject) => {
-      const child = spawn(interpreter, [...args, '--mode', 'rpc'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        // Isolated from this shell on purpose: the payload has to work with
-        // none of a developer's Python environment reaching it. This is the
-        // check gobboclippy's CI does by clearing LD_LIBRARY_PATH -- a bundled
-        // runtime that silently resolves against the host's is one that works
-        // on every machine that builds it and no machine that installs it.
-        //
-        // PYTHONDONTWRITEBYTECODE because this runs INSIDE the tree being
-        // shipped. Without it, verifying the payload writes 2.5 MB of
-        // __pycache__ back into it, every .pyc stamping this build machine's
-        // absolute paths into co_filename -- so the check would be the thing
-        // that spoiled what it checked. `-I` does not cover this; only the
-        // environment variable and `-B` do.
-        env: { HOME: home, PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' },
-      });
-      let stderr = '';
-      let buffer = '';
-      const deadline = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`no answer to get_capabilities within 30s. stderr:\n${stderr}`));
-      }, 30_000);
-
-      child.on('error', (error) => {
-        clearTimeout(deadline);
-        reject(new Error(`could not spawn the payload: ${error.message}`));
-      });
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk) => {
-        stderr += chunk;
-      });
-      child.on('exit', (code) => {
-        clearTimeout(deadline);
-        reject(new Error(`the payload exited ${String(code)} before answering. stderr:\n${stderr}`));
-      });
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (chunk) => {
-        buffer += chunk;
-        const end = buffer.indexOf('\n');
-        if (end < 0) return;
-        clearTimeout(deadline);
-        child.removeAllListeners('exit');
-        let reply;
-        try {
-          reply = JSON.parse(buffer.slice(0, end));
-        } catch (error) {
-          reject(new Error(`unparseable first line: ${buffer.slice(0, 200)}`));
-          return;
-        }
-        child.kill('SIGKILL');
-        const found = reply?.result?.protocol_version;
-        if (!found) {
-          reject(new Error(`get_capabilities answered without a protocol version: ${buffer.slice(0, 200)}`));
-          return;
-        }
-        resolve(found);
-      });
-
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'get_capabilities' })}\n`);
-    });
-    say(`  verify  speaks protocol ${protocol}, with no PYTHONPATH and no HOME of yours`);
+    const said = spawnSync(interpreter, ['-I', '-B', '-c', hello, generatedProtocol()], { encoding: 'utf8', env });
+    if (said.error || said.status !== 0) {
+      throw new Error(`hello from the payload failed: ${said.error?.message ?? said.stderr}`);
+    }
+    const answer = JSON.parse(said.stdout);
+    if (!answer.ok) {
+      throw new Error(`the payload's daemon refused hello: ${JSON.stringify(answer.error)}`);
+    }
+    const protocol = answer.result.protocol;
+    say(`  verify  tau serve speaks protocol ${protocol}, with no PYTHONPATH and no HOME of yours`);
     return protocol;
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\ndaemon output:\n${daemonOutput}`);
   } finally {
+    daemon.kill('SIGKILL');
     rmSync(home, { recursive: true, force: true });
   }
+}
+
+/** The serve protocol packages/protocol was generated against. */
+function generatedProtocol() {
+  const generated = readFileSync(join(PKG_ROOT, '..', 'protocol', 'src', 'generated.ts'), 'utf8');
+  const match = /PROTOCOL_VERSION = "([^"]+)"/.exec(generated);
+  if (!match) throw new Error('packages/protocol/src/generated.ts names no PROTOCOL_VERSION.');
+  return match[1];
+}
+
+/** A port nothing is listening on right now. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
 }
 
 function hostTarget() {
