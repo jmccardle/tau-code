@@ -34,3 +34,14 @@ export interface Transport {
  * snapshot the next `attach` answers brings it current.
  */
 export const CLOSE_TOO_FAR_BEHIND = 4000;
+
+/**
+ * A relay's own close: there is nothing to dial, and dialling again will not
+ * change that until the user does something (open a folder, install τ).
+ *
+ * Not a daemon code -- the daemon never sends it. A host that relays the
+ * protocol (the VS Code extension host) closes with this so the client stops
+ * retrying and shows the sentence instead. In the 4xxx private range, clear of
+ * the daemon's 4000.
+ */
+export const CLOSE_NOTHING_TO_DIAL = 4900;

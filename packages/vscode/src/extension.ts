@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ChatPanel, ChatPanelSerializer } from './chat-panel.js';
 import { ChatViewProvider } from './chat-view.js';
 import { describe, invalidate, RUNTIME_EXTENSION_ID, tauRuntime } from './runtime.js';
-import { TauSession } from './session.js';
+import { DaemonRelay } from './session.js';
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('tau', { log: true });
@@ -40,7 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
 
     vscode.commands.registerCommand('tau-code.open', () => {
-      if (!TauSession.workingDirectory()) {
+      if (!DaemonRelay.workingDirectory()) {
         void vscode.window
           .showWarningMessage(
             'tau needs a working directory. Open the project folder first.',
@@ -60,7 +60,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('tau-code.installRuntime', async () => {
       if (vscode.extensions.getExtension(RUNTIME_EXTENSION_ID)) {
         void vscode.window.showInformationMessage(
-          `${RUNTIME_EXTENSION_ID} is already installed. Run "tau: Restart Agent" to use it.`,
+          `${RUNTIME_EXTENSION_ID} is already installed. It starts the daemon the next time none is running.`,
         );
         return;
       }
@@ -68,7 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await vscode.commands.executeCommand('workbench.extensions.installExtension', RUNTIME_EXTENSION_ID);
         invalidate();
         void vscode.window.showInformationMessage(
-          'The tau runtime is installed. Run "tau: Restart Agent" to use it.',
+          'The tau runtime is installed. It starts the daemon the next time none is running; "tau: Reconnect to tau serve" checks now.',
         );
       } catch (error) {
         // Named rather than swallowed: the usual cause is a marketplace with no
@@ -101,7 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
         .update('runtime', choice.label, vscode.ConfigurationTarget.Global);
       invalidate();
       void vscode.window.showInformationMessage(
-        `tau-code.runtime is now "${choice.label}". Run "tau: Restart Agent" to apply it.`,
+        `tau-code.runtime is now "${choice.label}". It applies the next time the daemon starts; a daemon already running keeps running.`,
       );
     }),
 
@@ -120,7 +120,7 @@ export function activate(context: vscode.ExtensionContext): void {
         sidebar.restart();
         return;
       }
-      void vscode.window.showInformationMessage('No tau agent is open. Run "tau: Open Agent".');
+      void vscode.window.showInformationMessage('No tau panel is open. Run "tau: Open Agent".');
     }),
 
     vscode.commands.registerCommand('tau-code.showLog', () => output.show()),

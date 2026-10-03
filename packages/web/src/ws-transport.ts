@@ -1,73 +1,64 @@
-import { LineFramer, type Transport } from '@ffwf/tau-code-protocol';
+import type { Transport } from '@ffwf/tau-code-protocol';
 
 /**
- * A `Transport` over a WebSocket to `@ffwf/tau-code-server`.
+ * The browser's transport: one WebSocket to `tau serve`.
  *
- * The server relays JSON-RPC lines to and from tau essentially unchanged, so
- * the client above this is the same one the VS Code extension host uses. The
- * browser's only extra job is the token.
+ * The serve protocol is one JSON object per text frame, so there is nothing to
+ * reassemble -- a frame that does not parse is reported and dropped, never
+ * guessed at.
  *
- * Messages arrive as whole frames in practice, but the framer is used anyway:
- * the server writes LF-terminated lines and a frame boundary is not a promise
- * the WebSocket protocol makes about line boundaries.
+ * Frames sent before the socket opens are queued, because the client says
+ * `hello` in the same tick it is built and the socket is not open yet.
  */
 export class WebSocketTransport implements Transport {
   #socket: WebSocket;
-  #framer: LineFramer;
-  #onMessage: ((message: unknown) => void) | null = null;
-  #onClose: ((reason: string) => void) | null = null;
+  #onMessage: ((frame: unknown) => void) | null = null;
+  #onClose: ((reason: string, code: number | null) => void) | null = null;
   #queue: string[] = [];
   #open = false;
   #closed = false;
 
   constructor(url: string, onViolation?: (detail: string) => void) {
-    this.#framer = new LineFramer(
-      (value) => this.#onMessage?.(value),
-      (line, error) => onViolation?.(`unparseable line (${String(error)}): ${line.slice(0, 400)}`),
-    );
-
     this.#socket = new WebSocket(url);
 
     this.#socket.addEventListener('open', () => {
       this.#open = true;
-      for (const line of this.#queue) this.#socket.send(line);
+      for (const frame of this.#queue) this.#socket.send(frame);
       this.#queue = [];
     });
 
     this.#socket.addEventListener('message', (event: MessageEvent) => {
-      const data = typeof event.data === 'string' ? event.data : '';
-      // The framer needs a trailing newline to emit; the server sends one, but
-      // a frame that arrives without it would otherwise sit in the buffer.
-      this.#framer.push(data.endsWith('\n') ? data : `${data}\n`);
+      if (typeof event.data !== 'string') {
+        onViolation?.('a binary frame arrived; the serve protocol sends text frames only');
+        return;
+      }
+      let frame: unknown;
+      try {
+        frame = JSON.parse(event.data);
+      } catch (error) {
+        onViolation?.(`unparseable frame (${String(error)}): ${event.data.slice(0, 400)}`);
+        return;
+      }
+      this.#onMessage?.(frame);
     });
 
     this.#socket.addEventListener('close', (event: CloseEvent) => {
-      this.#fire(describeClose(event));
-    });
-
-    this.#socket.addEventListener('error', () => {
-      // The `close` event always follows and carries the code, so the reason is
-      // reported there rather than twice.
-      if (!this.#open && !this.#closed) {
-        this.#fire(
-          'Could not open the connection. Check that the server is running and that the URL still carries a valid token.',
-        );
-      }
+      this.#fire(this.#open ? describeClose(event) : couldNotOpen(url), event.code);
     });
   }
 
-  send(message: unknown): void {
+  send(frame: unknown): void {
     if (this.#closed) return;
-    const line = JSON.stringify(message) + '\n';
-    if (this.#open) this.#socket.send(line);
-    else this.#queue.push(line);
+    const text = JSON.stringify(frame);
+    if (this.#open) this.#socket.send(text);
+    else this.#queue.push(text);
   }
 
-  onMessage(handler: (message: unknown) => void): void {
+  onMessage(handler: (frame: unknown) => void): void {
     this.#onMessage = handler;
   }
 
-  onClose(handler: (reason: string) => void): void {
+  onClose(handler: (reason: string, code: number | null) => void): void {
     this.#onClose = handler;
   }
 
@@ -76,28 +67,46 @@ export class WebSocketTransport implements Transport {
     this.#socket.close(1000, 'client closed');
   }
 
-  #fire(reason: string): void {
+  #fire(reason: string, code: number | null): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#onClose?.(reason);
+    this.#onClose?.(reason, code);
   }
 }
 
+/**
+ * A socket that never opened. The browser hides why -- a refused port, a 403
+ * from the daemon's Origin check, and a TLS failure all look the same from a
+ * page -- so the sentence names the address and the two causes worth checking.
+ */
+function couldNotOpen(url: string): string {
+  return (
+    `Could not connect to ${url}. Check that \`tau serve\` is running there, and, if this page ` +
+    `is served from somewhere else, that its origin is in the daemon's serve.allowed_origins.`
+  );
+}
+
 function describeClose(event: CloseEvent): string {
-  if (event.code === 1000 || event.code === 1001) return 'The connection was closed.';
-  if (event.code === 1011) return event.reason || 'tau stopped.';
+  if (event.code === 1000 || event.code === 1001) return 'The daemon closed the connection.';
   return `The connection closed (code ${event.code}${event.reason ? `: ${event.reason}` : ''}).`;
 }
 
 /**
- * Build the WebSocket URL for this page, carrying the token forward.
+ * Where this page's daemon is: the host that served it.
  *
- * The server prints an authenticated URL and the token rides in the query
- * string, exactly as Jupyter does. The page reuses whatever token got it here
- * rather than asking for it again.
+ * `tau serve` hosts the web client from `serve.web_root` on the same port as
+ * its socket, so the page and the socket are one origin and the daemon's
+ * Origin check passes with nothing configured. A `?daemon=HOST:PORT` query
+ * dials somewhere else instead -- a Vite dev server on :5173, say -- and that
+ * origin then has to be in the daemon's `serve.allowed_origins`.
  */
 export function socketUrlFromLocation(): string {
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const token = new URLSearchParams(location.search).get('token') ?? '';
-  return `${scheme}//${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  const override = new URLSearchParams(location.search).get('daemon');
+  return `${scheme}//${override ?? location.host}/`;
+}
+
+/** The token this page was opened with, or null. It goes in `hello`, not the URL. */
+export function tokenFromLocation(): string | null {
+  return new URLSearchParams(location.search).get('token');
 }

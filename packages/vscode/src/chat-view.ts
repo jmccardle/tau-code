@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TauSession } from './session.js';
+import { DaemonRelay } from './session.js';
 
 /**
  * The agent in the sidebar.
@@ -11,7 +11,7 @@ import { TauSession } from './session.js';
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'tau-code.chat';
 
-  #session: TauSession | null = null;
+  #session: DaemonRelay | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -19,7 +19,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
-    const session = new TauSession(this.context, this.output, view.webview, 'sidebar');
+    const session = new DaemonRelay(this.context, this.output, view.webview, 'sidebar');
     this.#session = session;
     session.start();
 

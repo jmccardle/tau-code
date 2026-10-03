@@ -109,12 +109,16 @@ if [ "$WHAT" = all ] || [ "$WHAT" = image ]; then
   # The image builds from the checkout, but with .dockerignore excluding every
   # dist/, so it compiles its own copy. That is the point: the image build is a
   # second, independent proof that the tree builds from source.
-  docker build --target runtime -t "$IMAGE:$VERSION" -t "$IMAGE:latest" .
-  docker build --target verify  -t "$IMAGE-verify:$VERSION" .
+  # TAU_WHEELS names a directory of τ wheels to install from before PyPI --
+  # how the image is built against a τ that is not released yet.
+  context=()
+  [ -n "${TAU_WHEELS:-}" ] && context=(--build-context "tau-wheels=$TAU_WHEELS")
+  docker build "${context[@]}" --target runtime -t "$IMAGE:$VERSION" -t "$IMAGE:latest" .
+  docker build "${context[@]}" --target verify  -t "$IMAGE-verify:$VERSION" .
 
   say "image verify"
-  # Proves the two runtimes reach each other: Node spawns the Python tau in the
-  # image and gets a protocol answer back. No model is contacted.
+  # Proves the image serves: the daemon says hello at the protocol version the
+  # web client was generated against, and serves the page. No model is contacted.
   docker run --rm "$IMAGE-verify:$VERSION"
   docker images "$IMAGE" --format '  {{.Repository}}:{{.Tag}}  {{.Size}}'
 fi

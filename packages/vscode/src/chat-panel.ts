@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TauSession } from './session.js';
+import { DaemonRelay } from './session.js';
 
 /**
  * An agent in an editor tab.
@@ -9,7 +9,7 @@ import { TauSession } from './session.js';
  * transcript beside the code it is editing wants. The sidebar view is the same
  * UI in a narrower place; neither is a wrapper around the other, because
  * `WebviewView` and `WebviewPanel` are different VS Code types that happen to
- * both expose a `Webview`. `TauSession` is what they share.
+ * both expose a `Webview`. `DaemonRelay` is what they share.
  */
 export class ChatPanel implements vscode.Disposable {
   static readonly viewType = 'tau-code.panel';
@@ -17,7 +17,7 @@ export class ChatPanel implements vscode.Disposable {
   static readonly #open = new Set<ChatPanel>();
 
   #panel: vscode.WebviewPanel;
-  #session: TauSession;
+  #session: DaemonRelay;
 
   private constructor(
     context: vscode.ExtensionContext,
@@ -28,7 +28,7 @@ export class ChatPanel implements vscode.Disposable {
     this.#panel = panel;
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg');
 
-    this.#session = new TauSession(context, output, panel.webview, `tab ${panel.title}`);
+    this.#session = new DaemonRelay(context, output, panel.webview, `tab ${panel.title}`);
     if (start) this.#session.start();
 
     panel.onDidDispose(() => {
