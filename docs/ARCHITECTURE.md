@@ -1,435 +1,348 @@
 # Architecture
 
-**Status: the tree browser is built (2026-09-09, 0.4.0); the mark is drawn
-(2026-09-12, 0.4.1); the runtime can come along (2026-09-12, 0.5.0); a tag
-builds all nine of them (2026-09-13, 0.5.1); the actions and the image run
-Node 24 (2026-09-17, 0.5.2).** Chat
-works end to end
-in both hosts, and so does the conversation tree — rows, zones, marks, folds,
-elide, branch and paste, with the TUI's keys. The editor integrations
-(jump-to-edit, diff views) are designed for and not built; §7.1 says what τ still
-discards.
+**Status: both hosts speak `tau serve` (0.6.0, alongside τ 0.12.0).** The web
+client and the VS Code extension are clients of τ's daemon; the Node connection
+server and the stdio runner that stood between them and `tau --mode rpc` are
+deleted. A browser tab, a VS Code panel and `tau --connect` attached to one
+session see one tree and can each drive it. Chat, the conversation tree, flows,
+`@file` completion, extension requests and the model picker all work over the
+daemon. The editor integrations (jump-to-edit, diff views) are designed for and
+not built; §7.1 says what τ still discards.
 
-Provenance: every claim about τ's protocol in this document was measured against
-a live τ process in `~/Development/agent-harness-py` at protocol version **1.6**.
-Claims about VS Code come from its published API documentation, and were checked
-in VS Code 1.135.0 and VSCodium 1.98.1 with the built `.vsix` installed.
+Provenance: every claim about τ's wire in this document was measured against
+the daemon in `~/Development/agent-harness-py`. The serve protocol's version and
+counts are not written here: they are the **Counts** line of
+`docs/SERVE-PROTOCOL.md` in that repository, which is generated from τ's
+protocol dataclasses, and `packages/protocol/src/generated.ts` is generated from
+the same source (§3). Claims about VS Code come from its published API
+documentation, and were checked in VS Code and VSCodium with the built `.vsix`
+installed.
+
+Sections 9 onward are dated, and describe decisions as they were made; where a
+later section undid an earlier one, the earlier one says so.
 
 ---
 
-## 1. What τ already provides
+## 1. What τ provides: `tau serve`
 
-τ ships a JSON-RPC 2.0 server over LF-delimited stdio, started with
-`tau --mode rpc`. Measured, not assumed:
+τ's daemon owns sessions and streams their trees to any number of clients over
+a WebSocket: one JSON object per text frame, a `hello` first, then requests
+answered by id and events pushed per attached session. `docs/SERVE-PROTOCOL.md`
+and `docs/serve-protocol.schema.json` in τ's repository are its reference; both
+are generated, and τ's test suite fails if either is stale. **This client adds
+no request and changes nothing in τ**, and where it needed something τ did not
+have, τ grew it (TAU-SERVE.md §7.3 records which).
 
-- MAJOR/MINOR version negotiation.
-- Live verbs in three tiers, and declined verbs each with a stated reason —
-  calling one returns `METHOD_NOT_FOUND`, and the reason is the only place that
-  says why.
-- Event types with a fixed record shape.
-- A full error taxonomy, stated limits, and capability negotiation.
+The shape that everything here rests on:
 
-The protocol version and the counts of each are not written here. They live on
-the **Counts** line of `docs/RPC-PROTOCOL.md` in the τ repository, which is
-generated from τ's own command table, and a test there fails if the two
-disagree. An earlier revision of this section copied them ("Protocol 1.4",
-"20 live verbs", "10 event types") and they went stale within three releases;
-a number copied out of a generated file is a claim nobody re-checks.
+- **A session is a log of entries, and a client holds a replica of it.**
+  `attach` answers with a snapshot (or, on a reconnect within the same epoch, a
+  replay); `entry_open`, `entry_append` and `entry_final` events then apply by
+  id, last write wins, keeping the first position. Every message is an entry
+  the moment it exists, so a client never pulls a transcript.
+- **A session has cursors.** Each is a leaf in the tree with its own model and
+  busy state, and `cursors` events carry the whole set. Two heads on one
+  session share the head cursor by default and so share one conversation; a
+  parallel turn is a cursor opened on purpose.
+- **Everything else is a request at a cursor**: submit, abort, move, set the
+  model, answer an extension, and `perform` -- an allowlist of the backend's own
+  operations (navigate, elide, branch, paste, compact, extension enable and
+  reload...), so a head reaches what the TUI reaches by the same names.
 
 ### 1.1 A chat head needs nothing new
 
-Submit, stream, abort, switch model, list and switch sessions, fork, compact:
-all shipped. This scaffold adds no verb and changes nothing in τ.
+Submit, stream, abort, switch model, open and fork sessions, compact, walk and
+edit the tree, answer an extension: all on the wire.
 
-### 1.2 What is NOT on the wire
+### 1.2 What the wire carries now that RPC did not
 
-**The tree WAS the first absence, and it is closed.** τ 0.9.8 put the five tree
-mutations on the wire and no read of the structure they act on; τ 0.10.1 adds
-`get_tree` and `get_entry`, which is what §7.2 asked for and what this client's
-browser is built on. `docs/VSCODE-HEAD.md` §6 in the τ repository has the whole
-of it, including the part the prediction got wrong: `TreeNode` is enough to DRAW
-a tree and not enough to COLOUR one, so the projection carries the per-node facts
-every zone reads.
+RPC's rule was that nothing unbounded is pushed, so its events carried identity
+and a bounded delta, and a head pulled `get_messages` at turn end. The daemon's
+log events carry whole entries -- the one place a client can learn a message --
+and that changes the store from a hybrid into a replica (§4). Tool arguments are
+on `tool_execution_start`, so a running tool is drawn with what it was given.
 
-Two absences still shape the sections below.
-
-**No message content on the event stream.** This is deliberate — τ's own rule is
-that nothing unbounded is pushed. Events carry identity, timing, and a bounded
-per-chunk `delta`; `agent_end` carries a `message_count` rather than the
-messages. Section 4 explains what this forces on the UI.
-
-**No tool arguments or results on the event stream.** `tool_execution_start`
-carries `tool_call_id` and `tool_name` and nothing else. Arguments arrive only
-with the `get_messages` pull at turn end.
+Streaming text is still bounded: `agent_event` carries the RPC wire's projected
+deltas (`block_type`, `replace`), not the cumulative message the core emits per
+chunk, which would make a reply's bytes quadratic in its length.
 
 ### 1.3 Commands: three kinds, and no list of names
 
-τ 0.10.0 removed `performer` from `get_commands`. It had zero readers inside τ
-by the time it went, and the fact underneath it was never about who RUNS a
-command: a dispatch produces one of four things, and which one decides who does
-the work. What the wire carries now is two facts that are real — `origin`
-(`builtin` or `extension`, which is where the NAME came from) and `flow`
-(whether the command declares what it takes).
-
-A pass through this repository reconstructed `performer` from a hardcoded list of
-five names. That list was a copy of τ's `FRONTEND_COMMANDS` with no way to notice
-when τ's changed, which is the drift the capability registry was built to end. It
-is gone. **Nothing in `packages/ui/src/commands.ts` enumerates τ's vocabulary.**
-
-Three ways a `/word` runs, decided from the wire:
+The vocabulary is the attached session's `surface.commands` -- every built-in
+and every extension command, each with `origin` (where the NAME came from) and
+`flow` (whether the command declares what it takes) -- built by the same code
+RPC's `get_commands` uses. **Nothing in `packages/ui/src/commands.ts` enumerates
+τ's vocabulary.**
 
 | shape | how it runs here |
 |---|---|
-| `flow: true` | stepped through `next_step`; each unbound argument is rendered from its `domain`, and the `ready` names a mutation this client calls by name |
+| `flow: true` | stepped through `next_step`; each unbound argument is rendered from its `domain`; the finished `Ready` goes back through `perform_ready`, which performs it exactly as a typed command would be |
 | a view (`tree`, `extensions`) | opens this head's own panel |
-| everything else | through `submit` with `expand_commands`, which is the one door: the input hooks and the extension lock both sit behind it |
+| everything else | through `submit` with `expand_commands`, the one door the input hooks and the extension lock sit behind |
 
-An unknown `/word` is none of the three and reaches the model as prose. That is
-τ's rule, not a fallback added here, and the popup says so.
+Every door answers with the same four-armed `DispatchedCommand`: `Performed`
+is done; `FlowStep` asks for the next argument; `View` opens a panel; `Ready` is
+one of the two mutations that move a HEAD to another session (`fork`,
+`switch_session`), which the daemon hands back because only the head can move
+itself.
 
-**The flow arm is what makes an extension's command work with no code here.** An
-extension that calls `register_flow` gets a rendered field in this panel, from a
-`next_step` this client has never heard the name of. `/compact`, `/fork`,
-`/model`, `/name` and `/autocompact` arrive through the same arm, and only the
-last is something this file could have anticipated.
+An unknown `/word` is none of these and reaches the model as prose. That is τ's
+rule, not a fallback added here, and the popup says so.
 
-Nothing is greyed in the popup today, and the set stays computed rather than
-written as an empty literal: the day τ declares a third view this head has no
-panel for, that name has to be able to appear greyed instead of falsely offered.
+`perform_ready` is what keeps this file free of a mutation table. A flow's
+`Ready` names a backend mutation; over RPC each was a verb this head called by
+name. Over serve not every mutation is a request (`set_model` is its own
+request, `fork` is the head's), so a client calling them by name would need a
+table from mutation to request -- a copy of τ's vocabulary. The daemon already
+knew how to perform a `Ready`, so it does.
 
-### 1.4 Completion (protocol 1.4)
+### 1.4 Completion
 
-The composer's Tab completion has two halves, and they come from different
-places for a reason worth stating.
+`/command` is computed **in this client**, from `surface.commands`, with τ's
+own `resolve_command` rule: a case-sensitive prefix on the first word.
 
-`/command` is computed **in this client**, from `get_commands`. The whole
-vocabulary — name, description, performer — is already on the wire, and the
-matching rule is a case-sensitive prefix test on the first word, which is what
-τ's own `resolve_command` does with the finished line.
-
-`@file` is computed **by τ**, through `complete_path`. This client cannot do it:
-a browser has no filesystem, and the VS Code extension host does have one but
-under Remote SSH or a devcontainer it is the wrong machine's. τ answers from the
-working directory its own tools resolve against, which is the only answer that
-cannot be wrong — and it is the same directory `expand_attachments` then reads,
-so a path the popup offers is a path the expansion resolves.
-
-`submit` sets `expand_attachments: true`, without which `@notes.txt` reaches the
-model as those eleven literal characters. The acceptance carries a report of
-what expansion did; `unresolved` and `failures` are both shown, because τ
-reports them on purpose and a head that showed neither would make a visible
-failure silent again.
-
-Against a pre-1.4 τ, `complete_path` is absent from `get_capabilities().commands`
-and the composer says so instead of calling a verb that would answer -32601.
-`/command` completion is unaffected — `get_commands` has been on the wire since
-1.0.
+`@file` is computed **by τ**, through `complete_path`, against the session's cwd
+on the daemon's machine. A browser has no filesystem; the VS Code extension host
+has one, but under Remote SSH or a devcontainer it may not be the daemon's. The
+directory τ completes against is the one `expand_attachments` then reads, so a
+path the popup offers is a path the submission attaches, and what expansion
+did is reported on the submission's `submission_start` event -- `unresolved`
+and `failures` are both shown, because τ reports them on purpose.
 
 ---
 
 ## 2. Layering
 
 ```
-                      ┌──────────────────────────────┐
-                      │        @ffwf/tau-code-ui          │  React, no host imports
-                      │  Conversation store + views  │
-                      └───────────────┬──────────────┘
-                                      │ Transport
-                      ┌───────────────┴──────────────┐
-                      │     @ffwf/tau-code-protocol       │  isomorphic
-                      │  generated types + client    │
-                      └───────────────┬──────────────┘
+                      ┌───────────────────────────────┐
+                      │       @ffwf/tau-code-ui       │  React, no host imports
+                      │ Daemon · SessionStore · views │
+                      └───────────────┬───────────────┘
+                                      │ Transport (one frame per message)
+                      ┌───────────────┴───────────────┐
+                      │    @ffwf/tau-code-protocol    │  isomorphic
+                      │ generated types · ServeClient │
+                      │           · Replica           │
+                      └───────────────┬───────────────┘
              ┌────────────────────────┴───────────────────────┐
              │                                                │
-   WebSocketTransport                                 VsCodeTransport
-   (packages/web)                                     (packages/vscode)
+   WebSocketTransport                                RelayTransport
+   (packages/web)                                    (packages/vscode webview)
              │                                                │
-   @ffwf/tau-code-server ──┐                          extension host ──┐
-   Hub: many clients  │                          direct relay     │
-             │        │                                │          │
-             └── @ffwf/tau-code-runner ────────────────────────────────┘
-                 StdioTransport over a `tau --mode rpc` child
+             │                                     extension host: DaemonRelay
+             │                                     (`ws`, numbered connections)
+             │                                                │
+             └──────────────────── tau serve ─────────────────┘
+                     (also: tau --connect, tau serve --tail)
 ```
 
-One rule makes this work: **`@ffwf/tau-code-ui` is handed a `Transport` and never
-learns which one.** It imports neither `vscode` nor `ws`. The two hosts differ
-in the transport they construct and in nothing else.
+One rule makes this work: **`@ffwf/tau-code-ui` is handed a way to open a
+`Transport` and never learns which kind.** It imports neither `vscode` nor
+`ws`. It is handed a way to OPEN one rather than one, because a connection is
+one transport's lifetime and a head outlives several -- a daemon restart, a
+laptop lid, the 4000 close the daemon sends a client that fell too far behind.
+
+`Daemon` (`ui/src/daemon.ts`) owns the link: hello, a reconnect with backoff,
+and on reconnect a re-attach from the replica's held `epoch` and `since`. Three
+refusals are final rather than retried, because a retry would repeat them: a
+protocol mismatch, a missing or wrong token, and a host saying there is nothing
+to dial. `SessionStore` (`ui/src/session.ts`) is one attached session: the
+replica, which cursor this head drives, and the live view of that cursor's turn.
 
 ### 2.0 The relay rule: a request is answered, never dropped
 
-Both hosts are relays. The extension host writes the webview's JSON-RPC into a
-τ child; the server's `Hub` writes many browsers' JSON-RPC into one. Both had
-the same defect, and it is worth stating as a rule because the shape recurs
-wherever a relay exists.
+`ServeClient.request` has **no deadline**, deliberately: `submit` answers when
+the submission ENDS, a turn later, and a timeout would cancel real work. The
+price is that a dropped request is indistinguishable from a slow one, forever.
 
-`TauClient.call` has **no deadline**, deliberately: a turn may take as long as
-it takes, and a timeout would cancel real work. The price is that a *dropped*
-request is indistinguishable from a slow one, forever. So a relay with nothing
-behind it must answer.
+The VS Code extension host is a relay, and a relay can have nothing behind it:
+no τ installed, `tau serve -d` failing, a daemon that went away. It does not
+answer requests on τ's behalf; it CLOSES the connection with the reason, and a
+close rejects every pending request with that sentence. A connection that
+cannot be dialled at all closes with `CLOSE_NOTHING_TO_DIAL` (4900, a relay's
+code the daemon never sends), so the client stops retrying and the panel shows
+the sentence. A frame for a connection that is no longer open gets the same
+close, never silence.
 
-What this looked like before. VS Code with no folder open refuses to start τ —
-correctly, there is no honest working directory. It wrote the reason to its log
-and posted it to the webview with `postMessage`. But `start()` runs in the same
-tick as `webview.html = …`, so the document had not loaded and nothing was
-listening. The webview then sent `get_capabilities`, the host dropped it
-because there was no process, and the panel said `connecting` until it was
-closed. The server had the same hole for a client that connects *after* τ died:
-clients attached at the time get a 1011 close, a later one gets silence.
+The reason is durable, not a message: `RelayTransport` holds a close that
+arrives before anyone is listening -- the page has loaded, the client has not
+registered yet -- and delivers it on registration. The bug this replaced was a
+panel reading `connecting` forever while the log held the reason.
 
-The fix is two parts, and the first is what makes the second possible:
+### 2.1 Why there is no server of our own
 
-1. **The reason is durable, not a message.** `TauSession.#stopped` holds a
-   sentence for as long as there is no agent. A one-shot message can be posted
-   before anyone is listening; a held reason is available whenever the webview
-   asks, which is the first thing it does.
-2. **`relayRefusal` (`@ffwf/tau-code-protocol/bridge.ts`) answers.** A request gets
-   an error response carrying its own id and the sentence; a notification gets
-   nothing, per JSON-RPC. The code is `NO_AGENT = -32900`, below the reserved
-   `-32768..-32000` band that JSON-RPC claims and τ uses part of, so a client
-   can tell "τ refused this" from "this never reached τ". Those are different
-   facts: nothing was attempted, so nothing was half-done.
-
-`Disconnected` in `@ffwf/tau-code-ui` renders the sentence at full width between the
-status bar and the transcript. The status bar keeps its one word, and the
-composer's placeholder distinguishes waiting from gone — only one of them has a
-message above worth reading.
-
-### 2.1 Why the server is Node and not Python
-
-τ is Python, and a Python server could import `tau_agent_core` directly instead
-of spawning a subprocess. It was not chosen, for one reason: the protocol types
-would then be written twice — once in Python for the server, once in TypeScript
-for the two clients — and the VS Code extension host would still need its own
-Node-side code to own a τ child process. One language means `@ffwf/tau-code-runner`
-is literally the same module in the server and in the extension.
+There used to be one: a Node hub that owned a `tau --mode rpc` child, served
+the web build, and multiplexed browsers onto it. It existed because τ had no
+way to share a session between processes. τ has one now, and it does the hub's
+three jobs better: it owns sessions rather than a child process, it multiplexes
+WRITERS through cursors rather than only viewers through one id-rewriting pipe,
+and it serves the web client from `serve.web_root` on its own port, so the page
+and its socket are one origin. The hub was deleted rather than kept as a
+compatibility layer, because a second path to the same session is the drift
+this repository exists to avoid.
 
 ### 2.2 What the extension has that the web client does not
 
 Ranked by how hard each is to reproduce outside an editor:
 
 1. **The remote split.** VS Code's Webview API always renders on the user's
-   local machine, even from a `workspace` extension. So the agent can run over
-   SSH, in WSL, in a devcontainer or in a Codespace, with the panel local, and
-   nobody writes a socket transport for it. A standalone web app cannot
-   reproduce this; it has to become the multiplexer to get it.
-2. **Editor context as a submission source** — the selection, the active file,
-   the current diagnostics.
-3. **Placement, identity and lifecycle** — an activity-bar view that survives
-   restarts, with settings and commands in the places users look.
+   local machine, even from a `workspace` extension. The extension host runs
+   where the files are, and so the daemon it starts (`tau serve -d`) runs there
+   too. The webview never dials the daemon; the host does, from Node, and
+   relays. So the agent runs over SSH, in WSL, in a devcontainer or in a
+   Codespace, with the panel local, and nobody writes a socket transport for
+   it.
+2. **Editor context as a submission source** -- the selection, the active file,
+   the current diagnostics. Designed for, not built.
+3. **Placement, identity and lifecycle** -- an activity-bar view that survives
+   restarts, with settings and commands in the places users look. A restored
+   tab re-attaches to the session it was on: the session is the daemon's, so a
+   window reload loses nothing.
 4. **Theme.** `--vscode-*` CSS variables mean the user's theme applies with no
    theming code. `packages/ui/src/styles.css` declares each colour as a
    `--vscode-*` variable with a standalone fallback, so one stylesheet serves
    both hosts.
 
+### 2.3 Finding the daemon: one command, no second copy of τ's config
+
+The extension's whole discovery is `tau serve -d --json`. τ resolves the
+address (flag, else `serve.listen` in its config, else its default), probes it
+with a real hello, and either reports the daemon already there or starts one
+and waits for it; it prints one `ServeStarted` object either way. The extension
+does not read `~/.tau/config.json` and does not know τ's default port. A second
+copy of that logic is how a panel dials 8256 while the user's daemon listens on
+8300, finds nothing, and starts a second daemon over the same session store --
+two writers on one session, which is the one thing τ's design forbids.
+
+Which τ runs `-d` is `runtime.ts`'s decision (§14): the bundled runtime, a
+configured path, or PATH. A daemon that is already running is used whichever τ
+started it, and the hello names its version, so the "two τs disagree" banner
+compares against the τ actually answering.
+
 ---
 
 ## 3. Code generation
 
-`npm run generate` spawns τ, sends one `get_capabilities` request, and writes
-`packages/protocol/src/generated.ts` from the answer — one type per live
-command with its params and result, the event record, the declined table, the
-limits.
+`npm run generate` runs `tau serve --schema` from the installed τ -- the JSON
+Schema (2020-12) τ renders from its protocol dataclasses -- and writes
+`packages/protocol/src/generated.ts`: one type per `$def`, a `Requests` map and
+a `Results` map keyed by request type, an `EventData` map keyed by event kind,
+and the protocol version and default port. `npm run check:protocol` regenerates
+and fails if the committed file differs, so drift is a build failure rather than
+a runtime surprise.
 
-This uses only the documented wire. It needs no Python import, no access to τ's
-source tree, and no script committed on τ's side. `npm run check:protocol`
-regenerates and fails if the committed file differs from what the installed τ
-reports, so drift is a build failure rather than a runtime surprise.
+It reads the installed τ rather than a path into a τ checkout, so the check is
+against the daemon this client will dial, and no sibling-repository path is
+written into this one.
 
-**The emitter refuses what it does not understand.** τ's schemas use exactly ten
-JSON Schema keywords and six types. Anything outside that set throws, naming the
-path and the keyword. It never emits `any` to get past a construct — a silent
-`any` is how a protocol change reaches runtime instead of the build.
+**The emitter refuses what it does not understand.** It handles the keywords
+τ's schema uses and throws on anything else, naming the path and the keyword;
+it never emits `any` to get past a construct. The same rule covers the
+receiving half of the wire, which is where it matters most: a request whose
+`$def` does not say what it answers (`x-result`), or an event without a typed
+`x-data`, is refused rather than typed `unknown`. A result typed by hand in
+this repository would be a claim about τ that nothing checks.
 
-### 3.1 The one thing that is hand-written, and why
-
-τ's schemas declare `commands` and `declined` as bare arrays with no `items`, so
-the element shape genuinely is not on the wire. The generator emits `unknown[]`,
-which is the truthful translation. `packages/protocol/src/capabilities.ts`
-narrows them — and it *checks* before it narrows, throwing with the field name
-when the check fails.
-
-That refinement is a client-side claim, so it lives in code a reader can see and
-a test can break, not smuggled into a generated file where it would look like
-the protocol said so.
+**Requests are closed, answers are open.** τ's request `$def`s say
+`additionalProperties: false`, matching the daemon's parser, so a misspelt field
+is a compile error here rather than a `bad_request` at runtime. Everything the
+daemon sends is open, so a field τ adds later is tolerated rather than fatal.
 
 ---
 
-## 4. The conversation store is a hybrid
+## 4. The conversation store is a replica
 
-Because the event stream carries no content (section 1.2), there are two sources
-answering different questions:
+`Replica` (`protocol/src/replica.ts`) is the daemon's rule, implemented once:
+a snapshot replaces it, an entry event sets by id keeping the first position, a
+`seq` already applied is dropped, and a skipped `seq` or a changed epoch is a
+GAP -- something was missed, so the session store re-attaches from what it holds
+rather than trusting anything after it.
 
-- **The event stream is the live view.** `delta` accumulates into text the reader
-  watches appear. Tool calls show up by name with a status.
-- **`get_messages` is the durable view.** After `agent_end`, the store pulls it
-  and replaces the live buffer with the authoritative array.
+**The transcript is the path, not the context.** It is the parentId walk from
+this head's cursor to the root, which is what the TUI's transcript renders under
+`--connect`. Compaction, elision and branch summaries change what the MODEL
+reads from that point on; they are drawn where they happen, with the summary,
+and the conversation before them stays visible. The tree browser is where the
+splice is shown.
 
-A pure event reducer cannot work here, and neither can pure polling.
+Two sources, and where they meet:
 
-Two details in `packages/ui/src/conversation.ts` are load-bearing:
+- **The replica is the durable view.** A finished message is an entry.
+- **`agent_event` is the live view**, filtered by `cursor_id` so a parallel turn
+  on another cursor never paints into this one. `delta` folds into the text a
+  reader watches appear; a running tool shows its arguments.
 
-- **`replace: true` resets the accumulator** rather than appending. The provider
-  replaced the block rather than extending it, and the delta is the block's
-  entire new value. Getting this backwards produces text that doubles itself,
-  which reads like a model fault rather than a client one. Tested.
-- **`blocked` is not `is_error`.** A tool blocked by an extension is a policy
-  decision; a tool that ran and failed is a fault. Collapsing them hides the
-  first behind what looks like a bug in the second. Tested.
+They meet at one entry: `"status": "incomplete"`. While this head's cursor is
+busy, that is the message being written, and the live blocks stand in for it.
+Once the cursor is idle, it is an INTERRUPTED message -- the process died or the
+turn was aborted mid-write -- and it is drawn as one, never as a finished answer.
 
-### 4.1 A consequence that looks like a bug
+Two details are load-bearing, as they were before:
 
-**Tool arguments and results are not available while a tool runs.** They are not
-on the wire. During a call the UI shows the tool's name and that it is running,
-because that is what is known. The arguments arrive with the pull at turn end.
-
-This is worth stating in the UI eventually. It is not a defect in this client.
+- **`replace: true` resets the accumulator** rather than appending: the delta is
+  the block's entire new value. Getting this backwards produces text that
+  doubles itself, which reads like a model fault. Tested.
+- **A busy cursor queues** (`multitask_strategy: "enqueue"`): a prompt sent
+  during a turn runs after it, as its own turn. It replaced `reject`, which
+  bounced the second message. A parallel turn is a different act -- a cursor of
+  its own -- and is asked for, never inferred.
 
 ---
 
 ## 5. Security
 
-The server always requires a token, at every bind address including loopback.
+The daemon owns this, and tau-code relies on it rather than re-implementing it.
 
-The alternative — no auth on 127.0.0.1 — is defensible right up until the bind
-address becomes a flag, and then it is a hole that opened without anyone
-changing the auth code. One rule is easier to reason about than a rule whose
-exception is a command-line argument.
+- **Origin.** A browser's WebSocket handshake is not subject to the same-origin
+  policy, so without a check any page the user has open could drive a
+  tool-running agent on `127.0.0.1`. The daemon refuses a handshake whose
+  `Origin` is present and is neither its own `Host` nor listed in
+  `serve.allowed_origins`. Comparing against the request's own `Host`, not the
+  bind address, is what keeps `docker run -p 9000:8256` and `ssh -L` working;
+  the same lesson the old hub learned (it is recorded in its history). A client
+  that sends no Origin -- the TUI, the VS Code extension host, Node scripts --
+  passes.
+- **Same origin by construction.** `tau serve` hosts the web client from
+  `serve.web_root` (or `--web-root`) on its own port, so the page's socket is
+  same-origin with nothing configured. A page served from elsewhere -- a Vite
+  dev server -- needs its origin in `serve.allowed_origins`, and the web client
+  takes `?daemon=HOST:PORT` to dial it.
+- **Token: opt-in.** `serve.token` makes the daemon require it in `hello`. That
+  is τ's decision and the default is none. The web client sends `?token=` from
+  its URL in `hello` (never in the socket URL), the extension sends its
+  `tau-code.token` setting, and an `unauthorized` refusal asks for one rather
+  than retrying.
 
-Measured behaviour, in `scripts/smoke-server.mjs`:
-
-- `/healthz` needs no token and reveals nothing but liveness.
-- No token and a wrong token both get 401, on HTTP and on the WebSocket upgrade.
-- Token comparison is constant-time.
-- An authenticated page plants a session cookie; the module script and
-  stylesheet authenticate with it; an asset with no credential is still 401.
-- Path traversal out of the static root is refused, checked on the resolved
-  path rather than the request string.
-- Cross-origin WebSocket upgrades are refused. WebSocket handshakes are not
-  subject to the same-origin policy, so without this any page the user has open
-  would only need to guess the port. The token already blocks that; this is a
-  second line that costs nothing.
-
-`--bind 0.0.0.0` prints a warning naming what it exposes. There is no TLS.
-
-**What "cross-origin" is compared against changed in 0.2.0.** It used to be a
-set the server built from its own bind address and port. That equals the
-browser's origin only when the client reaches the server directly. The container
-made the difference visible: `docker run -p 8799:8791` served the page on 8799
-and then refused the socket that page opened, because the allowed set said 8791.
-An `ssh -L 9000:localhost:8791` tunnel had the same fault, and so did any
-reverse proxy.
-
-The check now compares the `Origin` header to **this request's own `Host`**,
-which is the actual same-origin question and does not depend on what the server
-listens on. It is not weaker: a page on `evil.example` reaching 127.0.0.1:8791
-still sends `Origin: https://evil.example` against `Host: 127.0.0.1:8791`, and
-is refused. A reverse proxy that rewrites `Host` to its backend does break it —
-that is the one deployment this does not serve, and `X-Forwarded-Host` is not
-consulted, because a header the client can set is not evidence.
-`packages/server/test/origin.test.mjs` holds the cases.
-
-### 5.1 Why there is a cookie
-
-The server prints a URL with the token in the query string, so the HTML page
-authenticates. The page then requests `/assets/index-*.js` and
-`/assets/index-*.css` on its own, and **a browser does not copy a query
-parameter onto sub-resource requests.** Without a cookie those come back 401.
-
-The symptom was misleading enough to be worth recording: because the 401 body is
-`text/plain`, Firefox reported
-
-> Loading module from "…/assets/index-*.js" was blocked because of a disallowed
-> MIME type ("text/plain").
-
-which reads like a content-type bug in the static handler. It was an auth
-refusal wearing a MIME error's clothes.
-
-The fix is Jupyter's: the first request that authenticates by any other means
-gets `Set-Cookie` with `HttpOnly` and `SameSite=Strict`, and every sub-resource
-rides on that. No `Secure` flag, because the server speaks plain HTTP and
-setting it would mean the cookie is never sent at all.
-
-A second change came out of the same bug. The static handler used to fall back
-to `index.html` for **any** missing path, so a missing `.js` was answered with
-HTML — producing exactly the same misleading MIME complaint for a completely
-different cause. It now falls back only for paths with no file extension, and
-404s the rest.
-
-### 5.1 The server is not a multiplexer
-
-One τ process, one conversation, many viewers. That keeps τ's own rule intact:
-a conversation has exactly one writing process. Several viewers of one
-conversation is a different thing from several writers, and only the second is
-dangerous.
-
-The Hub does rewrite request ids. Every connection numbers its requests from 1,
-so two browsers both send `id: 1`; forwarding those verbatim would deliver one
-client's result to another. The Hub assigns its own upstream id, remembers the
-owner, and restores the original on the way back.
-
-**Known gap:** there is no per-client backpressure policy. A slow socket during
-a fast stream buffers in the WebSocket layer.
+There is no TLS. A daemon bound beyond loopback is exposed to whatever can
+reach it, and that is the daemon's configuration to make.
 
 ---
 
-## 5.2 Sessions are shared with the TUI, if you say so
+## 5.1 Sessions are shared, by construction
 
-**RPC sessions are ordinary tau sessions.** Same format, same store machinery,
-same `SessionCatalog`. They are simply written somewhere else by default.
+There used to be a section here about pointing the RPC child and the TUI at one
+session directory with `--session-dir`, because the two defaulted to different
+stores. There is one store now -- the daemon's -- and every head on it,
+`tau --connect` included, lists the same sessions across every working
+directory. The picker groups them by cwd, this head's first, because a session's
+cwd is where its tools run and two sessions with the same first line in two
+projects are different conversations.
 
-Measured on this checkout:
-
-- `tau --mode rpc` defaults to a private `<tmp>/.tau-<uid>/sessions`. The TUI and
-  `--print` use `~/.tau/sessions`. Both are namespaced by working directory.
-- Sessions from an RPC process report `addressable: true` — they are durable and
-  `switch_session` can reach them. They are not second-class.
-- The isolation is deliberate. tau's own help text: "so an RPC host does not fill
-  your session list."
-
-Point both at one directory with `--session-dir` and they are **fully
-interchangeable, in both directions**:
-
-| Direction | Verified by |
-|---|---|
-| RPC resumes a TUI session | `switch_session` onto a session written by `tau -p`, confirmed by a following `get_state` |
-| TUI resumes an RPC session | `list_sessions` offers it, and `most_recent` — what `--continue` uses — selects it |
-
-The web client's session picker shows this working: a row titled from a prompt
-sent through `tau -p` appears in the browser and switching to it succeeds.
-
-Two consequences worth stating plainly:
-
-- **The temp default does not survive a reboot** on a system that clears its
-  temp directory. Conversations held only there are lost.
-- **The store directory is part of a session's identity.** Two identical-looking
-  listings can be two different universes, which is why the picker displays the
-  store directory and the working-directory scope rather than just the rows.
-
-Set it with `tau-code.sessionDir` in the extension, or `--session-dir` on the
-server. Both expand a leading `~`: tau is spawned with no shell in between, so
-an unexpanded `~` would become a literal directory of that name.
+A session is created when the reader SENDS, not when a panel opens. The RPC
+child wrote a session the moment it started, so a user who opened the panel
+four times had four empty sessions; opening a panel is not starting a
+conversation.
 
 ## 6. Forward compatibility
 
-Three things cost nothing now and are expensive to retrofit. All three are in
-the scaffold.
-
-- **Version negotiation.** `connect()` calls `get_capabilities` first and
-  refuses on a MAJOR mismatch, rather than discovering it on the first failing
-  request.
-- **The client answers server-originated requests.** τ's reverse channel does
-  not exist yet — `ui_methods` is `[]` — but the specification says a client
-  must answer a server-originated request, at minimum with `METHOD_NOT_FOUND`.
-  A client that silently ignores it when it arrives hangs the agent; one that
-  errors lets τ fail fast. `TauClient` answers today, so the channel is purely
-  additive later.
-- **Nothing caches the cursor.** τ's rule is that no host may cache "the tip".
-  The store *displays* the last cursor τ reported and never sends it back.
-
-One place is marked rather than silently wrong: `Hub` broadcasts
-server-originated requests to every client. When the reverse channel arrives,
-several answers to one id is a real problem, and that line has to choose an
-owner. The comment says so.
+- **Version negotiation.** `hello` names the protocol this client was generated
+  against; a mismatch is refused by the daemon, and the client closes and says
+  which side to upgrade rather than discovering it on the first failing
+  request. The version is read off `generated.ts`, never written as a literal.
+- **Additive fields are tolerated.** Everything the daemon sends is typed open.
+- **Nothing caches the tip.** A cursor's leaf is whatever the last `cursors`
+  event said; the store displays it and every request names a cursor, never a
+  leaf this head remembered.
 
 ---
 
@@ -521,6 +434,10 @@ The extension comes last, and by then it is mostly rendering.
 
 ### 9.1 Three artifacts, and npm is not one of them
 
+> **0.6.0:** `@ffwf/tau-code-server` no longer exists (§2.1), so the one
+> package anyone would have installed from npm is gone with it. The image is now
+> τ plus the built web client, with no Node at all (§15).
+
 `ffwf-tau-code-<version>.vsix`, `ffwf/tau-code:<version>`, and this checkout.
 `scripts/package.sh` builds the first two and publishes nothing.
 
@@ -577,6 +494,10 @@ someone could otherwise publish. Its placeholders contain a README and no code,
 and it publishes only with `--publish`.
 
 ### 9.3 The web build now ships inside the server package
+
+> **Superseded in 0.6.0.** There is no server package. `tau serve` hosts the
+> web build from `serve.web_root` or `--web-root` (§5), and the image passes
+> `--web-root` its own copy. What follows is the history.
 
 `DEFAULT_STATIC` used to resolve to `../../web/dist-web` — a sibling workspace.
 That path exists in a checkout and nowhere else, so the server could not have
@@ -732,6 +653,11 @@ the reader has started to read it.
 
 ### 10.3 The panel lands on the session list
 
+> **0.6.0:** the cause below is gone with the RPC child. A session is created
+> when the reader SENDS (§5.1), so opening a panel writes nothing; the panel
+> lands on the picker when it has no session to show, and the composer offers
+> to start one in the workspace folder.
+
 **τ writes a session to its store when the agent starts, not when the first
 message is sent.** Measured: six files in
 `/tmp/.tau-1000/sessions/--home-john-Development-tau-code--`, each 320 bytes and
@@ -790,6 +716,12 @@ The status bar showed which model was running and offered no way to change it.
 
 ### 11.1 A name is not an id, and neither can be derived from the other
 
+> **0.6.0:** still true, and now simpler to honour. A cursor reports its model
+> by config NAME (`CursorState.model`), and `attach` carries every name with what
+> it resolves to, so the active row is found by name and §11.2's matching is no
+> longer needed: an alias of the running model is shown as a hint instead
+> (`aliasesOf`). A switch is per cursor and takes effect on its next turn.
+
 `set_model` takes a config NAME — a key in `~/.tau/config.json`'s `models` map.
 `get_state` reports the running model as an `{id, provider}` projection, which
 is what a name RESOLVED to. In this repository owner's own config `local-llm`
@@ -825,6 +757,9 @@ entry the same 128000 today, including the active one, so the numbers carry no
 difference; displaying them would invite a comparison the child does not make.
 
 ### 11.3 No capability gate, unlike `@` completion
+
+> **0.6.0:** there is no call to gate: the models arrive in the `attach`
+> answer. τ's refusals are still shown verbatim.
 
 `@` completion checks the peer's command list for `complete_path` before
 offering anything, because it has to decide before the reader types and a
@@ -916,6 +851,11 @@ Every one of them is on the node, and a rule that had to infer one would be
 evidence the projection is short a field.
 
 ### 12.4 Two reads, because a preview is not a body
+
+> **0.6.0:** one read. `get_tree` is still asked for the rows, at this head's
+> cursor; the bodies the detail pane shows come from the replica (§4), which
+> holds every entry in full -- including the ones off the active path that
+> `get_messages` could not serve.
 
 `get_tree` carries a one-line `preview` per row precisely so a browser does not
 pull the bodies of rows it is not showing; the detail pane calls `get_entry` for
@@ -1068,6 +1008,11 @@ candidate: an installed-but-broken runtime must not stop a working system τ,
 and must not be silent either.
 
 ### 14.3 Two τs is the failure that hides, so it is a banner
+
+> **0.6.0:** the τ that matters is the one ANSWERING. `tau serve -d` reuses a
+> daemon that is already running, whichever τ started it, so the panel reports
+> hello's `version` to the host, which compares it with the τ this window would
+> have started and says so when they differ (§2.3).
 
 Resolution order, and why each step is where it is:
 
@@ -1375,3 +1320,38 @@ four "tests" failed with `MODULE_NOT_FOUND` and zero tests ran. It is now bare
 `node --test`, which discovers the same 140 tests on both, recursively, and
 picks up a test file added anywhere rather than only in the four directories
 that exist today. `engines` still says `>=20`, because that is still true.
+
+---
+
+## 15. `tau serve` (0.6.0)
+
+The hub and the runner are deleted; both hosts are clients of τ's daemon
+(§1--§6 are rewritten for it). What it took, beyond the client itself:
+
+- **τ grew what this client used.** Porting found that the daemon's first
+  protocol had no equivalent for a third of the RPC verbs this client called:
+  the built-in command vocabulary, flows, `@file` completion and expansion,
+  extension load errors, the tree's τ-computed facts, fork, model records, the
+  pending extension request at a cursor, the forms open at attach, a way to
+  perform a flow's `Ready`, and a schema that typed the receiving half of the
+  wire at all. Each was added on τ's side rather than re-derived here; the
+  rule in §3 is what made the gaps visible, because a hand-typed result would
+  have hidden every one.
+- **The live view was nearly quadratic.** The daemon's first `agent_event` was
+  the core event as-is, whose `message_update` carries the whole cumulative
+  message on every chunk. It is the RPC wire's projection now, bounded deltas
+  and all (§1.2).
+- **A busy cursor queues.** `enqueue` is the core's own strategy for "run this
+  after the current turn"; it replaced `reject` (§4).
+- **The image is τ and a directory.** `ffwf-tau[serve]` from PyPI, or from
+  `--build-context tau-wheels=DIR` before a release is on PyPI, plus the built
+  web client, served by `tau serve --web-root`. Its verify stage says hello at
+  the protocol `generated.ts` names and fetches the page.
+- **The runtime payload carries a daemon.** It installs
+  `ffwf-tau-coding-agent[serve]`; `websockets` is the second compiled package in
+  the closure and publishes wheels for all nine targets (checked with
+  `pip download`, not assumed). Its build verifies by starting `tau serve` from
+  the payload and saying hello through the payload's own `websockets`.
+- **The smoke scripts start a throwaway daemon** (`scripts/lib/daemon.mjs`):
+  a temp HOME, a free port, and nothing of `~/.tau` opened.
+

@@ -68,6 +68,11 @@ export class Relay {
     this.#api.postMessage({ tauCode: 'command', command, ...(argument === undefined ? {} : { argument }) });
   }
 
+  /** Tell the host which daemon answered, so it can compare it with the τ it would start. */
+  reportDaemon(version: string, pid: number): void {
+    this.#api.postMessage({ tauCode: 'daemon', version, pid });
+  }
+
   /** The session this page was on, so a restored tab re-attaches to it. */
   get rememberedSession(): string | null {
     const state = this.#api.getState() as { sessionId?: unknown } | null;

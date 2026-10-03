@@ -41,6 +41,8 @@ export class DaemonRelay implements vscode.Disposable {
   #disposed = false;
   /** Notices from the last daemon lookup, re-sent to a reloaded page. */
   #notices: HostNotice[] = [];
+  /** Which τ this window would start, from the last lookup. */
+  #resolution: TauResolution | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -113,6 +115,9 @@ export class DaemonRelay implements vscode.Disposable {
       case 'command':
         void vscode.commands.executeCommand(message.command, ...(message.argument === undefined ? [] : [message.argument]));
         return;
+      case 'daemon':
+        this.#compareDaemon(message.version, message.pid);
+        return;
     }
   }
 
@@ -180,7 +185,33 @@ export class DaemonRelay implements vscode.Disposable {
     });
   }
 
+  /**
+   * Say so when the daemon answering is not the τ this window would start.
+   *
+   * `tau serve -d` reuses a daemon that is already running, whichever τ
+   * started it -- last week's PATH install, say, while the bundled runtime is
+   * newer. That is the right behaviour (one daemon per store), and it is
+   * exactly the "two τs" case the banner exists for, so it is reported against
+   * the τ that is actually serving rather than the one that was resolved.
+   */
+  #compareDaemon(version: string, pid: number): void {
+    const chosen = this.#resolution?.chosen;
+    if (!chosen || chosen.version === null || chosen.version === version) return;
+    const notice: HostNotice = {
+      id: `tau-daemon-${version}-${chosen.version}`,
+      level: 'warn',
+      text:
+        `The daemon serving this panel is τ ${version} (pid ${pid}), which was already running. ` +
+        `This window would have started τ ${chosen.version}, from ${chosen.where}. ` +
+        `Stop that daemon to switch; the next panel starts the other one.`,
+    };
+    this.#notices = [...this.#notices.filter((old) => !old.id.startsWith('tau-daemon-')), notice];
+    this.output.warn(`[${this.label}] ${notice.text}`);
+    this.#flushNotices();
+  }
+
   #noticesFor(resolution: TauResolution): void {
+    this.#resolution = resolution;
     const mismatch = versionMismatch(resolution);
     this.#notices = mismatch
       ? [

@@ -31,6 +31,14 @@ function App({ context }: { context: WebviewContext }): JSX.Element {
 
   const remembered = useMemo(() => relay.rememberedSession, []);
 
+  // Which τ is answering. A daemon outlives the window that started it, so it
+  // may be a different τ from the one this window would start; the host
+  // compares the two and says so.
+  const hello = state.hello;
+  useEffect(() => {
+    if (hello) relay.reportDaemon(hello.version, hello.pid);
+  }, [hello]);
+
   // Enter inserts a newline and Ctrl+Enter sends, matching τ's own TUI
   // default (`enter_key: "newline"`, docs/ENTER-KEY.md). An agent prompt is
   // usually several lines, and the editor this sits beside treats Enter the

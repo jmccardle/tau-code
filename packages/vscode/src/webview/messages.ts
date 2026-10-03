@@ -24,7 +24,9 @@ export type FromWebview =
   | { tauCode: 'open'; connection: number }
   | { tauCode: 'frame'; connection: number; frame: unknown }
   | { tauCode: 'close'; connection: number }
-  | { tauCode: 'command'; command: string; argument?: string };
+  | { tauCode: 'command'; command: string; argument?: string }
+  /** The daemon that answered hello: which τ is actually serving this panel. */
+  | { tauCode: 'daemon'; version: string; pid: number };
 
 export type ToWebview =
   | { tauCode: 'frame'; connection: number; frame: unknown }
