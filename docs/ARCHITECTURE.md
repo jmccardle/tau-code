@@ -22,15 +22,19 @@ in VS Code 1.135.0 and VSCodium 1.98.1 with the built `.vsix` installed.
 τ ships a JSON-RPC 2.0 server over LF-delimited stdio, started with
 `tau --mode rpc`. Measured, not assumed:
 
-- **Protocol 1.4**, with MAJOR/MINOR version negotiation.
-- **20 live verbs** in three tiers, and **7 declined verbs each with a stated
-  reason** — calling one returns `METHOD_NOT_FOUND`, and the reason is the only
-  place that says why.
-- **10 event types** with a fixed record shape.
+- MAJOR/MINOR version negotiation.
+- Live verbs in three tiers, and declined verbs each with a stated reason —
+  calling one returns `METHOD_NOT_FOUND`, and the reason is the only place that
+  says why.
+- Event types with a fixed record shape.
 - A full error taxonomy, stated limits, and capability negotiation.
 
-`docs/RPC-PROTOCOL.md` in the τ repository is generated from τ's own command
-table, and a test there fails if the two disagree.
+The protocol version and the counts of each are not written here. They live on
+the **Counts** line of `docs/RPC-PROTOCOL.md` in the τ repository, which is
+generated from τ's own command table, and a test there fails if the two
+disagree. An earlier revision of this section copied them ("Protocol 1.4",
+"20 live verbs", "10 event types") and they went stale within three releases;
+a number copied out of a generated file is a claim nobody re-checks.
 
 ### 1.1 A chat head needs nothing new
 
@@ -222,9 +226,9 @@ Ranked by how hard each is to reproduce outside an editor:
 ## 3. Code generation
 
 `npm run generate` spawns τ, sends one `get_capabilities` request, and writes
-`packages/protocol/src/generated.ts` from the answer — 20 command types with
-their params and results, the event record, the declined table, the limits.
-About 68 KiB of JSON in, 920 lines of TypeScript out.
+`packages/protocol/src/generated.ts` from the answer — one type per live
+command with its params and result, the event record, the declined table, the
+limits.
 
 This uses only the documented wire. It needs no Python import, no access to τ's
 source tree, and no script committed on τ's side. `npm run check:protocol`
