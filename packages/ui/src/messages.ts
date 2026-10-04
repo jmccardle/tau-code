@@ -16,7 +16,8 @@ import type {
  *
  * - **Messages** are the conversation: user, agent, tool results, the system
  *   prompt (folded), and an extension's custom message when it asked to be
- *   displayed.
+ *   displayed. τ's own `turn_error` message is the one custom message drawn as
+ *   what it is: every turn that raised ends with one (tau docs/TURN-FAILURES.md).
  * - **Compaction, elision and branch summaries** change what the MODEL sees
  *   from here on, so they are drawn where they happen, with the summary. The
  *   transcript keeps everything before them: it shows the conversation, and
@@ -40,10 +41,14 @@ export type Item =
       toolName: string;
       blocks: ContentBlock[];
       isError: boolean;
+      /** What the tool raised, which the model was not shown (tau docs/TURN-FAILURES.md §3). */
+      exception: string | null;
+      /** Everything else in `details`; the exception is drawn on its own. */
       details: Record<string, unknown> | null;
     }
   | { kind: 'system'; id: string; text: string }
   | { kind: 'custom'; id: string; customType: string; blocks: ContentBlock[] }
+  | { kind: 'turnError'; id: string; blocks: ContentBlock[] }
   | { kind: 'marker'; id: string; label: string; text: string }
   | { kind: 'incomplete'; id: string; entryType: string; blocks: ContentBlock[] };
 
@@ -63,19 +68,24 @@ function messageItem(id: string, message: Message): Item | null {
         stopReason: message.stop_reason,
         error: message.error_message ?? null,
       };
-    case 'toolResult':
+    case 'toolResult': {
+      const { exception, ...rest } = message.details ?? {};
       return {
         kind: 'toolResult',
         id,
         toolName: message.tool_name,
         blocks: message.content,
         isError: message.is_error === true,
-        details: message.details ?? null,
+        exception: typeof exception === 'string' && exception ? exception : null,
+        details: Object.keys(rest).length > 0 ? rest : null,
       };
+    }
     case 'system':
       return { kind: 'system', id, text: message.content };
     case 'custom':
-      return message.display ? { kind: 'custom', id, customType: message.customType, blocks: message.content } : null;
+      if (!message.display) return null;
+      if (message.customType === 'turn_error') return { kind: 'turnError', id, blocks: message.content };
+      return { kind: 'custom', id, customType: message.customType, blocks: message.content };
   }
 }
 

@@ -117,6 +117,7 @@
 .tau-entry-assistant { border-left-color: var(--tau-ok); }
 .tau-entry-result { border-left-color: var(--tau-muted); }
 .tau-entry-result.tau-error { border-left-color: var(--tau-error); }
+.tau-entry-failure { border-left-color: var(--tau-error); color: var(--tau-error); }
 .tau-entry-unknown { border-left-color: var(--tau-warn); }
 
 .tau-role {

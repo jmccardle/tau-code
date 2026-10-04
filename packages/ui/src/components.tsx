@@ -108,7 +108,12 @@ function ItemView({ item, writing }: { item: Item; writing: boolean }): JSX.Elem
           <Blocks blocks={item.blocks} markdown />
           {/* A stopped answer is a prefix, and looks finished unless it says so. */}
           {item.stopReason === 'aborted' ? <div className="tau-muted">Stopped before it finished.</div> : null}
-          {item.error ? <div className="tau-notice tau-warn">The model call failed: {item.error}</div> : null}
+          {/* The `turn_error` entry after it says why, so this only marks the cut. */}
+          {item.stopReason === 'error' ? (
+            <div className="tau-muted" title={item.error ?? undefined}>
+              The response stream failed here.
+            </div>
+          ) : null}
         </div>
       );
     case 'toolResult':
@@ -121,6 +126,9 @@ function ItemView({ item, writing }: { item: Item; writing: boolean }): JSX.Elem
             </span>
           </summary>
           <Blocks blocks={item.blocks} />
+          {item.exception ? (
+            <div className="tau-notice tau-warn">Not shown to the model: {item.exception}</div>
+          ) : null}
           {item.details ? <pre className="tau-pre">{JSON.stringify(item.details, null, 2)}</pre> : null}
         </details>
       );
@@ -136,6 +144,12 @@ function ItemView({ item, writing }: { item: Item; writing: boolean }): JSX.Elem
         <div className="tau-entry tau-entry-custom">
           <div className="tau-role">{item.customType}</div>
           <Blocks blocks={item.blocks} markdown />
+        </div>
+      );
+    case 'turnError':
+      return (
+        <div className="tau-entry tau-entry-failure">
+          <Blocks blocks={item.blocks} />
         </div>
       );
     case 'marker':
@@ -257,7 +271,6 @@ export function Transcript({ state }: TranscriptProps): JSX.Element {
           The answer is truncated, not finished: the loop stopped because of <code>{live.endReason}</code>.
         </div>
       ) : null}
-      {live.error ? <div className="tau-notice tau-warn">The agent loop raised: {live.error}</div> : null}
     </div>
   );
 }

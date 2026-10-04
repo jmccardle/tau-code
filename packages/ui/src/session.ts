@@ -72,8 +72,6 @@ export interface Live {
   tools: LiveToolCall[];
   /** How the last run on this cursor ended. Truncating reasons are shown. */
   endReason: string | null;
-  /** Set when the last run raised rather than finishing. */
-  error: string | null;
   /** The output cap ended a completion mid-word; the answer is a prefix. */
   truncation: { droppedToolCalls: number | null } | null;
   /** τ's sentence that a prompt cache should have been read and was not. */
@@ -127,7 +125,6 @@ const NO_LIVE: Live = {
   blocks: [],
   tools: [],
   endReason: null,
-  error: null,
   truncation: null,
   cacheNotice: null,
 };
@@ -385,7 +382,8 @@ export class SessionStore {
             blocks: [],
             tools: [],
             endReason: event.end_reason ?? null,
-            error: event.error ?? null,
+            // `event.error` is not kept: the turn that raised wrote a
+            // `turn_error` entry saying so, which a reload shows too.
             cacheNotice: fresh ? notice : live.cacheNotice,
           },
         });

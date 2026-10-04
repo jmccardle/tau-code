@@ -760,7 +760,11 @@ function detailText(item: Item | null): string {
         })
         .join('\n\n');
     case 'toolResult':
+      return item.exception
+        ? `${blocksToText(item.blocks)}\n\nNot shown to the model: ${item.exception}`
+        : blocksToText(item.blocks);
     case 'custom':
+    case 'turnError':
     case 'incomplete':
       return blocksToText(item.blocks);
     case 'system':
