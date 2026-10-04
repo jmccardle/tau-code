@@ -140,8 +140,8 @@ Then open `http://127.0.0.1:8256/`.
   remapped port (`-p 9000:8256`) works: the daemon's Origin check compares a
   page's origin with the host it dialled, not with the port it listens on.
 - Which τ is baked in is the `TAU_SPEC` build argument,
-  `ffwf-tau[serve]==0.12.0`. Until a release is on PyPI, build against local
-  wheels with `docker build --build-context tau-wheels=DIR .`, or
+  `ffwf-tau[serve]==0.12.0`. To build against a τ that is not on PyPI yet, use
+  local wheels with `docker build --build-context tau-wheels=DIR .`, or
   `TAU_WHEELS=DIR npm run package:image`.
 
 `docker build --target verify -t ffwf/tau-code-verify . && docker run --rm
@@ -166,7 +166,7 @@ To build an installable `.vsix` instead:
 
 ```bash
 npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
-code --install-extension ffwf-tau-code-0.5.2.vsix
+code --install-extension ffwf-tau-code-0.6.0.vsix
 ```
 
 **If you installed 0.1.x, uninstall it first.** The extension ID changed from

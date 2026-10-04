@@ -53,8 +53,8 @@ RUN npx tsc --build packages/web \
 FROM python:3.12-slim-bookworm AS runtime
 
 # Which τ. `[serve]` brings the WebSocket daemon. 0.12.0 is the first release
-# with `tau serve`; until it is on PyPI this pin does not resolve from there,
-# and the image builds only with --build-context tau-wheels (above).
+# with `tau serve`. A τ that is not on PyPI yet builds with
+# --build-context tau-wheels (above).
 #
 # packages/runtime pins the same release. Those two move together: two
 # artifacts shipping two τs is how a client ends up tested against neither.
