@@ -23,7 +23,7 @@ function attached(overrides = {}) {
 }
 
 function event(seq, kind, data, epoch = 'e1') {
-  return { type: 'event', session_id: 's', epoch, seq, kind, data };
+  return { session_id: 's', epoch, seq, kind, data };
 }
 
 test('a snapshot replaces the replica and sets the resume point', () => {

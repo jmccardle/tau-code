@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ServeClient, ServeError, ProtocolVersionError, PROTOCOL_VERSION } from '../dist/index.js';
+import { ERROR_CODES, ServeClient, ServeError, ProtocolVersionError, PROTOCOL_VERSION } from '../dist/index.js';
 
 /** A transport whose far end is this test. */
 function pair() {
@@ -16,12 +16,12 @@ function pair() {
   return { transport, sent, deliver: (frame) => deliver(frame), close: (...args) => close(...args) };
 }
 
-test('a request carries its type and an id, and resolves with the result', async () => {
+test('a request is a JSON-RPC 2.0 frame, and resolves with the result', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
   const answer = client.request('list_sessions', {});
-  assert.deepEqual(peer.sent, [{ type: 'list_sessions', id: 1 }]);
-  peer.deliver({ type: 'response', id: 1, ok: true, result: [] });
+  assert.deepEqual(peer.sent, [{ jsonrpc: '2.0', id: 1, method: 'list_sessions', params: {} }]);
+  peer.deliver({ jsonrpc: '2.0', id: 1, result: [] });
   assert.deepEqual(await answer, []);
 });
 
@@ -29,37 +29,46 @@ test('hello names the generated protocol version', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
   const answer = client.hello('tau-code-test', null);
-  assert.equal(peer.sent[0].protocol, PROTOCOL_VERSION);
-  assert.equal(peer.sent[0].token, null);
-  peer.deliver({ type: 'response', id: 1, ok: true, result: null });
+  assert.equal(peer.sent[0].method, 'hello');
+  assert.equal(peer.sent[0].params.protocol, PROTOCOL_VERSION);
+  assert.equal(peer.sent[0].params.token, null);
+  peer.deliver({ jsonrpc: '2.0', id: 1, result: null });
   await answer;
 });
 
-test('a protocol_mismatch refusal is a ProtocolVersionError and closes the client', async () => {
+test('a PROTOCOL_MISMATCH refusal is a ProtocolVersionError and closes the client', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
   const answer = client.hello('tau-code-test', null);
   peer.deliver({
-    type: 'response',
+    jsonrpc: '2.0',
     id: 1,
-    ok: false,
-    error: { code: 'protocol_mismatch', message: 'this daemon speaks 9.9' },
+    error: { code: ERROR_CODES.PROTOCOL_MISMATCH, message: 'this daemon speaks 9.9', data: null },
   });
   await assert.rejects(answer, ProtocolVersionError);
   assert.equal(client.closed, true);
 });
 
-test("ok:false keeps τ's sentence verbatim as detail", async () => {
+test("an error keeps τ's sentence verbatim as detail, and its data", async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
   const answer = client.request('detach', { session_id: 's' });
-  peer.deliver({ type: 'response', id: 1, ok: false, error: { code: 'not_found', message: 'no session s' } });
+  peer.deliver({ jsonrpc: '2.0', id: 1, error: { code: ERROR_CODES.NOT_FOUND, message: 'no session s', data: { name: 's' } } });
   await assert.rejects(answer, (error) => {
     assert.ok(error instanceof ServeError);
-    assert.equal(error.code, 'not_found');
+    assert.equal(error.code, -32007);
     assert.equal(error.detail, 'no session s');
+    assert.deepEqual(error.data, { name: 's' });
     return true;
   });
+});
+
+test('an answer with neither result nor error rejects rather than resolving undefined', async () => {
+  const peer = pair();
+  const client = new ServeClient(peer.transport);
+  const answer = client.request('list_sessions', {});
+  peer.deliver({ jsonrpc: '2.0', id: 1 });
+  await assert.rejects(answer, /neither a result nor an error/);
 });
 
 test('a close rejects every pending request with its reason, and later sends say why', async () => {
@@ -71,16 +80,18 @@ test('a close rejects every pending request with its reason, and later sends say
   await assert.rejects(client.request('list_sessions', {}), /Cannot send list_sessions: no daemon is listening/);
 });
 
-test('events are routed, and a response for no request is a protocol violation', () => {
+test('events are routed by method, and an answer for no request is a protocol violation', () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
   const events = [];
   const violations = [];
   client.on('event', (event) => events.push(event));
   client.on('protocolViolation', (detail) => violations.push(detail));
-  peer.deliver({ type: 'event', session_id: 's', epoch: 'e', seq: 1, kind: 'ui', data: {} });
-  peer.deliver({ type: 'response', id: 99, ok: true, result: null });
-  peer.deliver({ type: 'mystery' });
-  assert.equal(events.length, 1);
-  assert.equal(violations.length, 2);
+  peer.deliver({ jsonrpc: '2.0', method: 'event', params: { session_id: 's', epoch: 'e', seq: 1, kind: 'ui', data: {} } });
+  peer.deliver({ jsonrpc: '2.0', id: 99, result: null });
+  peer.deliver({ jsonrpc: '2.0', id: null, error: { code: ERROR_CODES.PARSE_ERROR, message: 'not JSON' } });
+  peer.deliver({ jsonrpc: '2.0', method: 'mystery' });
+  assert.deepEqual(events, [{ session_id: 's', epoch: 'e', seq: 1, kind: 'ui', data: {} }]);
+  assert.equal(violations.length, 3);
+  assert.match(violations[1], /unknown id null: -32700 not JSON/);
 });

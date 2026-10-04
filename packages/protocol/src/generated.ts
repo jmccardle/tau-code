@@ -6,11 +6,11 @@
  * installed τ. τ's protocol dataclasses are the source of truth; nothing here is
  * hand-maintained, and `npm run check:protocol` fails when this file is stale.
  *
- * tau serve protocol 0.7
+ * tau serve protocol 0.8
  */
 
 /** The protocol version `hello` must name. */
-export const PROTOCOL_VERSION = "0.7" as const;
+export const PROTOCOL_VERSION = "0.8" as const;
 /** The port `tau serve` listens on when its config names none. */
 export const DEFAULT_PORT = 8256 as const;
 
@@ -22,7 +22,6 @@ export interface Abort {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "abort";
 }
 
 export interface AbortResult {
@@ -40,7 +39,6 @@ export interface AgentEventEvent {
   kind: "agent_event";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -48,7 +46,6 @@ export interface AgentEventEvent {
 export interface Answer {
   request_id: string;
   session_id: string;
-  type: "answer";
   /** The `{field: value}` answers, or `None` to cancel the form. */
   value: Record<string, unknown> | null;
 }
@@ -65,7 +62,6 @@ export interface AnswerRequest {
   /** The request's `entry_id`, as get_pending_request reported it or as a SUBMISSION_REJECTED refusal carried it. */
   request_id: string;
   session_id: string;
-  type: "answer_request";
   /** The filled fields, keyed by field name. Omitted is the empty dict, which is what an ask declaring no fields takes. Checked against the ask's declared fields before anything is appended: nothing is coerced and no partial answer is persisted. */
   values?: Record<string, unknown>;
 }
@@ -143,7 +139,6 @@ export interface Attach {
   session_id: string;
   /** The last `seq` the client applied under that epoch. */
   since?: number | null;
-  type: "attach";
 }
 
 /** The answer to `Attach`. */
@@ -212,7 +207,6 @@ export interface ChannelEvent {
   kind: "channel";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -223,7 +217,6 @@ export type ChannelEventData = SubmissionStartChannel | SubmissionEndChannel | C
 export interface CloseCursor {
   cursor_id: string;
   session_id: string;
-  type: "close_cursor";
 }
 
 /** One slash command a session answers, as RPC `get_commands` lists it. */
@@ -260,7 +253,6 @@ export interface CommitBranch {
   /** The marked entry ids, in any order — tree_surgery puts them into tree order. The longest run that is already an ancestor chain is kept in place; the rest are minted as copies parented under it, so nothing is re-parented and nothing is erased. */
   ids: string[];
   session_id: string;
-  type: "commit_branch";
 }
 
 export interface CommitBranchResult {
@@ -281,7 +273,6 @@ export interface Compact {
   /** Optional extra focus for the generated summary, threaded unchanged to AgentSession.compact(custom_instructions=...). */
   custom_instructions?: string;
   session_id: string;
-  type: "compact";
 }
 
 export interface CompactResult {
@@ -333,7 +324,6 @@ export interface CompactionEndEvent {
   kind: "compaction_end";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -373,7 +363,6 @@ export interface Compare {
   session_id: string;
   /** The prompt every cursor receives, never expanded as a command. */
   text: string;
-  type: "compare";
 }
 
 /** A comparison turn's place in its comparison (`tau_agent_core.compare.COMPARE_KEY`). */
@@ -424,7 +413,6 @@ export interface CompleteMessageId {
   /** Which entries are candidates. 'in_session' is every entry in the log; 'ancestors_of_leaf' is the parent chain from the root to `leaf` inclusive; 'descendants_of_leaf' is the subtree below it, excluding `leaf` itself. Omitted means 'in_session'. */
   scope?: "in_session" | "ancestors_of_leaf" | "descendants_of_leaf";
   session_id: string;
-  type: "complete_message_id";
 }
 
 export interface CompleteMessageIdResult {
@@ -447,7 +435,6 @@ export interface CompletePath {
   session_id: string;
   /** The editor's contents as typed, NOT just the @word. */
   text: string;
-  type: "complete_path";
 }
 
 export interface CompletePathResult {
@@ -504,7 +491,6 @@ export interface CursorsEvent {
   kind: "cursors";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -569,13 +555,11 @@ export interface CustomRoleMessage {
 /** Re-read a session's extension surface, after an extension was enabled or reloaded. */
 export interface Describe {
   session_id: string;
-  type: "describe";
 }
 
 /** Stop receiving a session's events. The session keeps running. */
 export interface Detach {
   session_id: string;
-  type: "detach";
 }
 
 /**
@@ -588,7 +572,6 @@ export interface DisableExtension {
   /** The managed extension to disable — a `path` from list_managed_extensions, or a unique file stem. */
   path: string;
   session_id: string;
-  type: "disable_extension";
 }
 
 export interface DisableExtensionResult {
@@ -663,7 +646,6 @@ export interface ElideSpan {
   /** The entry the fold resumes at — the anchor itself or one of its ANCESTORS, never a descendant. Everything on the path before it is the elided span. A resume point the fold's scan cannot reach would empty the context silently, which is why the wrong direction is refused rather than tolerated. */
   first_kept_id: string;
   session_id: string;
-  type: "elide_span";
 }
 
 export interface ElideSpanResult {
@@ -684,7 +666,6 @@ export interface EnableExtension {
   /** The managed extension to enable — a `path` from list_managed_extensions, or a unique file stem. */
   path: string;
   session_id: string;
-  type: "enable_extension";
 }
 
 export interface EnableExtensionResult {
@@ -706,7 +687,6 @@ export interface EndCompare {
   comparison_id: string;
   keep: string | null;
   session_id: string;
-  type: "end_compare";
 }
 
 /**
@@ -722,7 +702,6 @@ export interface EntryAppendEvent {
   kind: "entry_append";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -742,7 +721,6 @@ export interface EntryFinalEvent {
   kind: "entry_final";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -753,7 +731,6 @@ export interface EntryOpenEvent {
   kind: "entry_open";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -775,7 +752,6 @@ export interface EnumerateDomain {
   /** For `message_id` only: which entries are candidates. Defaults to `in_session`. */
   scope?: "in_session" | "ancestors_of_leaf" | "descendants_of_leaf" | null;
   session_id: string;
-  type: "enumerate_domain";
 }
 
 export interface EnumerateDomainResult {
@@ -790,15 +766,27 @@ export interface EnumerateDomainResult {
 
 /** Why a request failed. `code` is stable; `message` is for a human. */
 export interface Error {
-  code: "bad_request" | "unauthorized" | "protocol_mismatch" | "not_found" | "busy" | "failed" | "submission_rejected" | "command_not_supported" | "session_not_persisted";
+  /** One of `ERROR_CODES`, the table RPC uses too (`tau_agent_core.rpc.dialect`). */
+  code: -32700 | -32603 | -32602 | -32601 | -32600 | -32007 | -32006 | -32005 | -32004 | -32002 | -32001 | -32000;
   /** RPC's `error.data` for an RPC verb's refusal (a submission's `lock`, the offending `name`), else `None`. */
   data?: Record<string, unknown> | null;
   message: string;
   [key: string]: unknown;
 }
 
-/** A push for an attached session, numbered per session within an `epoch`. */
+/**
+ * A push for an attached session, numbered per session within an `epoch`; an `event`
+ * notification's `params`.
+ */
 export type Event = EntryOpenEvent | EntryFinalEvent | EntryAppendEvent | AgentEventEvent | ChannelEvent | CursorsEvent | RequestEvent | RequestClosedEvent | UiEvent | CompactionEndEvent;
+
+/** An `event` notification: no `id`, and no answer. */
+export interface EventNotification {
+  jsonrpc: "2.0";
+  method: "event";
+  params: Event;
+  [key: string]: unknown;
+}
 
 /** One loaded extension and what it registered, as `get_extension_state` lists it. */
 export interface ExtensionInfo {
@@ -832,6 +820,15 @@ export interface ExtensionRequest {
   /** A command that clears the lock, or `None`. */
   release: string | null;
   sentence: string;
+  [key: string]: unknown;
+}
+
+/** The answer to a request that failed, matched by `id`. */
+export interface Failure {
+  error: Error;
+  /** The request's `id`, or `null` when the frame had none the daemon could read. */
+  id: number | string | null;
+  jsonrpc: "2.0";
   [key: string]: unknown;
 }
 
@@ -886,7 +883,6 @@ export interface Fork {
   at?: string | null;
   cursor_id: string;
   session_id: string;
-  type: "fork";
 }
 
 /** One field of an extension form (`extension_types.validate_form_spec`). */
@@ -914,7 +910,6 @@ export interface GetCommands {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_commands";
 }
 
 export interface GetCommandsResult {
@@ -945,7 +940,6 @@ export interface GetEntry {
   /** The entry to read — an `entry_id` from get_tree or complete_message_id. An id naming no entry is INVALID_PARAMS, never a null entry. */
   entry_id: string;
   session_id: string;
-  type: "get_entry";
 }
 
 export interface GetEntryResult {
@@ -964,7 +958,6 @@ export interface GetExtensionConfig {
   /** The managed extension to read — a `path` from list_managed_extensions, or a unique file stem. */
   path: string;
   session_id: string;
-  type: "get_extension_config";
 }
 
 export interface GetExtensionConfigResult {
@@ -985,7 +978,6 @@ export interface GetExtensionState {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_extension_state";
 }
 
 export interface GetExtensionStateResult {
@@ -1004,7 +996,6 @@ export interface GetLastAssistantText {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_last_assistant_text";
 }
 
 export interface GetLastAssistantTextResult {
@@ -1021,7 +1012,6 @@ export interface GetMessages {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_messages";
 }
 
 export interface GetMessagesResult {
@@ -1038,7 +1028,6 @@ export interface GetModels {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_models";
 }
 
 export interface GetModelsResult {
@@ -1055,7 +1044,6 @@ export interface GetPendingRequest {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_pending_request";
 }
 
 export interface GetPendingRequestResult {
@@ -1072,7 +1060,6 @@ export interface GetSessionName {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_session_name";
 }
 
 export interface GetSessionNameResult {
@@ -1089,7 +1076,6 @@ export interface GetSessionStats {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_session_stats";
 }
 
 export interface GetSessionStatsResult {
@@ -1116,7 +1102,6 @@ export interface GetState {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_state";
 }
 
 export interface GetStateResult {
@@ -1147,7 +1132,6 @@ export interface GetTools {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_tools";
 }
 
 export interface GetToolsResult {
@@ -1172,7 +1156,6 @@ export interface GetTree {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "get_tree";
 }
 
 export interface GetTreeResult {
@@ -1223,7 +1206,6 @@ export interface Hello {
   protocol: string;
   /** The shared secret, required only when the daemon's config sets `serve.token`. A client reads it from `TAUD_TOKEN`. */
   token?: string | null;
-  type: "hello";
 }
 
 /** The answer to `Hello`. */
@@ -1278,7 +1260,6 @@ export interface ListManagedExtensions {
   /** The cursor the verb acts at. */
   cursor_id: string;
   session_id: string;
-  type: "list_managed_extensions";
 }
 
 export interface ListManagedExtensionsResult {
@@ -1288,9 +1269,7 @@ export interface ListManagedExtensionsResult {
 }
 
 /** Every session in the daemon's store, across every cwd, newest first (RPC `list_sessions`). */
-export interface ListSessions {
-  type: "list_sessions";
-}
+export interface ListSessions {}
 
 /** An extension file that failed to load, and why. */
 export interface LoadError {
@@ -1361,7 +1340,6 @@ export interface MoveCursor {
   cursor_id: string;
   leaf: string | null;
   session_id: string;
-  type: "move_cursor";
 }
 
 /**
@@ -1374,7 +1352,6 @@ export interface Navigate {
   session_id: string;
   /** The entry to move the cursor onto — an `entry_id` from complete_message_id. The abandoned branch drops out of context via the parentId walk but stays on disk and stays browsable; nothing is erased. */
   target_id: string;
-  type: "navigate";
 }
 
 /** Legacy: a recorded move to `targetId`, written before cursors (docs/CURSORS.md §1.1). */
@@ -1405,7 +1382,6 @@ export interface NewSession {
   model?: string | null;
   /** A session name, or `None`. */
   name?: string | null;
-  type: "new_session";
 }
 
 /**
@@ -1422,7 +1398,6 @@ export interface NextStep {
   /** The entry a scoped `message_id` argument is relative to. A parameter rather than the live tip, so a host stepping a sub-agent's flow scopes to THAT agent's leaf. It is echoed back on the step so the host hands it straight to `enumerate_domain`. */
   leaf?: string | null;
   session_id: string;
-  type: "next_step";
 }
 
 export interface NextStepResult {
@@ -1441,7 +1416,6 @@ export interface OpenCursor {
   leaf: string | null;
   owner_id?: string | null;
   session_id: string;
-  type: "open_cursor";
 }
 
 /** A panel button: it runs the extension command `command` with `args`. */
@@ -1497,7 +1471,6 @@ export interface PasteSubtree {
   source_id: string;
   /** The entry the copy hangs from. May not be inside the source's own subtree. */
   target_id: string;
-  type: "paste_subtree";
 }
 
 export interface PasteSubtreeResult {
@@ -1522,7 +1495,6 @@ export interface PerformReady {
   /** What `NextStep` answered once every argument was bound. Its `mutation` must be its flow's. */
   ready: Ready;
   session_id: string;
-  type: "perform_ready";
 }
 
 /** What a capability produced. The past tense of `Ready`. */
@@ -1570,7 +1542,6 @@ export interface Prompt {
   submitter?: string;
   /** The prompt text. */
   text: string;
-  type: "prompt";
 }
 
 export interface PromptResult {
@@ -1625,7 +1596,6 @@ export interface ReloadExtension {
   /** The managed extension to re-import — a `path` from list_managed_extensions, or a unique file stem. */
   path: string;
   session_id: string;
-  type: "reload_extension";
 }
 
 export interface ReloadExtensionResult {
@@ -1649,7 +1619,6 @@ export interface RequestClosedEvent {
   kind: "request_closed";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -1666,7 +1635,6 @@ export interface RequestEvent {
   kind: "request";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -1678,16 +1646,8 @@ export interface RequestEventData {
   [key: string]: unknown;
 }
 
-/** The one answer to a request, matched by `id`. */
-export interface Response {
-  error?: Error | null;
-  id: number;
-  ok: boolean;
-  /** When `ok`, the request's result: `Results[request.type]` in the schema. `null` when not `ok`. */
-  result?: unknown;
-  type: "response";
-  [key: string]: unknown;
-}
+/** The one answer to a request: a `result` or an `error`, never both. */
+export type Response = Success | Failure;
 
 /** What `tau serve -d --json` prints: the one daemon at `address`. */
 export interface ServeStarted {
@@ -1797,7 +1757,6 @@ export interface SetAutoCompaction {
   /** Desired auto-compaction state. RPC sessions are constructed with CompactionSettings(enabled=False) (backends.py:885, RPC-TIER-B.md §1.1), so a host that wants it on says so here; AgentSession.set_auto_compaction is the same setter in process. */
   enabled: boolean;
   session_id: string;
-  type: "set_auto_compaction";
 }
 
 export interface SetAutoCompactionResult {
@@ -1818,7 +1777,6 @@ export interface SetExtensionConfig {
   /** The managed extension to configure — a `path` from list_managed_extensions, or a unique file stem. */
   path: string;
   session_id: string;
-  type: "set_extension_config";
   /** The complete new slice, keyed by the field names get_extension_config's `schema` declares. Every declared field must be present: missing is not empty, and nothing is filled in for you. */
   values: Record<string, unknown>;
 }
@@ -1847,7 +1805,6 @@ export interface SetModel {
   /** A config model NAME (a key in ~/.tau/config.json's 'models' map), resolved through AgentSession's bound model resolver (set_model_resolver) — the same name --model NAME accepts headlessly. NOT a model id; a config key may alias one. */
   name: string;
   session_id: string;
-  type: "set_model";
 }
 
 export interface SetModelResult {
@@ -1868,7 +1825,6 @@ export interface SetSessionName {
   /** The session's new durable display name. Must be non-empty. */
   name: string;
   session_id: string;
-  type: "set_session_name";
 }
 
 export interface SetSessionNameResult {
@@ -1880,9 +1836,7 @@ export interface SetSessionNameResult {
 }
 
 /** Stop the daemon: it answers, then stops as it does on SIGTERM, closing every connection. */
-export interface Shutdown {
-  type: "shutdown";
-}
+export interface Shutdown {}
 
 /** The `submission_end` channel. */
 export interface SubmissionEndChannel {
@@ -1974,7 +1928,6 @@ export interface Submit {
   submitter: string;
   /** The prompt text. */
   text: string;
-  type: "submit";
 }
 
 export interface SubmitResult {
@@ -1997,6 +1950,15 @@ export interface SubmitResult {
   [key: string]: unknown;
 }
 
+/** The answer to a request that succeeded, matched by `id`. */
+export interface Success {
+  id: number | string;
+  jsonrpc: "2.0";
+  /** The request's result: `Results[method]` in the schema. */
+  result: unknown;
+  [key: string]: unknown;
+}
+
 /**
  * RPC `summarize_and_navigate` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's own
  * handler at `cursor_id`.
@@ -2009,7 +1971,6 @@ export interface SummarizeAndNavigate {
   session_id: string;
   /** The branch point. The subtree BELOW it is what gets summarized, and the branch_summary entry is parented at it. */
   target_id: string;
-  type: "summarize_and_navigate";
 }
 
 export interface SummarizeAndNavigateResult {
@@ -2109,7 +2070,6 @@ export interface UiEvent {
   kind: "ui";
   seq: number;
   session_id: string;
-  type: "event";
   [key: string]: unknown;
 }
 
@@ -2253,552 +2213,370 @@ export interface WireEvent {
 
 /** Every frame a client sends. */
 export type ClientFrame = {
-  /** What the client is, for the daemon's log (`tui`, `tail`, `web`). */
-  client: string;
-  id: number;
-  /** The client's `PROTOCOL_VERSION`; a different one is refused. */
-  protocol: string;
-  /** The shared secret, required only when the daemon's config sets `serve.token`. A client reads it from `TAUD_TOKEN`. */
-  token?: string | null;
-  type: "hello";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "hello";
+  params?: Hello;
 } | {
-  id: number;
-  type: "list_sessions";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "list_sessions";
+  params?: ListSessions;
 } | {
-  /** The directory its tools run in; the create fails if it does not exist. */
-  cwd: string;
-  id: number;
-  /** A model name from the daemon's config, or `None` for its default. */
-  model?: string | null;
-  /** A session name, or `None`. */
-  name?: string | null;
-  type: "new_session";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "new_session";
+  params?: NewSession;
 } | {
-  /** The entry to fork at instead of the cursor's leaf. */
-  at?: string | null;
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "fork";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "fork";
+  params?: Fork;
 } | {
-  /** The `epoch` of an earlier attach, to resume rather than re-read. */
-  epoch?: string | null;
-  id: number;
-  /** The session, or an unambiguous prefix of its id. */
-  session_id: string;
-  /** The last `seq` the client applied under that epoch. */
-  since?: number | null;
-  type: "attach";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "attach";
+  params?: Attach;
 } | {
-  id: number;
-  session_id: string;
-  type: "detach";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "detach";
+  params?: Detach;
 } | {
-  id: number;
-  label?: string;
-  leaf: string | null;
-  owner_id?: string | null;
-  session_id: string;
-  type: "open_cursor";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "open_cursor";
+  params?: OpenCursor;
 } | {
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "close_cursor";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "close_cursor";
+  params?: CloseCursor;
 } | {
-  cursor_id: string;
-  id: number;
-  leaf: string | null;
-  session_id: string;
-  type: "move_cursor";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "move_cursor";
+  params?: MoveCursor;
 } | {
-  id: number;
-  request_id: string;
-  session_id: string;
-  type: "answer";
-  /** The `{field: value}` answers, or `None` to cancel the form. */
-  value: Record<string, unknown> | null;
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "answer";
+  params?: Answer;
 } | {
-  cursor_id: string;
-  id: number;
-  /** What `NextStep` answered once every argument was bound. Its `mutation` must be its flow's. */
-  ready: Ready;
-  session_id: string;
-  type: "perform_ready";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "perform_ready";
+  params?: PerformReady;
 } | {
-  id: number;
-  session_id: string;
-  type: "describe";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "describe";
+  params?: Describe;
 } | {
-  id: number;
-  type: "shutdown";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "shutdown";
+  params?: Shutdown;
 } | {
-  id: number;
-  /** The entry the cursors start from; `None` is the head cursor's leaf. */
-  leaf?: string | null;
-  /** Model names from the daemon's config, one cursor each; one may repeat. */
-  models: string[];
-  session_id: string;
-  /** The prompt every cursor receives, never expanded as a command. */
-  text: string;
-  type: "compare";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "compare";
+  params?: Compare;
 } | {
-  comparison_id: string;
-  id: number;
-  keep: string | null;
-  session_id: string;
-  type: "end_compare";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "end_compare";
+  params?: EndCompare;
 } | {
-  /** Whether this submission's turn may open a blocking dialog. */
-  allow_user_input?: boolean;
-  /** Free-form origin detail (bus subject, cron id, HTTP request id). */
-  correlation?: Correlation;
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** Self-submission depth floor; submit() may raise it further. */
-  depth?: number;
-  /** Whether `@file` references in `text` are resolved into <attachment>/<reference> blocks before the Submission is built, the way the TUI's editor does (docs/FILE-ATTACHMENTS.md §2). Defaults to False, which sends `@notes.txt` to the model as those eleven literal characters. NOT a Submission field: expansion happens HERE, so what is persisted and what the model saw are the same string. Attached images are appended to `images`. Files are read at this moment, not when the host composed the text. See the `attachments` key on the result for what expansion did. */
-  expand_attachments?: boolean;
-  /** Whether a leading '/' is command-dispatched. Defaults to False. */
-  expand_commands?: boolean;
-  id: number;
-  /** Optional list of image content blocks. */
-  images?: ImageContent[] | null;
-  /** Concurrency policy against an in-flight turn. Defaults to 'reject'. 'fork' is a recognized value but currently REJECTED at submission time (-32602, phase-2 review S3) — it runs on its own cursor, whose events this handler does not forward (docs/CURSORS.md §6). */
-  multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
-  session_id: string;
-  /** Folds into store_history=False; NOT otherwise implemented — AgentSession.submit() raises NotImplementedError if True. */
-  silent?: boolean;
-  /** Who originated this submission (Submission.source). */
-  source: "interactive" | "rpc" | "extension" | "bus" | "timer" | "webhook" | "voice" | "agent";
-  /** Whether this turn is persisted to the session log. Defaults to True. */
-  store_history?: boolean;
-  /** Caller-assigned correlation id for this submission (uuid4 recommended). */
-  submission_id: string;
-  /** WHO submitted — an extension name, 'human', a channel id. */
-  submitter: string;
-  /** The prompt text. */
-  text: string;
-  type: "submit";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "submit";
+  params?: Submit;
 } | {
-  /** Whether this submission's turn may open a blocking dialog. */
-  allow_user_input?: boolean;
-  /** Free-form origin detail (bus subject, cron id, HTTP request id). */
-  correlation?: Correlation;
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** Self-submission depth floor; submit() may raise it further. */
-  depth?: number;
-  /** Whether `@file` references in `text` are resolved into <attachment>/<reference> blocks before the Submission is built, the way the TUI's editor does (docs/FILE-ATTACHMENTS.md §2). Defaults to False, which sends `@notes.txt` to the model as those eleven literal characters. NOT a Submission field: expansion happens HERE, so what is persisted and what the model saw are the same string. Attached images are appended to `images`. Files are read at this moment, not when the host composed the text. See the `attachments` key on the result for what expansion did. */
-  expand_attachments?: boolean;
-  /** Whether a leading '/' is command-dispatched. Defaults to False. */
-  expand_commands?: boolean;
-  id: number;
-  /** Optional list of image content blocks. */
-  images?: ImageContent[] | null;
-  /** Concurrency policy against an in-flight turn. Defaults to 'reject'. 'fork' is a recognized value but currently REJECTED at submission time (-32602, phase-2 review S3) — it runs on its own cursor, whose events this handler does not forward (docs/CURSORS.md §6). */
-  multitask_strategy?: "reject" | "enqueue" | "steer" | "rollback" | "fork";
-  session_id: string;
-  /** Folds into store_history=False; NOT otherwise implemented — AgentSession.submit() raises NotImplementedError if True. */
-  silent?: boolean;
-  /** Who originated this submission (Submission.source). */
-  source?: "interactive" | "rpc" | "extension" | "bus" | "timer" | "webhook" | "voice" | "agent";
-  /** Whether this turn is persisted to the session log. Defaults to True. */
-  store_history?: boolean;
-  /** Caller-assigned correlation id for this submission (uuid4 recommended). */
-  submission_id?: string;
-  /** WHO submitted — an extension name, 'human', a channel id. */
-  submitter?: string;
-  /** The prompt text. */
-  text: string;
-  type: "prompt";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "prompt";
+  params?: Prompt;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "abort";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "abort";
+  params?: Abort;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** Optional extra focus for the generated summary, threaded unchanged to AgentSession.compact(custom_instructions=...). */
-  custom_instructions?: string;
-  id: number;
-  session_id: string;
-  type: "compact";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "compact";
+  params?: Compact;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_state";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_state";
+  params?: GetState;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_messages";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_messages";
+  params?: GetMessages;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_commands";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_commands";
+  params?: GetCommands;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_tools";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_tools";
+  params?: GetTools;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_models";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_models";
+  params?: GetModels;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_session_name";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_session_name";
+  params?: GetSessionName;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_session_stats";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_session_stats";
+  params?: GetSessionStats;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_last_assistant_text";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_last_assistant_text";
+  params?: GetLastAssistantText;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** A config model NAME (a key in ~/.tau/config.json's 'models' map), resolved through AgentSession's bound model resolver (set_model_resolver) — the same name --model NAME accepts headlessly. NOT a model id; a config key may alias one. */
-  name: string;
-  session_id: string;
-  type: "set_model";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "set_model";
+  params?: SetModel;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** Desired auto-compaction state. RPC sessions are constructed with CompactionSettings(enabled=False) (backends.py:885, RPC-TIER-B.md §1.1), so a host that wants it on says so here; AgentSession.set_auto_compaction is the same setter in process. */
-  enabled: boolean;
-  id: number;
-  session_id: string;
-  type: "set_auto_compaction";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "set_auto_compaction";
+  params?: SetAutoCompaction;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The session's new durable display name. Must be non-empty. */
-  name: string;
-  session_id: string;
-  type: "set_session_name";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "set_session_name";
+  params?: SetSessionName;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The caret's character offset into `text`. Which @reference is being completed is decided from this, so a host that sends the @word alone with offset 0 gets `completion: null` rather than a listing — the offset is not optional and is not defaulted. */
-  offset: number;
-  session_id: string;
-  /** The editor's contents as typed, NOT just the @word. */
-  text: string;
-  type: "complete_path";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "complete_path";
+  params?: CompletePath;
 } | {
-  /** The arguments bound so far, keyed by argument name. Omit it, or send {}, for the flow's first step. Only REQUIRED arguments block, so a flow whose arguments are all optional is `ready` on the first call. */
-  bound?: Record<string, unknown>;
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** The flow's name — one of the `name`s `get_commands` lists. An unknown name is an error, not an empty answer: a host that believes a flow exists must be told it does not. */
-  flow: string;
-  id: number;
-  /** The entry a scoped `message_id` argument is relative to. A parameter rather than the live tip, so a host stepping a sub-agent's flow scopes to THAT agent's leaf. It is echoed back on the step so the host hands it straight to `enumerate_domain`. */
-  leaf?: string | null;
-  session_id: string;
-  type: "next_step";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "next_step";
+  params?: NextStep;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** The domain's name, as a `next_step` step reported it. A domain that is `free` returns no values and total 0 — that is the answer, not a failure. */
-  domain: string;
-  id: number;
-  /** For a scoped `message_id`: the entry the scope is relative to. Null uses the live tip. An id that names no entry is an error, not an empty listing. */
-  leaf?: string | null;
-  /** How many values to return at most. Defaults to 50. */
-  limit?: number;
-  /** Filter text. A value matches on a case-sensitive PREFIX of the value itself, or a case-insensitive SUBSTRING of its label — completion and search, because an id and its text are looked for differently. Empty matches everything in scope. */
-  query?: string;
-  /** For `message_id` only: which entries are candidates. Defaults to `in_session`. */
-  scope?: "in_session" | "ancestors_of_leaf" | "descendants_of_leaf" | null;
-  session_id: string;
-  type: "enumerate_domain";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "enumerate_domain";
+  params?: EnumerateDomain;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The entry the two scoped variants are relative to. Omitted uses the session cursor's leaf (get_state's `leaf`). An id that names no entry is INVALID_PARAMS, never an empty match list. */
-  leaf?: string;
-  /** How many matches to return at most. Omitted means 50. */
-  limit?: number;
-  /** Filter text. Matches a case-sensitive PREFIX of an entry id, or a case-insensitive SUBSTRING of its preview — completion and search in one field. Omitted or empty matches everything in scope. */
-  query?: string;
-  /** Which entries are candidates. 'in_session' is every entry in the log; 'ancestors_of_leaf' is the parent chain from the root to `leaf` inclusive; 'descendants_of_leaf' is the subtree below it, excluding `leaf` itself. Omitted means 'in_session'. */
-  scope?: "in_session" | "ancestors_of_leaf" | "descendants_of_leaf";
-  session_id: string;
-  type: "complete_message_id";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "complete_message_id";
+  params?: CompleteMessageId;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_tree";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_tree";
+  params?: GetTree;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** The entry to read — an `entry_id` from get_tree or complete_message_id. An id naming no entry is INVALID_PARAMS, never a null entry. */
-  entry_id: string;
-  id: number;
-  session_id: string;
-  type: "get_entry";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_entry";
+  params?: GetEntry;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_pending_request";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_pending_request";
+  params?: GetPendingRequest;
 } | {
-  /** The pressed action's `label` — one of the labels in the ask's `actions`. The label, not the command it names: the label is what a person chose and what the ask's own table is keyed by. */
-  action: string;
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The request's `entry_id`, as get_pending_request reported it or as a SUBMISSION_REJECTED refusal carried it. */
-  request_id: string;
-  session_id: string;
-  type: "answer_request";
-  /** The filled fields, keyed by field name. Omitted is the empty dict, which is what an ask declaring no fields takes. Checked against the ask's declared fields before anything is appended: nothing is coerced and no partial answer is persisted. */
-  values?: Record<string, unknown>;
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "answer_request";
+  params?: AnswerRequest;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "list_managed_extensions";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "list_managed_extensions";
+  params?: ListManagedExtensions;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  type: "get_extension_state";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_extension_state";
+  params?: GetExtensionState;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The managed extension to read — a `path` from list_managed_extensions, or a unique file stem. */
-  path: string;
-  session_id: string;
-  type: "get_extension_config";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "get_extension_config";
+  params?: GetExtensionConfig;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The managed extension to configure — a `path` from list_managed_extensions, or a unique file stem. */
-  path: string;
-  session_id: string;
-  type: "set_extension_config";
-  /** The complete new slice, keyed by the field names get_extension_config's `schema` declares. Every declared field must be present: missing is not empty, and nothing is filled in for you. */
-  values: Record<string, unknown>;
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "set_extension_config";
+  params?: SetExtensionConfig;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The managed extension to enable — a `path` from list_managed_extensions, or a unique file stem. */
-  path: string;
-  session_id: string;
-  type: "enable_extension";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "enable_extension";
+  params?: EnableExtension;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The managed extension to disable — a `path` from list_managed_extensions, or a unique file stem. */
-  path: string;
-  session_id: string;
-  type: "disable_extension";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "disable_extension";
+  params?: DisableExtension;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  /** The managed extension to re-import — a `path` from list_managed_extensions, or a unique file stem. */
-  path: string;
-  session_id: string;
-  type: "reload_extension";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "reload_extension";
+  params?: ReloadExtension;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  /** The entry to move the cursor onto — an `entry_id` from complete_message_id. The abandoned branch drops out of context via the parentId walk but stays on disk and stays browsable; nothing is erased. */
-  target_id: string;
-  type: "navigate";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "navigate";
+  params?: Navigate;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** Extra guidance for the summarizer's SYSTEM prompt. Omitted runs the default summarizer prompt. */
-  custom_instructions?: string;
-  id: number;
-  session_id: string;
-  /** The branch point. The subtree BELOW it is what gets summarized, and the branch_summary entry is parented at it. */
-  target_id: string;
-  type: "summarize_and_navigate";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "summarize_and_navigate";
+  params?: SummarizeAndNavigate;
 } | {
-  /** The entry the fold jumps FROM. The elide entry is appended as its child, so the anchor becomes the end of the kept region and the new tip. */
-  anchor_id: string;
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** The entry the fold resumes at — the anchor itself or one of its ANCESTORS, never a descendant. Everything on the path before it is the elided span. A resume point the fold's scan cannot reach would empty the context silently, which is why the wrong direction is refused rather than tolerated. */
-  first_kept_id: string;
-  id: number;
-  session_id: string;
-  type: "elide_span";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "elide_span";
+  params?: ElideSpan;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  /** Whether the branch keeps ONLY the selection. true appends an elide resuming at the root-most mark, so the context becomes the system prompt plus the branch; false leaves everything above the attach point in context. */
-  drop_context: boolean;
-  id: number;
-  /** The marked entry ids, in any order — tree_surgery puts them into tree order. The longest run that is already an ancestor chain is kept in place; the rest are minted as copies parented under it, so nothing is re-parented and nothing is erased. */
-  ids: string[];
-  session_id: string;
-  type: "commit_branch";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "commit_branch";
+  params?: CommitBranch;
 } | {
-  /** The cursor the verb acts at. */
-  cursor_id: string;
-  id: number;
-  session_id: string;
-  /** The copied node — the root of the subtree. */
-  source_id: string;
-  /** The entry the copy hangs from. May not be inside the source's own subtree. */
-  target_id: string;
-  type: "paste_subtree";
+  id: number | string;
+  jsonrpc: "2.0";
+  method: "paste_subtree";
+  params?: PasteSubtree;
 };
 
 /** Every frame the daemon sends. */
-export type ServerFrame = Response | Event;
+export type ServerFrame = Response | EventNotification;
 
-/** Every request, by its `type`. */
+/** Every request's `params`, by its `method`. */
 export interface Requests {
-  abort: Abort;
-  answer: Answer;
-  answer_request: AnswerRequest;
-  attach: Attach;
-  close_cursor: CloseCursor;
-  commit_branch: CommitBranch;
-  compact: Compact;
-  compare: Compare;
-  complete_message_id: CompleteMessageId;
-  complete_path: CompletePath;
-  describe: Describe;
-  detach: Detach;
-  disable_extension: DisableExtension;
-  elide_span: ElideSpan;
-  enable_extension: EnableExtension;
-  end_compare: EndCompare;
-  enumerate_domain: EnumerateDomain;
+  hello: Hello;
+  list_sessions: ListSessions;
+  new_session: NewSession;
   fork: Fork;
-  get_commands: GetCommands;
-  get_entry: GetEntry;
-  get_extension_config: GetExtensionConfig;
-  get_extension_state: GetExtensionState;
-  get_last_assistant_text: GetLastAssistantText;
+  attach: Attach;
+  detach: Detach;
+  open_cursor: OpenCursor;
+  close_cursor: CloseCursor;
+  move_cursor: MoveCursor;
+  answer: Answer;
+  perform_ready: PerformReady;
+  describe: Describe;
+  shutdown: Shutdown;
+  compare: Compare;
+  end_compare: EndCompare;
+  submit: Submit;
+  prompt: Prompt;
+  abort: Abort;
+  compact: Compact;
+  get_state: GetState;
   get_messages: GetMessages;
+  get_commands: GetCommands;
+  get_tools: GetTools;
   get_models: GetModels;
-  get_pending_request: GetPendingRequest;
   get_session_name: GetSessionName;
   get_session_stats: GetSessionStats;
-  get_state: GetState;
-  get_tools: GetTools;
-  get_tree: GetTree;
-  hello: Hello;
-  list_managed_extensions: ListManagedExtensions;
-  list_sessions: ListSessions;
-  move_cursor: MoveCursor;
-  navigate: Navigate;
-  new_session: NewSession;
-  next_step: NextStep;
-  open_cursor: OpenCursor;
-  paste_subtree: PasteSubtree;
-  perform_ready: PerformReady;
-  prompt: Prompt;
-  reload_extension: ReloadExtension;
-  set_auto_compaction: SetAutoCompaction;
-  set_extension_config: SetExtensionConfig;
+  get_last_assistant_text: GetLastAssistantText;
   set_model: SetModel;
+  set_auto_compaction: SetAutoCompaction;
   set_session_name: SetSessionName;
-  shutdown: Shutdown;
-  submit: Submit;
+  complete_path: CompletePath;
+  next_step: NextStep;
+  enumerate_domain: EnumerateDomain;
+  complete_message_id: CompleteMessageId;
+  get_tree: GetTree;
+  get_entry: GetEntry;
+  get_pending_request: GetPendingRequest;
+  answer_request: AnswerRequest;
+  list_managed_extensions: ListManagedExtensions;
+  get_extension_state: GetExtensionState;
+  get_extension_config: GetExtensionConfig;
+  set_extension_config: SetExtensionConfig;
+  enable_extension: EnableExtension;
+  disable_extension: DisableExtension;
+  reload_extension: ReloadExtension;
+  navigate: Navigate;
   summarize_and_navigate: SummarizeAndNavigate;
+  elide_span: ElideSpan;
+  commit_branch: CommitBranch;
+  paste_subtree: PasteSubtree;
 }
 
-/** What each request answers, by its `type`. */
+/** What each request answers, by its `method`. */
 export interface Results {
-  abort: AbortResult;
-  answer: null;
-  answer_request: AnswerRequestResult;
-  attach: Attached;
-  close_cursor: null;
-  commit_branch: CommitBranchResult;
-  compact: CompactResult;
-  compare: CompareStarted;
-  complete_message_id: CompleteMessageIdResult;
-  complete_path: CompletePathResult;
-  describe: Surface;
-  detach: null;
-  disable_extension: DisableExtensionResult;
-  elide_span: ElideSpanResult;
-  enable_extension: EnableExtensionResult;
-  end_compare: CompareEnded;
-  enumerate_domain: EnumerateDomainResult;
+  hello: HelloResult;
+  list_sessions: SessionList;
+  new_session: SessionOpened;
   fork: SessionOpened;
-  get_commands: GetCommandsResult;
-  get_entry: GetEntryResult;
-  get_extension_config: GetExtensionConfigResult;
-  get_extension_state: GetExtensionStateResult;
-  get_last_assistant_text: GetLastAssistantTextResult;
+  attach: Attached;
+  detach: null;
+  open_cursor: CursorOpened;
+  close_cursor: null;
+  move_cursor: null;
+  answer: null;
+  perform_ready: DispatchedCommand;
+  describe: Surface;
+  shutdown: null;
+  compare: CompareStarted;
+  end_compare: CompareEnded;
+  submit: SubmitResult;
+  prompt: PromptResult;
+  abort: AbortResult;
+  compact: CompactResult;
+  get_state: GetStateResult;
   get_messages: GetMessagesResult;
+  get_commands: GetCommandsResult;
+  get_tools: GetToolsResult;
   get_models: GetModelsResult;
-  get_pending_request: GetPendingRequestResult;
   get_session_name: GetSessionNameResult;
   get_session_stats: GetSessionStatsResult;
-  get_state: GetStateResult;
-  get_tools: GetToolsResult;
-  get_tree: GetTreeResult;
-  hello: HelloResult;
-  list_managed_extensions: ListManagedExtensionsResult;
-  list_sessions: SessionList;
-  move_cursor: null;
-  navigate: NavigateResult;
-  new_session: SessionOpened;
-  next_step: NextStepResult;
-  open_cursor: CursorOpened;
-  paste_subtree: PasteSubtreeResult;
-  perform_ready: DispatchedCommand;
-  prompt: PromptResult;
-  reload_extension: ReloadExtensionResult;
-  set_auto_compaction: SetAutoCompactionResult;
-  set_extension_config: SetExtensionConfigResult;
+  get_last_assistant_text: GetLastAssistantTextResult;
   set_model: SetModelResult;
+  set_auto_compaction: SetAutoCompactionResult;
   set_session_name: SetSessionNameResult;
-  shutdown: null;
-  submit: SubmitResult;
+  complete_path: CompletePathResult;
+  next_step: NextStepResult;
+  enumerate_domain: EnumerateDomainResult;
+  complete_message_id: CompleteMessageIdResult;
+  get_tree: GetTreeResult;
+  get_entry: GetEntryResult;
+  get_pending_request: GetPendingRequestResult;
+  answer_request: AnswerRequestResult;
+  list_managed_extensions: ListManagedExtensionsResult;
+  get_extension_state: GetExtensionStateResult;
+  get_extension_config: GetExtensionConfigResult;
+  set_extension_config: SetExtensionConfigResult;
+  enable_extension: EnableExtensionResult;
+  disable_extension: DisableExtensionResult;
+  reload_extension: ReloadExtensionResult;
+  navigate: NavigateResult;
   summarize_and_navigate: SummarizeAndNavigateResult;
+  elide_span: ElideSpanResult;
+  commit_branch: CommitBranchResult;
+  paste_subtree: PasteSubtreeResult;
 }
 
 export type RequestType = keyof Requests;
-export type RequestFields<T extends RequestType> = Omit<Requests[T], 'type'>;
+export type RequestFields<T extends RequestType> = Requests[T];
 
 /** The `data` each event kind carries, by its `kind`. */
 export interface EventData {
@@ -2816,7 +2594,22 @@ export interface EventData {
 
 export type EventKind = keyof EventData;
 
-/** Every request type, in the schema's order. */
-export const REQUEST_TYPES = ["abort","answer","answer_request","attach","close_cursor","commit_branch","compact","compare","complete_message_id","complete_path","describe","detach","disable_extension","elide_span","enable_extension","end_compare","enumerate_domain","fork","get_commands","get_entry","get_extension_config","get_extension_state","get_last_assistant_text","get_messages","get_models","get_pending_request","get_session_name","get_session_stats","get_state","get_tools","get_tree","hello","list_managed_extensions","list_sessions","move_cursor","navigate","new_session","next_step","open_cursor","paste_subtree","perform_ready","prompt","reload_extension","set_auto_compaction","set_extension_config","set_model","set_session_name","shutdown","submit","summarize_and_navigate"] as const;
+/** Every method, in the schema's order. */
+export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
+/** Every error code a request can fail with, by name. */
+export const ERROR_CODES = {
+  PARSE_ERROR: -32700,
+  INTERNAL_ERROR: -32603,
+  INVALID_PARAMS: -32602,
+  METHOD_NOT_FOUND: -32601,
+  INVALID_REQUEST: -32600,
+  NOT_FOUND: -32007,
+  PROTOCOL_MISMATCH: -32006,
+  UNAUTHORIZED: -32005,
+  SESSION_NOT_PERSISTED: -32004,
+  TURN_STILL_RUNNING: -32002,
+  COMMAND_NOT_SUPPORTED: -32001,
+  SUBMISSION_REJECTED: -32000,
+} as const;
 /** Every event kind, in the schema's order. */
 export const EVENT_KINDS = ["agent_event","channel","compaction_end","cursors","entry_append","entry_final","entry_open","request","request_closed","ui"] as const;

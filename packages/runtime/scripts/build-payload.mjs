@@ -705,7 +705,7 @@ async function verify(interpreter, args, modules) {
     'while True:',
     '    try:',
     `        with connect("ws://127.0.0.1:${port}/", open_timeout=2) as socket:`,
-    `            socket.send(json.dumps({"type": "hello", "id": 1, "protocol": sys.argv[1], "client": "runtime-verify"}))`,
+    `            socket.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {"protocol": sys.argv[1], "client": "runtime-verify"}}))`,
     '            answer = json.loads(socket.recv(timeout=10))',
     '        break',
     '    except OSError:',
@@ -720,7 +720,7 @@ async function verify(interpreter, args, modules) {
       throw new Error(`hello from the payload failed: ${said.error?.message ?? said.stderr}`);
     }
     const answer = JSON.parse(said.stdout);
-    if (!answer.ok) {
+    if ('error' in answer) {
       throw new Error(`the payload's daemon refused hello: ${JSON.stringify(answer.error)}`);
     }
     const protocol = answer.result.protocol;

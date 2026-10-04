@@ -40,7 +40,7 @@ try:
     while True:
         try:
             with connect(f"ws://{ADDRESS}/", open_timeout=2) as socket:
-                socket.send(json.dumps({"type": "hello", "id": 1, "protocol": protocol, "client": "verify"}))
+                socket.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {"protocol": protocol, "client": "verify"}}))
                 answer = json.loads(socket.recv(timeout=10))
             break
         except OSError:
@@ -48,8 +48,8 @@ try:
                 fail("the daemon did not accept a connection within 30s.")
             time.sleep(0.2)
 
-    if not answer.get("ok"):
-        fail(f"hello was refused: {answer.get('error')}")
+    if "error" in answer:
+        fail(f"hello was refused: {answer['error']}")
     result = answer.get("result") or {}
     print(f"verify: tau serve {result.get('version', '?')} said hello at protocol {protocol}.")
 

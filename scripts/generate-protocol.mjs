@@ -65,6 +65,8 @@ const KNOWN_KEYWORDS = new Set([
   // τ's annotations: which result a request answers, which data an event kind carries.
   'x-result',
   'x-data',
+  // An enum's member names, e.g. the error codes'. Emitted as a const map.
+  'x-names',
 ]);
 
 const SCALARS = {
@@ -250,16 +252,6 @@ function wrap(text, width) {
 
 // ── reading the schema's structure ──────────────────────────────────────────
 
-/** The single string a def's `type` property pins, e.g. "submit" for Submit. */
-function tagOf(def, name, field = 'type') {
-  const property = def.properties?.[field];
-  const values = property?.enum ?? ('const' in (property ?? {}) ? [property.const] : null);
-  if (!values || values.length !== 1 || typeof values[0] !== 'string') {
-    throw new Error(`$defs.${name}.${field} does not pin a single string; cannot tell which ${field} it is.`);
-  }
-  return values[0];
-}
-
 function required(schema, key) {
   if (!(key in schema)) {
     throw new Error(`The schema has no top-level '${key}'. This τ predates what tau-code generates from.`);
@@ -272,29 +264,51 @@ function emit(schema) {
   const version = required(schema, 'x-protocol-version');
   const port = required(schema, 'x-default-port');
 
-  // A request is a $def that says what it answers. Every ClientFrame member
-  // must be one of them, by its `type` tag, so a request τ forgot to annotate
-  // is caught here instead of typed as answering nothing.
-  const requests = Object.entries(defs)
-    .filter(([, def]) => 'x-result' in def)
-    .map(([name, def]) => ({ name, type: tagOf(def, name), result: def['x-result'] }));
-  const annotated = new Set(requests.map((request) => request.type));
+  // A request is a JSON-RPC frame: each ClientFrame member pins a `method`
+  // and names its `params` record, and that record says what it answers. A
+  // request τ forgot to annotate is caught here instead of typed as answering
+  // nothing, and the top-level `Results` map must agree method for method.
   const frames = required(schema, 'ClientFrame').oneOf;
   if (!Array.isArray(frames)) throw new Error('ClientFrame is not a oneOf.');
-  frames.forEach((frame, i) => {
-    const target = frame.$ref ? defs[refName(frame.$ref, `ClientFrame.oneOf[${i}]`)] : frame;
-    const pinned = (schema) => schema?.properties?.type?.const ?? schema?.properties?.type?.enum?.[0];
-    const tag =
-      pinned(target) ??
-      target.allOf?.map((part) => part.$ref && pinned(defs[refName(part.$ref, 'ClientFrame')])).find(Boolean);
-    if (!tag) throw new Error(`ClientFrame.oneOf[${i}] has no type tag.`);
-    if (!annotated.has(tag)) {
+  const requests = frames.map((frame, i) => {
+    const path = `ClientFrame.oneOf[${i}]`;
+    const method = frame.properties?.method?.const;
+    if (typeof method !== 'string') throw new Error(`${path} does not pin a method.`);
+    const ref = frame.properties?.params?.$ref;
+    if (!ref) throw new Error(`${path} (${method}) names no params record.`);
+    const name = refName(ref, `${path}.params`);
+    const def = defs[name];
+    if (!def) throw new Error(`${path} (${method}) names $defs.${name}, which does not exist.`);
+    if (!('x-result' in def)) {
       throw new Error(
-        `The '${tag}' request has no x-result. Every request must say what it answers (null included); ` +
+        `The '${method}' request has no x-result. Every request must say what it answers (null included); ` +
           `a request typed as answering 'unknown' is a hand-written claim waiting to happen.`,
       );
     }
+    return { name, type: method, result: def['x-result'] };
   });
+  const results = required(schema, 'Results');
+  const methods = new Set(requests.map((request) => request.type));
+  for (const method of Object.keys(results)) {
+    if (!methods.has(method)) throw new Error(`Results names '${method}', which no ClientFrame member sends.`);
+  }
+  for (const method of methods) {
+    if (!(method in results)) throw new Error(`Results has no entry for the '${method}' request.`);
+  }
+
+  // The error codes by name, so a branch reads `ERROR_CODES.PROTOCOL_MISMATCH`
+  // and not -32006. Every code must be named, and every name must be a code.
+  const code = defs['Error']?.properties?.code;
+  if (!code?.enum || !code['x-names']) throw new Error('$defs.Error.code has no enum with x-names.');
+  const names = code['x-names'];
+  const errorCodes = code.enum.map((value) => {
+    const name = names[String(value)];
+    if (typeof name !== 'string') throw new Error(`$defs.Error.code ${value} has no name in x-names.`);
+    return [name, value];
+  });
+  for (const key of Object.keys(names)) {
+    if (!code.enum.includes(Number(key))) throw new Error(`$defs.Error.code x-names names ${key}, which is not a code.`);
+  }
 
   const event = defs['Event'];
   if (!event) throw new Error('The schema has no $defs.Event.');
@@ -335,12 +349,12 @@ function emit(schema) {
     out.push('');
   }
 
-  out.push('/** Every request, by its `type`. */');
+  out.push('/** Every request\'s `params`, by its `method`. */');
   out.push('export interface Requests {');
   for (const request of requests) out.push(`  ${quoteKey(request.type)}: ${request.name};`);
   out.push('}');
   out.push('');
-  out.push('/** What each request answers, by its `type`. */');
+  out.push('/** What each request answers, by its `method`. */');
   out.push('export interface Results {');
   for (const request of requests) {
     out.push(`  ${quoteKey(request.type)}: ${typeOf(request.result, `$defs.${request.name}.x-result`, 1)};`);
@@ -348,7 +362,7 @@ function emit(schema) {
   out.push('}');
   out.push('');
   out.push('export type RequestType = keyof Requests;');
-  out.push("export type RequestFields<T extends RequestType> = Omit<Requests[T], 'type'>;");
+  out.push('export type RequestFields<T extends RequestType> = Requests[T];');
   out.push('');
   out.push('/** The `data` each event kind carries, by its `kind`. */');
   out.push('export interface EventData {');
@@ -359,8 +373,12 @@ function emit(schema) {
   out.push('');
   out.push('export type EventKind = keyof EventData;');
   out.push('');
-  out.push('/** Every request type, in the schema\'s order. */');
+  out.push('/** Every method, in the schema\'s order. */');
   out.push(`export const REQUEST_TYPES = ${JSON.stringify(requests.map((r) => r.type))} as const;`);
+  out.push('/** Every error code a request can fail with, by name. */');
+  out.push('export const ERROR_CODES = {');
+  for (const [name, value] of errorCodes) out.push(`  ${name}: ${value},`);
+  out.push('} as const;');
   out.push('/** Every event kind, in the schema\'s order. */');
   out.push(`export const EVENT_KINDS = ${JSON.stringify(Object.keys(eventData))} as const;`);
   out.push('');

@@ -1335,6 +1335,8 @@ export interface ChatProps {
 type Panel = 'sessions' | 'models' | 'tree' | 'extensions' | null;
 
 /** The whole chat head: status, panels, transcript, composer. */
+const PICK = 'Pick a session to carry on with, or close this and start typing to begin a new one.';
+
 export function Chat({
   daemon,
   daemonState,
@@ -1351,8 +1353,8 @@ export function Chat({
   const state = useSession(session);
   const ready = phase === 'ready';
   const [panel, setPanel] = useState<Panel>(null);
-  // True only while the picker is up because nothing was there to show.
-  const [landed, setLanded] = useState(false);
+  // Why the picker is up, set only while it is because nothing was there to show.
+  const [landed, setLanded] = useState<string | null>(null);
   const [revised, setRevised] = useState<string | null>(null);
   const [requestDismissed, setRequestDismissed] = useState<string | null>(null);
   const [flowStep, setFlowStep] = useState<{ step: FlowStep; settle: (value: unknown | null) => void } | null>(null);
@@ -1363,7 +1365,16 @@ export function Chat({
   const running = cursor?.busy === true;
   const commands = state?.attached?.surface.commands ?? [];
 
-  useEffect(() => onSessionChanged?.(session?.sessionId ?? null), [session, onSessionChanged]);
+  // "No session" is reported only once one was held and then left. Before the
+  // first attach there is no session YET, and saying so would make the host
+  // forget the one it asked for -- a reload that stops at a token prompt would
+  // come back to the picker.
+  const held = useRef(false);
+  useEffect(() => {
+    if (session) held.current = true;
+    else if (!held.current) return;
+    onSessionChanged?.(session?.sessionId ?? null);
+  }, [session, onSessionChanged]);
 
   /**
    * On the first connect: re-attach to the session this view was on, else land
@@ -1375,15 +1386,18 @@ export function Chat({
     tried.current = true;
     if (session) return;
     if (initialSession) {
-      daemon.open(initialSession).catch(() => {
+      daemon.open(initialSession).catch((error: unknown) => {
+        // Gone, or never this daemon's: the host should stop asking for it,
+        // and the reader hears why they are on the picker instead.
+        onSessionChanged?.(null);
         setPanel('sessions');
-        setLanded(true);
+        setLanded(`Could not reopen session ${initialSession}: ${messageOf(error).replace(/[.!?]?$/, '.')} ${PICK}`);
       });
       return;
     }
     setPanel('sessions');
-    setLanded(true);
-  }, [ready, daemon, session, initialSession]);
+    setLanded(PICK);
+  }, [ready, daemon, session, initialSession, onSessionChanged]);
 
   // Land on the picker for an attached session with nothing said in it yet.
   const empty = state !== null && state.loaded && !hasUserMessage(state.path);
@@ -1393,7 +1407,7 @@ export function Chat({
 
   const openView = useCallback((name: string): boolean => {
     if (name !== 'tree' && name !== 'extensions') return false;
-    setLanded(false);
+    setLanded(null);
     setPanel(name);
     return true;
   }, []);
@@ -1428,12 +1442,12 @@ export function Chat({
     if (!daemon) throw new Error('Not connected to tau serve.');
     if (!cwd) throw new Error('No working directory to start a session in; pick one in Sessions.');
     setPanel(null);
-    setLanded(false);
+    setLanded(null);
     return daemon.create(cwd, defaultModel);
   }, [daemon, cwd, defaultModel]);
 
   const toggle = (which: Exclude<Panel, null>) => (): void => {
-    setLanded(false);
+    setLanded(null);
     setPanel((open) => (open === which ? null : which));
   };
 
@@ -1476,14 +1490,9 @@ export function Chat({
           model={defaultModel}
           onClose={() => {
             setPanel(null);
-            setLanded(false);
+            setLanded(null);
           }}
-          {...(landed
-            ? {
-                reason: 'Pick a session to carry on with, or close this and start typing to begin a new one.',
-                closeLabel: 'Start here',
-              }
-            : {})}
+          {...(landed ? { reason: landed, closeLabel: 'Start here' } : {})}
         />
       ) : null}
       {panel === 'models' && state ? (

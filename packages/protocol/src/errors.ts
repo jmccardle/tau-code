@@ -1,19 +1,21 @@
 import type { Error as WireError } from './generated.js';
 
-/** The stable codes a `response` can fail with. Generated, so a removed one breaks the build. */
+/** The stable codes a request can fail with (`ERROR_CODES`). Generated, so a removed one breaks the build. */
 export type ServeErrorCode = WireError['code'];
 
 /**
- * A request the daemon answered with `ok: false`.
+ * A request the daemon answered with an `error`.
  *
  * `message` is τ's own sentence, kept verbatim as `detail`: the daemon writes
  * it for a person, and a head that replaced it with a guess would tell the
- * reader something τ did not say. `code` is for branching.
+ * reader something τ did not say. `code` is for branching, against
+ * `ERROR_CODES`; `data` is RPC's detail for an RPC verb's refusal.
  */
 export class ServeError extends Error {
   readonly request: string;
   readonly code: ServeErrorCode;
   readonly detail: string;
+  readonly data: Record<string, unknown> | null;
 
   constructor(request: string, error: WireError) {
     super(`${request} failed (${error.code}): ${error.message}`);
@@ -21,6 +23,7 @@ export class ServeError extends Error {
     this.request = request;
     this.code = error.code;
     this.detail = error.message;
+    this.data = error.data ?? null;
   }
 }
 

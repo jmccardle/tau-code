@@ -1,6 +1,7 @@
 import {
   CLOSE_NOTHING_TO_DIAL,
   CLOSE_TOO_FAR_BEHIND,
+  ERROR_CODES,
   ProtocolVersionError,
   ServeClient,
   ServeError,
@@ -139,7 +140,7 @@ export class Daemon {
       hello = await client.hello(this.#options.client, this.#options.token);
     } catch (error) {
       if (client.closed && !(error instanceof ProtocolVersionError)) return; // #closed handles it
-      if (error instanceof ServeError && error.code === 'unauthorized') {
+      if (error instanceof ServeError && error.code === ERROR_CODES.UNAUTHORIZED) {
         client.close();
         this.#patch({ phase: 'failed', detail: error.detail, needsToken: true });
         return;
@@ -187,12 +188,17 @@ export class Daemon {
   // ── sessions ─────────────────────────────────────────────────────────────
 
   /** Attach to `sessionId`, detaching from the one this head was on. */
+  /** Attach to a session by id, or by an unambiguous prefix of one (a link, a log line). */
   async open(sessionId: string): Promise<SessionStore> {
     const client = this.#require();
     const previous = this.#state.session;
     if (previous?.sessionId === sessionId) return previous;
-    const session = new SessionStore(sessionId);
-    await session.attach(client);
+    const session = await SessionStore.open(client, sessionId);
+    if (previous?.sessionId === session.sessionId) {
+      // A prefix of the session already held: the attach was a second one.
+      session.dispose();
+      return previous;
+    }
     if (previous) {
       previous.dispose();
       // Detaching is a courtesy to the daemon's log and its fan-out; a failure

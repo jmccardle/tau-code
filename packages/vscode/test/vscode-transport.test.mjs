@@ -139,10 +139,14 @@ test('frames reach only their own connection, and a notice is not a frame', () =
   old.onMessage((frame) => toOld.push(frame));
   fresh.onMessage((frame) => toFresh.push(frame));
 
-  fresh.send({ type: 'hello', id: 1 });
-  assert.deepEqual(host.sent.at(-1), { tauCode: 'frame', connection: freshId, frame: { type: 'hello', id: 1 } });
+  fresh.send({ jsonrpc: '2.0', id: 1, method: 'hello' });
+  assert.deepEqual(host.sent.at(-1), {
+    tauCode: 'frame',
+    connection: freshId,
+    frame: { jsonrpc: '2.0', id: 1, method: 'hello' },
+  });
 
-  host.post({ tauCode: 'frame', connection: freshId, frame: { type: 'response', id: 1, ok: true } });
+  host.post({ tauCode: 'frame', connection: freshId, frame: { jsonrpc: '2.0', id: 1, result: null } });
   assert.equal(toFresh.length, 1);
   assert.equal(toOld.length, 0, 'a frame for one connection must never reach another');
 

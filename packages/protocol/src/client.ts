@@ -1,6 +1,6 @@
 import { ProtocolVersionError, ServeError } from './errors.js';
 import type { Transport } from './transport.js';
-import { PROTOCOL_VERSION } from './generated.js';
+import { ERROR_CODES, PROTOCOL_VERSION } from './generated.js';
 import type {
   Error as WireError,
   Event,
@@ -20,14 +20,14 @@ export const BUILT_AGAINST: string = PROTOCOL_VERSION;
 export interface ServeClientEvents {
   /** One event for an attached session. */
   event: (event: Event) => void;
-  /** A frame that is neither a response nor an event, or a response for no request. */
+  /** A frame that is neither an answer nor an event, or an answer to no request. */
   protocolViolation: (detail: string, raw: unknown) => void;
   /** The peer is gone. */
   close: (reason: string, code: number | null) => void;
 }
 
 type Pending = {
-  type: string;
+  method: string;
   resolve: (value: never) => void;
   reject: (reason: unknown) => void;
 };
@@ -35,13 +35,18 @@ type Pending = {
 /**
  * A client for one connection to `tau serve`.
  *
- * Deliberately thin. It numbers requests, correlates responses, routes events,
+ * Deliberately thin. It numbers requests, correlates answers, routes events,
  * and enforces the one contract that is cheap now and expensive later:
  * **`hello` first**, naming the protocol version, and a refusal is final.
  *
  * It does not reconnect. A connection is one transport's lifetime; resuming is
  * the replica's job (`attach` with the held `epoch` and `since`), on a new
  * client over a new transport.
+ *
+ * The wire is JSON-RPC 2.0. A request is `{jsonrpc, id, method, params}`; its
+ * answer carries the same `id` and either `result` or `error`; an event is the
+ * notification `{jsonrpc, method: "event", params}`, whose `params` is the
+ * event record itself.
  *
  * There is no deadline on a request, on purpose: `submit` answers when the
  * submission ENDS, which is as long as a turn takes. The price is that a
@@ -91,15 +96,15 @@ export class ServeClient {
   /**
    * Say `hello`, which the daemon serves before anything else.
    *
-   * A `protocol_mismatch` refusal closes this client and throws
-   * `ProtocolVersionError`; an `unauthorized` one throws the `ServeError` as it
+   * A `PROTOCOL_MISMATCH` refusal closes this client and throws
+   * `ProtocolVersionError`; an `UNAUTHORIZED` one throws the `ServeError` as it
    * is, because the caller can fix that one by asking for a token.
    */
   async hello(client: string, token: string | null): Promise<Results['hello']> {
     try {
       return await this.request('hello', { protocol: BUILT_AGAINST, client, token });
     } catch (error) {
-      if (error instanceof ServeError && error.code === 'protocol_mismatch') {
+      if (error instanceof ServeError && error.code === ERROR_CODES.PROTOCOL_MISMATCH) {
         this.close();
         throw new ProtocolVersionError(BUILT_AGAINST, error.detail);
       }
@@ -107,18 +112,18 @@ export class ServeClient {
     }
   }
 
-  /** Send one request and await its response. */
-  request<T extends RequestType>(type: T, fields: RequestFields<T>): Promise<Results[T]> {
+  /** Send one request and await its answer. */
+  request<T extends RequestType>(method: T, params: RequestFields<T>): Promise<Results[T]> {
     if (this.#closed) {
       // The reason, not the state. "The connection is closed" is the one thing
       // the caller can already see; what it cannot see is why.
       const why = this.#closedReason?.trim() || 'the connection is closed.';
-      return Promise.reject(new Error(`Cannot send ${type}: ${why}`));
+      return Promise.reject(new Error(`Cannot send ${method}: ${why}`));
     }
     const id = this.#nextId++;
     return new Promise<Results[T]>((resolve, reject) => {
-      this.#pending.set(id, { type, resolve: resolve as (v: never) => void, reject });
-      this.#transport.send({ ...fields, type, id });
+      this.#pending.set(id, { method, resolve: resolve as (v: never) => void, reject });
+      this.#transport.send({ jsonrpc: '2.0', id, method, params });
     });
   }
 
@@ -137,7 +142,7 @@ export class ServeClient {
     this.#closed = true;
     this.#closedReason = reason;
     for (const [, pending] of this.#pending) {
-      pending.reject(new Error(`The connection closed before ${pending.type} answered: ${reason}`));
+      pending.reject(new Error(`The connection closed before ${pending.method} answered: ${reason}`));
     }
     this.#pending.clear();
     this.#emit('close', reason, code);
@@ -150,31 +155,34 @@ export class ServeClient {
     }
     const record = frame as Record<string, unknown>;
 
-    if (record['type'] === 'event') {
-      this.#emit('event', frame as Event);
-      return;
-    }
-    if (record['type'] !== 'response') {
-      this.#emit('protocolViolation', `frame of unknown type ${JSON.stringify(record['type'])}`, frame);
+    if (!('id' in record)) {
+      if (record['method'] === 'event') {
+        this.#emit('event', record['params'] as Event);
+        return;
+      }
+      this.#emit('protocolViolation', `notification of unknown method ${JSON.stringify(record['method'])}`, frame);
       return;
     }
 
+    // An answer. `id: null` is the daemon saying it could not read the id of
+    // something this client sent, which no pending request can claim.
     const id = record['id'];
     const pending = typeof id === 'number' ? this.#pending.get(id) : undefined;
     if (!pending) {
-      this.#emit('protocolViolation', `response for unknown id ${JSON.stringify(id)}`, frame);
+      const error = record['error'] as WireError | undefined;
+      const detail = error ? `: ${error.code} ${error.message}` : '';
+      this.#emit('protocolViolation', `answer for unknown id ${JSON.stringify(id)}${detail}`, frame);
       return;
     }
     this.#pending.delete(id as number);
-    if (record['ok'] === true) {
-      pending.resolve(record['result'] as never);
+    if ('error' in record) {
+      pending.reject(new ServeError(pending.method, record['error'] as WireError));
       return;
     }
-    const error = record['error'] as WireError | null | undefined;
-    if (!error) {
-      pending.reject(new Error(`${pending.type} answered ok:false with no error.`));
+    if (!('result' in record)) {
+      pending.reject(new Error(`${pending.method} was answered with neither a result nor an error.`));
       return;
     }
-    pending.reject(new ServeError(pending.type, error));
+    pending.resolve(record['result'] as never);
   }
 }

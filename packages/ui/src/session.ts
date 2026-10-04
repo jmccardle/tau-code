@@ -203,6 +203,22 @@ export class SessionStore {
     this.#take(attached, attached.head_cursor_id);
   }
 
+  /**
+   * Attach to `ref` -- a session id, or an unambiguous prefix of one, which τ
+   * resolves -- and hold the session under the id the answer names.
+   *
+   * The store is built after the answer, so it is keyed by the full id from
+   * the start. It binds before the next frame is read: this continuation runs
+   * as a microtask, and each frame arrives as a task of its own.
+   */
+  static async open(client: ServeClient, ref: string): Promise<SessionStore> {
+    const attached = await client.request('attach', { session_id: ref });
+    const store = new SessionStore(attached.session_id);
+    store.#bind(client);
+    store.#take(attached, attached.head_cursor_id);
+    return store;
+  }
+
   /** Attach again on a new connection, resuming from what the replica holds. */
   async reattach(client: ServeClient): Promise<void> {
     this.#bind(client);

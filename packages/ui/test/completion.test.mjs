@@ -407,7 +407,7 @@ test('an extension command goes through submit, so the input hooks run', async (
 
 test('a refused submission says why, in τ’s words', async () => {
   const { host: h } = host(() => {
-    throw new ServeError('submit', { code: 'submission_rejected', message: 'locked by pirate', data: { submission_id: 'x' } });
+    throw new ServeError('submit', { code: -32000, message: 'locked by pirate', data: { submission_id: 'x' } });
   });
   const outcome = await performCommand('notes', '', COMMANDS, h);
   assert.deepEqual(outcome, { kind: 'refused', notice: 'locked by pirate' });

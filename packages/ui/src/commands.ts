@@ -1,4 +1,4 @@
-import { ServeError, type CommandInfo, type DispatchedCommand } from '@ffwf/tau-code-protocol';
+import { ERROR_CODES, ServeError, type CommandInfo, type DispatchedCommand } from '@ffwf/tau-code-protocol';
 import type { Daemon } from './daemon.js';
 import { messageOf } from './daemon.js';
 import type { SessionStore } from './session.js';
@@ -112,7 +112,7 @@ export async function performCommand(
     if (!result.dispatched) return { kind: 'performed', notice: `/${name} done.` };
     return await followArm(result.dispatched, host, 0);
   } catch (raw) {
-    if (raw instanceof ServeError && raw.code === 'submission_rejected') return { kind: 'refused', notice: raw.detail };
+    if (raw instanceof ServeError && raw.code === ERROR_CODES.SUBMISSION_REJECTED) return { kind: 'refused', notice: raw.detail };
     return { kind: 'refused', notice: messageOf(raw) };
   }
 }

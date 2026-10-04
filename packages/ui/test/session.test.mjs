@@ -54,7 +54,7 @@ function fakeClient(answers = [attached()]) {
       throw new Error(`unexpected request: ${type}`);
     },
     push(seq, kind, data) {
-      for (const handler of handlers) handler({ type: 'event', session_id: 's1', epoch: 'e1', seq, kind, data });
+      for (const handler of handlers) handler({ session_id: 's1', epoch: 'e1', seq, kind, data });
     },
   };
 }
@@ -64,6 +64,21 @@ async function attachedStore(client = fakeClient()) {
   await store.attach(client);
   return { store, client };
 }
+
+test('open by an id prefix holds the session under the full id τ answered with', async () => {
+  const client = fakeClient([attached({ session_id: 's1' })]);
+  const store = await SessionStore.open(client, 's');
+  assert.equal(client.calls[0].fields.session_id, 's', 'τ resolves the prefix, not this client');
+  assert.equal(store.sessionId, 's1');
+  assert.equal(store.state.cursorId, 'head');
+  // Events name the full id; a store keyed by the prefix would drop them.
+  const before = store.state.revision;
+  client.push(2, 'entry_final', {
+    cursor_id: 'head',
+    entry: { type: 'message', id: 'a1', parentId: 'u1', timestamp: 't', message: { role: 'user', content: 'again', timestamp: 0 } },
+  });
+  assert.notEqual(store.state.revision, before);
+});
 
 test('attach takes the head cursor and draws the path at its leaf', async () => {
   const { store } = await attachedStore();

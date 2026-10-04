@@ -26,8 +26,10 @@ later section undid an earlier one, the earlier one says so.
 ## 1. What τ provides: `tau serve`
 
 τ's daemon owns sessions and streams their trees to any number of clients over
-a WebSocket: one JSON object per text frame, a `hello` first, then requests
-answered by id and events pushed per attached session. `docs/SERVE-PROTOCOL.md`
+a WebSocket: one JSON-RPC 2.0 message per text frame (since protocol 0.8), a
+`hello` first, then requests answered by id with a `result` or an `error`
+whose integer code is RPC's own (`ERROR_CODES`), and events pushed per attached
+session as `event` notifications. `docs/SERVE-PROTOCOL.md`
 and `docs/serve-protocol.schema.json` in τ's repository are its reference; both
 are generated, and τ's test suite fails if either is stale. **This client adds
 no request and changes nothing in τ**, and where it needed something τ did not
@@ -310,7 +312,7 @@ The daemon owns this, and tau-code relies on it rather than re-implementing it.
 - **Token: opt-in.** `serve.token` makes the daemon require it in `hello`. That
   is τ's decision and the default is none. The web client sends `?token=` from
   its URL in `hello` (never in the socket URL), the extension sends its
-  `tau-code.token` setting, and an `unauthorized` refusal asks for one rather
+  `tau-code.token` setting, and an `UNAUTHORIZED` refusal asks for one rather
   than retrying.
 
 There is no TLS. A daemon bound beyond loopback is exposed to whatever can

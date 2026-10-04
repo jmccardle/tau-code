@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ServeError, type DispatchedCommand, type Transport } from '@ffwf/tau-code-protocol';
+import { ERROR_CODES, ServeError, type DispatchedCommand, type Transport } from '@ffwf/tau-code-protocol';
 import { Daemon, messageOf, type DaemonState } from './daemon.js';
 import type { SessionState, SessionStore } from './session.js';
 
@@ -122,7 +122,7 @@ export function useSubmitter(session: SessionStore | null): Submitter {
       } catch (raw) {
         // A refusal -- an extension lock, a cursor that will not take it -- is
         // τ's sentence, carried as the error's message.
-        if (raw instanceof ServeError && raw.code === 'submission_rejected') {
+        if (raw instanceof ServeError && raw.code === ERROR_CODES.SUBMISSION_REJECTED) {
           setError(raw.detail);
           return { kind: 'refused', reason: raw.detail };
         }
