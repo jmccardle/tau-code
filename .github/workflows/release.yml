@@ -2,7 +2,8 @@
 #
 # Two of the four artifacts (ARCHITECTURE 14.1) are .vsix files, and those are
 # what this releases: the universal `ffwf.tau-code`, and one `ffwf.tau-runtime`
-# per VS Code desktop target. The container image is built and proved here but
+# per VS Code desktop target. Once the release exists, publish.yml puts the
+# same files on both marketplaces (ARCHITECTURE 9.4). The container image is built and proved here but
 # never published -- an image goes to a registry rather than onto a release,
 # which is a different credential and a different decision. Building it costs
 # no credential at all, and is how a Dockerfile that stopped working gets
@@ -276,3 +277,11 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file dist/NOTES.md \
             dist/*.vsix
+
+  # --------------------------------------------------------------- publish
+  # The marketplaces get the release's own files, once it exists
+  # (publish.yml). `release` only runs for a tag, so neither does this.
+  publish:
+    needs: release
+    uses: ./.github/workflows/publish.yml
+    secrets: inherit

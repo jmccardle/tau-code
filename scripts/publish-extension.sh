@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
-# Publish the built .vsix to the two extension marketplaces.
+# Publish built .vsix files to the two extension marketplaces.
 #
-#   scripts/publish-extension.sh              both
-#   scripts/publish-extension.sh vscode       Visual Studio Marketplace only
-#   scripts/publish-extension.sh openvsx      Open VSX only
+#   scripts/publish-extension.sh [all|vscode|openvsx] [options] [FILE.vsix ...]
 #
-# This publishes the ARCHIVE, not the working tree: `vsce publish --packagePath`
+#   all | vscode | openvsx   which marketplace (default: all)
+#   --version V              the version every file must carry
+#                            (default: the root package.json's)
+#   --skip-duplicate         a version a marketplace already has is not an
+#                            error, so a re-run completes a half-publish
+#   --no-repo-check          publish even if the listing's repository link is dead
+#
+# With no files it publishes ./ffwf-tau-code-$VERSION.vsix, the file
+# `npm run package:vsix` leaves in the root. With files -- the release workflow
+# passes a release's every .vsix -- it publishes those: the universal
+# `ffwf.tau-code` and one `ffwf.tau-runtime` per target, which the marketplaces
+# file as one platform-specific version.
+#
+# This publishes the ARCHIVES, not the working tree: `vsce publish --packagePath`
 # and `ovsx publish <file>` both read the manifest out of the .vsix. So the two
-# marketplaces get bit-identical extensions, and `packages/vscode/package.json`
-# being marked `private` does not get in the way.
+# marketplaces get bit-identical extensions, and the packages being marked
+# `private` does not get in the way. Each file's identity -- publisher, name,
+# version, target -- is read back out of it here too, so a stale or misnamed
+# file is refused before anything is uploaded.
 #
 # CREDENTIALS
 #
@@ -20,8 +33,10 @@
 #              Eclipse Contributor Agreement on the same account.
 #              https://open-vsx.org/user-settings/tokens
 #
-# Set them in the shell you run this from. This script never writes them
-# anywhere, and passes each one only to the tool that needs it.
+# Set them in the environment this runs in. Both tools read them from there, so
+# neither token is ever on a command line, and this script never writes them
+# anywhere. In CI they are the `marketplaces` environment's secrets
+# (.github/workflows/publish.yml).
 #
 # A published version number cannot be reused. Bump the version rather than
 # trying to replace one.
@@ -31,46 +46,99 @@
 # here that is not scoped by publisher, so owning `ffwf` does not help. There is
 # no way to check it before uploading; the server answers "This extension display
 # name is taken". Open VSX does not enforce it, so that leg can succeed while
-# this one fails.
+# this one fails -- and --skip-duplicate is how the re-run finishes the job.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 VERSION="$(node -p "require('./package.json').version")"
 PUBLISHER="$(node -p "require('./packages/vscode/package.json').publisher")"
-NAME="$(node -p "require('./packages/vscode/package.json').name")"
 REPO_URL="$(node -p "require('./packages/vscode/package.json').homepage")"
-VSIX="$ROOT/ffwf-tau-code-$VERSION.vsix"
+# The extensions this repository publishes, and which of them is per-target.
+UNIVERSAL="$(node -p "require('./packages/vscode/package.json').name")"
+PER_TARGET="$(node -p "require('./packages/runtime/package.json').name")"
+
+# Pinned, because these two are handed the tokens: an upgrade is an edit here,
+# not whatever npm resolves on the day.
+VSCE=@vscode/vsce@4.0.0
+OVSX=ovsx@1.2.0
+
+usage() { echo "usage: $0 [all|vscode|openvsx] [--version V] [--skip-duplicate] [--no-repo-check] [FILE.vsix ...]" >&2; exit 2; }
 
 WHAT=all
 REPO_CHECK=1
-for arg in "$@"; do
-  case "$arg" in
-    all|vscode|openvsx) WHAT="$arg" ;;
+SKIP_DUPLICATE=()
+FILES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    all|vscode|openvsx) WHAT="$1" ;;
+    --version)          [ $# -ge 2 ] || usage; VERSION="$2"; shift ;;
+    --skip-duplicate)   SKIP_DUPLICATE=(--skip-duplicate) ;;
     --no-repo-check)    REPO_CHECK=0 ;;
-    *) echo "usage: $0 [all|vscode|openvsx] [--no-repo-check]" >&2; exit 2 ;;
+    -*)                 usage ;;
+    *)                  FILES+=("$1") ;;
   esac
+  shift
 done
+[ ${#FILES[@]} -gt 0 ] || FILES=("$ROOT/ffwf-tau-code-$VERSION.vsix")
 
 say() { printf '\n=== %s\n' "$1"; }
 
-# ------------------------------------------------------------------ the vsix
-say "$PUBLISHER.$NAME $VERSION"
-if [ ! -f "$VSIX" ]; then
-  echo "No $VSIX." >&2
-  echo "  Build it first: npm run package:vsix" >&2
+# `publisher name version target` out of a .vsix's own manifest; target is `-`
+# for a universal one.
+identity() {
+  unzip -p "$1" extension.vsixmanifest | node -e '
+    const xml = require("fs").readFileSync(0, "utf8");
+    const tag = /<Identity\b[^>]*>/.exec(xml);
+    if (!tag) { console.error("no <Identity> in extension.vsixmanifest"); process.exit(1); }
+    const attr = (name) => (new RegExp(`\\b${name}="([^"]*)"`).exec(tag[0]) || [])[1];
+    console.log([attr("Publisher"), attr("Id"), attr("Version"), attr("TargetPlatform") || "-"].join(" "));
+  '
+}
+
+# ----------------------------------------------------------------- the files
+say "$PUBLISHER $VERSION: ${#FILES[@]} file(s)"
+# Runtimes first, so a reader who installs tau code the moment it appears finds
+# the runtime it offers to fetch already there.
+ORDERED=()
+seen=" "
+for pass in "$PER_TARGET" "$UNIVERSAL"; do
+  for file in "${FILES[@]}"; do
+    if [ ! -f "$file" ]; then
+      echo "No $file." >&2
+      echo "  Build it first: npm run package:vsix" >&2
+      exit 1
+    fi
+    read -r publisher name version target < <(identity "$file")
+    [ "$name" = "$pass" ] || continue
+    # The version in the archive is what the marketplace records. Reading it
+    # back out of the file rather than trusting the filename means a stale
+    # .vsix cannot be published under a fresh version's name.
+    if [ "$publisher" != "$PUBLISHER" ] || [ "$version" != "$VERSION" ]; then
+      echo "  $file is $publisher.$name $version; expected $PUBLISHER.* $VERSION." >&2
+      echo "  Rebuild it: npm run package:vsix" >&2
+      exit 1
+    fi
+    if [ "$name" = "$PER_TARGET" ] && [ "$target" = - ]; then
+      echo "  $file is a $name with no target platform; every $name is per-target." >&2
+      exit 1
+    fi
+    if [ "$name" = "$UNIVERSAL" ] && [ "$target" != - ]; then
+      echo "  $file is a $name for $target; $name is universal." >&2
+      exit 1
+    fi
+    case "$seen" in
+      *" $name@$target "*) echo "  $file is a second $name for $target." >&2; exit 1 ;;
+    esac
+    seen="$seen$name@$target "
+    ORDERED+=("$file")
+    printf '  %-12s %-13s %s\n' "$name" "$target" "$(ls -lh "$file" | awk '{print $5}')"
+  done
+done
+if [ ${#ORDERED[@]} -ne ${#FILES[@]} ]; then
+  echo "  Some files are neither $PUBLISHER.$UNIVERSAL nor $PUBLISHER.$PER_TARGET." >&2
   exit 1
 fi
-# The version in the archive is what the marketplace records. Reading it back
-# out of the file rather than trusting the filename means a stale .vsix cannot
-# be published under a fresh version's name.
-PACKED="$(unzip -p "$VSIX" extension/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
-if [ "$PACKED" != "$VERSION" ]; then
-  echo "  $VSIX contains version $PACKED, the tree says $VERSION." >&2
-  echo "  Rebuild it: npm run package:vsix" >&2
-  exit 1
-fi
-ls -lh "$VSIX" | awk '{print "  " $9 "  " $5}'
 
 # A marketplace listing is mostly the README, and the README links here. A dead
 # link on a listing page is a fault nobody can fix after publishing except by
@@ -94,10 +162,12 @@ if [ "$WHAT" = all ] || [ "$WHAT" = vscode ]; then
     exit 1
   fi
   # Fails on a token that is expired, scoped wrong, or belongs to another
-  # publisher -- before anything is uploaded.
-  npx --yes @vscode/vsce verify-pat "$PUBLISHER" --pat "$VSCE_PAT"
-  npx --yes @vscode/vsce publish --packagePath "$VSIX" --pat "$VSCE_PAT"
-  echo "  https://marketplace.visualstudio.com/items?itemName=$PUBLISHER.$NAME"
+  # publisher -- before anything is uploaded. vsce reads VSCE_PAT itself.
+  npx --yes "$VSCE" verify-pat "$PUBLISHER"
+  npx --yes "$VSCE" publish "${SKIP_DUPLICATE[@]}" --packagePath "${ORDERED[@]}"
+  for name in $(printf '%s\n' "$seen" | tr ' ' '\n' | sed -n 's/@.*//p' | sort -u); do
+    echo "  https://marketplace.visualstudio.com/items?itemName=$PUBLISHER.$name"
+  done
 fi
 
 # ------------------------------------------------------------------- Open VSX
@@ -113,14 +183,19 @@ if [ "$WHAT" = all ] || [ "$WHAT" = openvsx ]; then
   case "$ns" in
     200) echo "  namespace $PUBLISHER exists." ;;
     404) echo "  creating namespace $PUBLISHER."
-         npx --yes ovsx create-namespace "$PUBLISHER" -p "$OVSX_PAT" ;;
+         npx --yes "$OVSX" create-namespace "$PUBLISHER" ;;
     *)   echo "  open-vsx.org answered $ns for the namespace check." >&2; exit 1 ;;
   esac
-  npx --yes ovsx publish "$VSIX" -p "$OVSX_PAT"
-  echo "  https://open-vsx.org/extension/$PUBLISHER/$NAME"
+  # One file per call: ovsx publishes a single archive. It reads OVSX_PAT itself.
+  for file in "${ORDERED[@]}"; do
+    npx --yes "$OVSX" publish "$file" "${SKIP_DUPLICATE[@]}"
+  done
+  for name in $(printf '%s\n' "$seen" | tr ' ' '\n' | sed -n 's/@.*//p' | sort -u); do
+    echo "  https://open-vsx.org/extension/$PUBLISHER/$name"
+  done
 fi
 
 say "done"
 echo "Installed from a marketplace with:"
-echo "  code   --install-extension $PUBLISHER.$NAME"
-echo "  codium --install-extension $PUBLISHER.$NAME"
+echo "  code   --install-extension $PUBLISHER.$UNIVERSAL"
+echo "  codium --install-extension $PUBLISHER.$UNIVERSAL"

@@ -1,0 +1,62 @@
+# Put a GitHub release's .vsix files on the two extension marketplaces.
+#
+# Called by release.yml once the release exists, so what is published is
+# exactly what was released: the files are downloaded from the release, not
+# rebuilt. The universal `ffwf.tau-code` and all nine `ffwf.tau-runtime`
+# targets go up as one version on each marketplace.
+#
+# ONE JOB PER MARKETPLACE, and not fail-fast. The two fail independently -- the
+# Visual Studio Marketplace alone rejects a displayName another extension holds
+# (scripts/publish-extension.sh) -- and a failure on one should neither stop
+# nor undo the other. `--skip-duplicate` makes a re-run of the failed job the
+# whole of the recovery: what already went up is skipped, the rest goes up.
+#
+# THE TOKENS live in the `marketplaces` environment, whose deployment policy
+# admits `v*` tags only. So a branch can never read them, whoever pushed it,
+# and each job is handed only its own marketplace's token.
+#
+# `workflow_dispatch` is for a tag whose publish never ran at all; dispatch it
+# on the tag. A tag older than this file cannot be dispatched (the file is read
+# from the tag), and on a branch the job is skipped before the environment is
+# asked for anything.
+name: publish
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  publish:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment: marketplaces
+    strategy:
+      fail-fast: false
+      matrix:
+        marketplace: [vscode, openvsx]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: the released files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$GITHUB_REF_NAME" --pattern '*.vsix' --dir dist
+
+      - name: publish
+        env:
+          MARKETPLACE: ${{ matrix.marketplace }}
+          VSCE_PAT: ${{ matrix.marketplace == 'vscode' && secrets.VSCE_PAT || '' }}
+          OVSX_PAT: ${{ matrix.marketplace == 'openvsx' && secrets.OVSX_PAT || '' }}
+        # The version comes from the tag, and the script refuses a file that
+        # carries any other -- check-version.mjs already made the tree agree.
+        run: bash scripts/publish-extension.sh "$MARKETPLACE" --version "${GITHUB_REF_NAME#v}" --skip-duplicate dist/*.vsix

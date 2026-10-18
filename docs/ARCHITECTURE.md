@@ -542,6 +542,30 @@ them was needed to build a `.vsix`:
   re-included it. Nothing excluded `dist`, so that line was never needed;
   removing it took the archive from 82 KB to 69 KB.
 
+**A version tag publishes (2026-10-18).** `release.yml` calls `publish.yml`
+once the GitHub release exists, and that job downloads the release's own files
+and hands them to the same script — all of them: `ffwf.tau-code` and the nine
+`ffwf.tau-runtime` targets, which each marketplace files as one
+platform-specific version. The script reads every file's identity (publisher,
+name, version, target) out of its manifest and refuses a set that is stale,
+duplicated or missing a target, before anything is uploaded.
+
+- **One job per marketplace, not fail-fast.** They fail independently — the
+  displayName rule above is Microsoft's alone — so Open VSX can succeed while
+  the Visual Studio Marketplace does not. `--skip-duplicate` makes re-running
+  the failed job the whole recovery.
+- **The tokens are environment secrets.** `VSCE_PAT` and `OVSX_PAT` live in the
+  repository's `marketplaces` environment, whose deployment policy admits `v*`
+  tags only, and each job is handed only its own. The Azure DevOps token
+  expires within a year; a publish that starts failing `verify-pat` is that.
+- **vsce and ovsx are pinned** in the script, because they are handed the
+  tokens.
+- **A tag older than `publish.yml` cannot publish this way**: dispatch reads
+  the workflow from the tag. v0.6.0 is such a tag.
+
+Run by hand, the script still publishes `./ffwf-tau-code-$VERSION.vsix`, or the
+files it is given.
+
 ### 9.5 What is claimed, and what it took (2026-09-02)
 
 | Registry | Held | How |
@@ -1278,9 +1302,9 @@ times is not something to discover in a changelog.
 
 **The image is built here but not published, and those are two decisions.**
 Publishing needs a registry credential and is therefore a different gesture,
-the same way §9.4's marketplaces are; `scripts/publish-extension.sh` stays a
-thing a person runs, because two marketplaces take two tokens and a `vsce
-publish` cannot be taken back. But *building* needs nothing, and an image that
+the same way §9.4's marketplaces are, which a tag now publishes to from the
+release's own files (`publish.yml`) once the tokens were set up as a deliberate
+step of their own. But *building* needs nothing, and an image that
 has quietly stopped building is otherwise found by whoever next runs
 `scripts/package.sh image` — which is a person, on their own afternoon. So the
 `image` job does what that script does minus the tagging: build the runtime
