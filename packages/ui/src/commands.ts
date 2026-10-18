@@ -7,15 +7,16 @@ import { stepOf, type FlowStep } from './flows.js';
 /**
  * τ's slash-command vocabulary, and how this head runs each kind of it.
  *
- * The vocabulary is the attached session's `surface.commands`: every built-in
- * and every command a loaded extension registered, each with two facts --
- * `origin` (`builtin` or `extension`, where the NAME came from; built-ins
- * resolve first, so an extension cannot shadow `/compact`) and `flow` (whether
+ * The vocabulary is the attached session's `surface.commands`: every built-in,
+ * every command a loaded extension registered, and every prompt template and
+ * skill, each with two facts -- `origin` (`builtin`, `extension`, `template`
+ * or `skill`, where the NAME came from; they resolve in that order, so nothing
+ * shadows `/compact`) and `flow` (whether
  * the command DECLARES what it takes, so `next_step` can step it and a form can
  * be built for it without knowing it exists). **Nothing in this file
  * enumerates τ's vocabulary.**
  *
- * ## The three ways a `/word` runs from here
+ * ## The four ways a `/word` runs from here
  *
  * 1. **A flow** (`flow: true`) -- stepped through `next_step`. τ answers either
  *    `step` (an argument is still unbound: render a field for it) or `ready`
@@ -26,7 +27,9 @@ import { stepOf, type FlowStep } from './flows.js';
  *    all arrive here, and only the last is something this file could not have
  *    known about.
  * 2. **A view** (`tree`, `extensions`) -- a named surface only a head can open.
- * 3. **Everything else** -- an extension command taking one opaque line, sent
+ * 3. **A template or a skill** -- a prompt. It goes out as the composer's own
+ *    submission, `@file` expansion included, and τ expands it into the turn.
+ * 4. **Everything else** -- an extension command taking one opaque line, sent
  *    through `submit` with `expand_commands: true`, which is the one door: the
  *    input hooks and the extension lock both sit behind it.
  *
@@ -62,7 +65,12 @@ export type CommandResult =
   | { kind: 'refused'; notice: string }
   | { kind: 'cancelled' }
   /** Not a command at all. The caller sends the line to the model as prose. */
-  | { kind: 'prose' };
+  | { kind: 'prose' }
+  /**
+   * A template or a skill: a prompt, not an act. The caller submits the line
+   * as typed and τ expands it into the turn it runs.
+   */
+  | { kind: 'prompt' };
 
 /** The views this head can open. Head-local, and the popup greys the rest. */
 export const VIEWS: ReadonlySet<string> = new Set(['tree', 'extensions']);
@@ -90,6 +98,7 @@ export async function performCommand(
 ): Promise<CommandResult> {
   const info = commands.find((command) => command.name === name);
   if (info === undefined) return { kind: 'prose' };
+  if (info.origin === 'template' || info.origin === 'skill') return { kind: 'prompt' };
 
   try {
     if (VIEWS.has(name)) {

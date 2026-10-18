@@ -238,6 +238,10 @@
 }
 .tau-md th { font-weight: 600; }
 
+.tau-thinking-empty {
+  color: var(--tau-muted);
+  font-style: italic;
+}
 .tau-thinking summary,
 .tau-toolcall summary,
 .tau-entry-result summary,

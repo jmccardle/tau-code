@@ -96,8 +96,9 @@ export function commandSpan(
  * the model as ordinary prose -- correct, deliberate, and until a popup says so,
  * completely invisible. The composer renders an empty list as that sentence.
  *
- * Built-ins come first and an extension that registered a built-in's name is
- * dropped, because tau resolves in that order: such a name is unreachable, so
+ * Built-ins come first, then extension commands, templates and skills, and a
+ * later kind that claimed an earlier one's name is dropped, because tau
+ * resolves in that order: such a name is unreachable, so
  * offering it would advertise a command the user cannot run.
  *
  * A `hidden` name (`ext:pirate.speak`) appears only once `ext:` has been typed.
@@ -119,7 +120,7 @@ export function completeCommand(
 
   const seen = new Set<string>();
   const candidates: Candidate[] = [];
-  for (const pass of ['builtin', 'extension'] as const) {
+  for (const pass of ['builtin', 'extension', 'template', 'skill'] as const) {
     for (const command of commands) {
       if (command.origin !== pass) continue;
       if (command.hidden && !wantsHidden) continue;

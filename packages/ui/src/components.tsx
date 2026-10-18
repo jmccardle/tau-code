@@ -34,6 +34,11 @@ function Block({ block, markdown = false }: { block: ContentBlock; markdown?: bo
     case 'text':
       return markdown ? <Markdown text={block.text} /> : <div className="tau-text">{block.text}</div>;
     case 'thinking':
+      // Reasoning the provider kept to itself (Anthropic's redacted or
+      // summarised-away blocks) arrives as an artifact with no text. It
+      // happened, and it is replayed, so it is drawn -- as a fact, not as an
+      // empty disclosure.
+      if (block.thinking === '') return <div className="tau-thinking-empty">Reasoning (the provider sent no text for it)</div>;
       return (
         <details className="tau-thinking">
           <summary>Reasoning</summary>
@@ -199,6 +204,11 @@ export interface TranscriptProps {
   state: SessionState;
 }
 
+/** A retry's wait: `1s`, `2.5s`. */
+function formatSeconds(seconds: number): string {
+  return `${Number(seconds.toFixed(1))}s`;
+}
+
 /**
  * The transcript: the path from this head's cursor to the root, and the turn
  * running on that cursor.
@@ -262,6 +272,31 @@ export function Transcript({ state }: TranscriptProps): JSX.Element {
           )}
           {live.tools.map((call) => (
             <LiveTool key={call.toolCallId} call={call} />
+          ))}
+        </div>
+      ) : null}
+
+      {live.retry ? (
+        <div className="tau-notice tau-warn">
+          {live.retry.error ?? 'The request failed'} — retrying
+          {live.retry.delaySeconds !== null ? ` in ${formatSeconds(live.retry.delaySeconds)}` : ''}
+          {live.retry.attempt !== null
+            ? ` (attempt ${live.retry.attempt}${live.retry.maxRetries !== null ? ` of ${live.retry.maxRetries}` : ''})`
+            : ''}
+          .
+        </div>
+      ) : null}
+
+      {live.droppedFollowUps && live.droppedFollowUps.length > 0 ? (
+        <div className="tau-notice tau-warn">
+          {/* τ's wording (follow_ups.py), whole texts rather than its previews:
+              nothing else holds them. */}
+          Aborted: dropped {live.droppedFollowUps.length} queued follow-up
+          {live.droppedFollowUps.length === 1 ? '' : 's'}, never sent:
+          {live.droppedFollowUps.map((text, i) => (
+            <pre key={i} className="tau-pre">
+              {text}
+            </pre>
           ))}
         </div>
       ) : null}
@@ -550,8 +585,9 @@ export function Composer({
 
     // Every `/word` the session knows is dispatched here: a flow is stepped,
     // a view is opened, and the rest goes through `submit` with
-    // `expand_commands`. A word τ does not know comes back as `prose` and falls
-    // through to the model, which is what τ would have done with it anyway.
+    // `expand_commands`. A template or skill comes back as `prompt`, and a word
+    // τ does not know as `prose`: both fall through to `submit`, where τ
+    // expands the first and sends the second to the model as it stands.
     // The vocabulary is the TARGET's, which is not yet in props when the
     // session was created a moment ago.
     const span = commandSpan(trimmed);
@@ -560,7 +596,7 @@ export function Composer({
     if (span && named && onCommand) {
       const args = trimmed.slice(span.end).trim();
       const outcome = await onCommand(named.name, args, target);
-      if (outcome.kind !== 'prose') {
+      if (outcome.kind !== 'prose' && outcome.kind !== 'prompt') {
         if (outcome.kind !== 'cancelled' && outcome.notice !== '') setNotice(outcome.notice);
         if (outcome.kind === 'performed') setText('');
         return;
@@ -1551,7 +1587,7 @@ export function Chat({
           {state.live.truncation.droppedToolCalls !== null
             ? `, and ${state.live.truncation.droppedToolCalls} tool call${
                 state.live.truncation.droppedToolCalls === 1 ? '' : 's'
-              } were dropped mid-argument`
+              } went unrun`
             : ''}
           . Raise <code>max_tokens</code> for this model in the daemon&apos;s <code>~/.tau/config.json</code>, or
           ask for less at a time.

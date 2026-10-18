@@ -76,6 +76,17 @@ export interface Live {
   truncation: { droppedToolCalls: number | null } | null;
   /** τ's sentence that a prompt cache should have been read and was not. */
   cacheNotice: string | null;
+  /**
+   * A request that failed before producing output and will be sent again.
+   * Passing: the next message clears it, and if the retries run out the
+   * turn's own error says so.
+   */
+  retry: { attempt: number | null; maxRetries: number | null; delaySeconds: number | null; error: string | null } | null;
+  /**
+   * Queued follow-ups a Stop discarded, in queue order. They were never
+   * written to the session, so this is the only place they still exist.
+   */
+  droppedFollowUps: readonly string[] | null;
 }
 
 /** An extension's form, opened by a `request` event and closed by `request_closed`. */
@@ -127,6 +138,8 @@ const NO_LIVE: Live = {
   endReason: null,
   truncation: null,
   cacheNotice: null,
+  retry: null,
+  droppedFollowUps: null,
 };
 
 /** How many `ui` calls are kept; older ones have been seen or superseded. */
@@ -357,7 +370,23 @@ export class SessionStore {
         this.#patch({ live: { ...NO_LIVE, cacheNotice: live.cacheNotice } });
         return;
       case 'message_start':
-        this.#patch({ live: { ...live, blocks: [] } });
+        this.#patch({ live: { ...live, blocks: [], retry: null } });
+        return;
+      case 'provider_retry':
+        this.#patch({
+          live: {
+            ...live,
+            retry: {
+              attempt: event.attempt ?? null,
+              maxRetries: event.max_retries ?? null,
+              delaySeconds: event.delay_seconds ?? null,
+              error: event.error ?? null,
+            },
+          },
+        });
+        return;
+      case 'follow_ups_dropped':
+        this.#patch({ live: { ...live, droppedFollowUps: event.dropped ?? null } });
         return;
       case 'message_update': {
         const { delta, block_type: kind } = event;
@@ -397,6 +426,7 @@ export class SessionStore {
             ...live,
             blocks: [],
             tools: [],
+            retry: null,
             endReason: event.end_reason ?? null,
             // `event.error` is not kept: the turn that raised wrote a
             // `turn_error` entry saying so, which a reload shows too.

@@ -6,11 +6,11 @@
  * installed τ. τ's protocol dataclasses are the source of truth; nothing here is
  * hand-maintained, and `npm run check:protocol` fails when this file is stale.
  *
- * tau serve protocol 0.8
+ * tau serve protocol 0.10
  */
 
 /** The protocol version `hello` must name. */
-export const PROTOCOL_VERSION = "0.8" as const;
+export const PROTOCOL_VERSION = "0.10" as const;
 /** The port `tau serve` listens on when its config names none. */
 export const DEFAULT_PORT = 8256 as const;
 
@@ -115,7 +115,14 @@ export interface AskAction {
  * completion's end, or the abort for a partial. ``None`` means no clock applies, which is the
  * case for a synthetic message an extension built (docs/MESSAGE-TIMESTAMPS.md §2). It is never
  * 0: τ did not run in 1970, so a 0 is legacy data and the session stores map it to ``None`` on
- * load.
+ * load. Attributes: role: Discriminator, always ``"assistant"``. content: Thinking, text and
+ * tool-call blocks. api: The wire protocol that produced it, e.g. ``"openai-completions"``.
+ * provider: The provider id the request went to. model: The model id the request named.
+ * response_id: The server's id for the completion, when it sent one. usage: Token counts for
+ * this completion. stop_reason: Why generation ended. error_message: The failure text when
+ * ``stop_reason`` is ``"error"``. reasoning_level: The thinking level whose wire form this
+ * completion was requested with, after clamping; ``None`` when no reasoning control was sent
+ * (docs/REASONING-WIRE.md §3). timestamp: See above.
  */
 export interface AssistantMessage {
   api: string;
@@ -123,6 +130,7 @@ export interface AssistantMessage {
   error_message?: string | null;
   model: string;
   provider: string;
+  reasoning_level?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
   response_id?: string | null;
   role: "assistant";
   stop_reason: "stop" | "length" | "toolUse" | "error" | "aborted";
@@ -227,8 +235,8 @@ export interface CommandInfo {
   /** A qualified extension name (`ext:pirate.speak`): it resolves, and a completion list leaves it out. */
   hidden: boolean;
   name: string;
-  /** `builtin` for τ's own, `extension` for one an extension registered. */
-  origin: "builtin" | "extension";
+  /** `builtin` for τ's own, `extension` for one an extension registered, `template` or `skill` for one the session expands into a prompt (docs/PROMPT-TEMPLATES-AND-SKILLS.md). */
+  origin: "builtin" | "extension" | "template" | "skill";
   [key: string]: unknown;
 }
 
@@ -348,7 +356,7 @@ export interface CompactionEntry {
 
 /** When compaction runs (`compaction.CompactionSettings`). */
 export interface CompactionSettingsRecord {
-  enabled: boolean;
+  auto: boolean;
   keep_recent_tokens: number;
   reserve_tokens: number;
   [key: string]: unknown;
@@ -775,6 +783,29 @@ export interface Error {
 }
 
 /**
+ * A failure as fields, beside the ``error`` string on ``agent_end`` and ``provider_retry``.
+ * See docs/RESPONSE-HEADERS.md §5. Attributes: type: The exception's class name, e.g.
+ * ``"ProviderHttpError"``. Always set. status: The HTTP status of a ``ProviderHttpError``, or
+ * the HTTP-like code a ``ProviderStreamError``'s frame named; None otherwise. retry_after:
+ * Seconds the server asked the client to wait, parsed from ``Retry-After``; None when it sent
+ * none or this is not an HTTP refusal. headers: The refusal's response headers, names
+ * lowercased; None when none were captured, which includes every failure that is not an HTTP
+ * refusal. retryable: Whether ``tau_llm.retry.DEFAULT_RETRY_POLICY`` counts this failure as
+ * transient: True for a retryable status or a connection failure, False for any other HTTP
+ * refusal and for a ``ProviderStreamError``, None for an exception τ makes no transience
+ * judgement about. On ``agent_end`` a True means τ's own retries ran out, or the server asked
+ * for a longer wait than τ will make inside a turn.
+ */
+export interface ErrorDetail {
+  headers?: Record<string, string> | null;
+  retry_after?: number | null;
+  retryable?: boolean | null;
+  status?: number | null;
+  type: string;
+  [key: string]: unknown;
+}
+
+/**
  * A push for an attached session, numbered per session within an `epoch`; an `event`
  * notification's `params`.
  */
@@ -923,8 +954,8 @@ export interface GetCommandsResult {
     hidden: boolean;
     /** The command word, with no leading '/'. */
     name: string;
-    /** Where the NAME came from: 'builtin' is τ's own vocabulary, 'extension' is one a loaded extension registered. Built-ins resolve first, so an extension cannot shadow one. It does NOT say who runs the command — that is which arm the dispatch returns. */
-    origin: "builtin" | "extension";
+    /** Where the NAME came from: 'builtin' is τ's own vocabulary, 'extension' is one a loaded extension registered, 'template' is a prompt template and 'skill' is a skill (`skill:<name>`). Resolution is in that order, so nothing shadows a built-in. A template or skill is not dispatched: the core expands it into the prompt and a turn runs (docs/PROMPT-TEMPLATES-AND-SKILLS.md). */
+    origin: "builtin" | "extension" | "template" | "skill";
     [key: string]: unknown;
   })[];
   [key: string]: unknown;
@@ -1079,7 +1110,7 @@ export interface GetSessionStats {
 }
 
 export interface GetSessionStatsResult {
-  /** The session's EFFECTIVE CompactionSettings — {enabled, reserve_tokens, keep_recent_tokens}, read off AgentSession.compaction_settings, which hands back a COPY so a reader cannot retune a turn already in flight. An RPC session is CONSTRUCTED with enabled=False (backends.py:885) — that is how a host discovers auto-compaction is off (§1.1) — and set_auto_compaction (D-4, shipped in this same tier) is the one thing that changes it, so this reports the session's LIVE effective setting at call time, never a constant. */
+  /** The session's EFFECTIVE CompactionSettings — {auto, reserve_tokens, keep_recent_tokens}, read off AgentSession.compaction_settings, which hands back a COPY so a reader cannot retune a turn already in flight. `auto` is AUTOMATIC compaction only; the `compact` verb ignores it. An RPC session starts from the child's config.json `compaction` block — on unless its `auto` says otherwise (docs/PRICING-AND-COMPACTION-CONFIG.md §3) — and set_auto_compaction (D-4) is the one thing that changes it afterwards, so this reports the session's LIVE effective setting at call time, never a constant. */
   compaction_settings: CompactionSettingsRecord;
   /** estimate_context_tokens(session.messages) (compaction.py) projected as {tokens, usage_tokens, trailing_tokens, last_usage_index}: tokens is the total estimate the compaction threshold is checked against; usage_tokens is the anchored provider-reported count up to the last assistant Usage, trailing_tokens the heuristic estimate for messages after it, last_usage_index that message's index (null if no assistant Usage exists yet, in which case tokens==trailing_tokens and the whole list was heuristically estimated). */
   context: ContextEstimate;
@@ -1214,6 +1245,8 @@ export interface HelloResult {
   client_id: string;
   /** The daemon's working directory at start, absolute; a default for `NewSession`. */
   cwd: string;
+  /** Every model the daemon's config defines, the list `Attached` repeats, so a client can offer one before it attaches (protocol 0.10). */
+  models: ModelRecord[];
   /** The daemon's process id. */
   pid: number;
   /** The daemon's `PROTOCOL_VERSION`. */
@@ -1223,7 +1256,11 @@ export interface HelloResult {
   [key: string]: unknown;
 }
 
-/** An image content block in a message. Reference: SUBPHASE-0.0.md, "1. Messages" section. */
+/**
+ * An image content block in a message. Reference: SUBPHASE-0.0.md, "1. Messages" section.
+ * Attributes: type: Discriminator, always ``"image"``. data: The image bytes, base64-encoded,
+ * without a ``data:`` prefix. mime_type: The image's media type, e.g. ``"image/png"``.
+ */
 export interface ImageContent {
   data: string;
   mime_type: string;
@@ -1754,7 +1791,7 @@ export interface SessionTuple {
 export interface SetAutoCompaction {
   /** The cursor the verb acts at. */
   cursor_id: string;
-  /** Desired auto-compaction state. RPC sessions are constructed with CompactionSettings(enabled=False) (backends.py:885, RPC-TIER-B.md §1.1), so a host that wants it on says so here; AgentSession.set_auto_compaction is the same setter in process. */
+  /** Desired auto-compaction state. An RPC session starts from the child's config.json `compaction` block, on unless its `auto` says otherwise (docs/PRICING-AND-COMPACTION-CONFIG.md §3); AgentSession.set_auto_compaction is the same setter in process. */
   enabled: boolean;
   session_id: string;
 }
@@ -1812,6 +1849,26 @@ export interface SetModelResult {
   leaf: string | null;
   /** AgentSession.get_model() after the switch: {id, provider, context_window}. */
   model: ModelSpec;
+  [key: string]: unknown;
+}
+
+/**
+ * RPC `set_reasoning` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's own handler
+ * at `cursor_id`.
+ */
+export interface SetReasoning {
+  /** The cursor the verb acts at. */
+  cursor_id: string;
+  /** Which reasoning level. */
+  level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  session_id: string;
+}
+
+export interface SetReasoningResult {
+  /** cursor.leaf after this call: ALWAYS the unchanged tip. Nothing is appended here; the next request records `thinking` ahead of itself (docs/TURN-SETTINGS.md §3). */
+  leaf: string | null;
+  /** The level requested for the acting cursor's next request — what AgentSession.set_reasoning returns. The level actually sent is message_end's reasoning_level, after the provider clamps it (docs/REASONING-WIRE.md §3). */
+  level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   [key: string]: unknown;
 }
 
@@ -2013,7 +2070,10 @@ export interface SystemMessage {
   [key: string]: unknown;
 }
 
-/** A text content block in a message. Reference: SUBPHASE-0.0.md, "1. Messages" section. */
+/**
+ * A text content block in a message. Reference: SUBPHASE-0.0.md, "1. Messages" section.
+ * Attributes: type: Discriminator, always ``"text"``. text: The text itself.
+ */
 export interface TextContent {
   text: string;
   type: "text";
@@ -2032,7 +2092,16 @@ export interface ThinkingChangeEntry {
   [key: string]: unknown;
 }
 
-/** A thinking/reasoning content block. Reference: SUBPHASE-0.0.md, "1. Messages" section. */
+/**
+ * A thinking/reasoning content block. Reference: SUBPHASE-0.0.md, "1. Messages" section.
+ * Attributes: type: Discriminator, always ``"thinking"``. thinking: The reasoning text.
+ * cached_tokens: Not set by any τ provider; stays 0 unless a caller fills it.
+ * thinking_signature: What a provider needs to replay this block, kept verbatim. On the OpenAI
+ * wire, the name of the response field the reasoning arrived in (e.g.
+ * ``"reasoning_content"``); on Anthropic and Google, a dict namespaced by provider holding the
+ * opaque artifact. ``""`` when there is none. A block with an artifact and empty ``thinking``
+ * is still reasoning (docs/REASONING-WIRE.md §5).
+ */
 export interface ThinkingContent {
   cached_tokens?: number;
   thinking: string;
@@ -2041,7 +2110,13 @@ export interface ThinkingContent {
   [key: string]: unknown;
 }
 
-/** A tool call content block in a message. Reference: SUBPHASE-0.0.md, "1. Messages" section. */
+/**
+ * A tool call content block in a message. Reference: SUBPHASE-0.0.md, "1. Messages" section.
+ * Attributes: type: Discriminator, always ``"toolCall"``. id: The provider's call id; the
+ * answering result carries it as ``tool_call_id``. name: The tool the model asked for.
+ * arguments: The parsed argument object. provider_signature: Vendor-namespaced data a provider
+ * must send back with this call, e.g. Gemini's thought signature. Persisted with the session.
+ */
 export interface ToolCall {
   arguments: Record<string, unknown>;
   id: string;
@@ -2051,7 +2126,14 @@ export interface ToolCall {
   [key: string]: unknown;
 }
 
-/** A tool result message. Reference: SUBPHASE-0.0.md, "1. Messages" section. */
+/**
+ * A tool result message. Reference: SUBPHASE-0.0.md, "1. Messages" section. Attributes: role:
+ * Discriminator, always ``"toolResult"``. tool_call_id: The ``ToolCall.id`` this answers.
+ * tool_name: The tool that ran. content: What the model sees: text and image blocks. details:
+ * Structured data for heads and hooks; no provider sends it. is_error: Whether the tool
+ * failed; the content then holds the error. timestamp: Epoch milliseconds when the result was
+ * created.
+ */
 export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   details?: Record<string, unknown> | null;
@@ -2101,12 +2183,19 @@ export interface UiStatus {
 }
 
 /**
- * Token usage information for an LLM response. Reference: SUBPHASE-0.0.md, "1. Messages"
- * section. Usage is immutable (frozen) — once created, its fields cannot be modified.
- * ``cache_reported`` says whether the SERVER accounted for a prompt cache on this completion
- * at all, which a 0 in the two counters cannot: llama.cpp reports no cache fields, so its 0
- * means "no cache here" where a gateway's 0 means "cached nothing". Only the second is a
- * finding (docs/PROMPT-CACHING.md §7).
+ * Token usage for one LLM response. Frozen: use ``model_copy(update=...)``. Reference:
+ * SUBPHASE-0.0.md, "1. Messages" section. ``cache_reported`` exists because a 0 in the cache
+ * counters is ambiguous: llama.cpp reports no cache fields, while a gateway's 0 means "cached
+ * nothing" (docs/PROMPT-CACHING.md §7). Attributes: model_config: Pydantic configuration;
+ * makes instances frozen. input_tokens: Prompt tokens, as the provider reported them.
+ * output_tokens: Completion tokens, as the provider reported them. cache_read_tokens: Prompt
+ * tokens served from the provider's cache. cache_write_tokens: Prompt tokens written to the
+ * provider's cache. total_tokens: The server's total, or input plus output when it sent none.
+ * reasoning_tokens: How many of ``output_tokens`` were reasoning; ``None`` when the server
+ * reported no split (docs/REASONING-WIRE.md §7). cost: Not set by any τ provider; prices are
+ * applied at the head's emit boundary, not stored here. extra: Provider-specific additions,
+ * e.g. llama.cpp ``"timings"`` or the OpenAI provider's ``"repairs"`` count for tool-call
+ * arguments.
  */
 export interface Usage {
   cache_read_tokens?: number;
@@ -2116,11 +2205,16 @@ export interface Usage {
   extra?: Record<string, unknown>;
   input_tokens?: number;
   output_tokens?: number;
+  reasoning_tokens?: number | null;
   total_tokens?: number;
   [key: string]: unknown;
 }
 
-/** A user message. Reference: SUBPHASE-0.0.md, "1. Messages" section. */
+/**
+ * A user message. Reference: SUBPHASE-0.0.md, "1. Messages" section. Attributes: role:
+ * Discriminator, always ``"user"``. content: Plain text, or a list of text and image blocks.
+ * timestamp: Epoch milliseconds when the message was created.
+ */
 export interface UserMessage {
   content: string | (TextContent | ImageContent)[];
   role: "user";
@@ -2158,6 +2252,8 @@ export interface ViewArm {
  * field-by-field comment above this class.
  */
 export interface WireEvent {
+  /** Which retry a provider_retry announces, counting from 1. A provider_retry says a request failed before producing any output and will be sent again, byte-identical, after delay_seconds; `error` is the failure. A host renders it as a passing warning: if the retries run out, the turn's agent_end carries the final error as usual. None for all other event types. See docs/PROVIDER-RETRY.md. */
+  attempt?: number | null;
   /** Which diffable content-block kind `delta` belongs to. Set exactly when `delta` is set — 'text' on a side_completion_update, which has no other kind. */
   block_type?: "text" | "thinking" | null;
   /** Whether a tool_execution_end is an extension veto (S50), distinct from a generic errored result. */
@@ -2170,26 +2266,40 @@ export interface WireEvent {
   correlation?: Record<string, unknown> | null;
   /** The cursor whose turn emitted this event (docs/CURSORS.md §6). Several cursors run turns on one session at once; a host routes by this. None outside a turn. */
   cursor_id?: string | null;
+  /** Seconds τ waits before re-sending, on provider_retry: the server's Retry-After when it sent one, else an exponential backoff. None for all other event types. */
+  delay_seconds?: number | null;
   /** One text fragment that arrived. On message_update (E1) it is a diffable content-block's prefix-diff against the previous message_update in the same turn, never the cumulative message; only a diffable block kind sets it (see block_type), and a non-diffable block change (e.g. a growing toolCall) produces no wire event. On side_completion_update it is the next fragment of the summary. Both are applied the same way, which is why they share a field rather than asking a client to keep two accumulators — see `replace`. None for all other event types. */
   delta?: string | null;
-  /** How many tool calls this completion lost because the stream ended mid-argument, on message_end. A truncated or aborted arguments buffer is a prefix, so the provider drops the call rather than running it on a repaired or empty payload, and this is the only record that it existed. Null rather than 0 when none were dropped, so 'none lost' and 'not reported' stay distinguishable. None for all other event types. */
+  /** The queued followUp texts a user abort discarded, in queue order, on follow_ups_dropped. They were never written to the session, so this is the one field here that carries content no verb can pull afterwards. None for all other event types. See docs/TURN-SETTINGS.md §5. */
+  dropped?: string[] | null;
+  /** How many tool calls in this completion were not run, on message_end. A completion cut off at the output cap runs none of its calls: each stays in the message with its partial arguments and gets an error result, or is dropped when nothing of it decodes; an aborted stream drops a call whose arguments were mid-flight. Null rather than 0 when every call ran, so 'none lost' and 'not reported' stay distinguishable. None for all other event types. See docs/TRUNCATED-TOOL-CALLS.md §3.2. */
   dropped_tool_calls?: number | null;
   /** How an agent_end closed: 'done' (the model had nothing more to say), 'terminate' (a tool asked to stop), 'aborted', 'max_turns' (the ceiling truncated the run), 'repeat_tool_calls' (the loop stopped itself because the model kept repeating an identical, wholly-failing batch) or 'error'. None on every other event type. `error` says whether the loop raised; this says how it stopped when it did not, which is what tells a host that an answer is TRUNCATED rather than finished. */
   end_reason?: "done" | "terminate" | "aborted" | "max_turns" | "repeat_tool_calls" | "error" | null;
   /** Why an agent_end closed when the loop raised rather than finishing (e.g. 'RuntimeError: Connection refused'). None on a normal close; always paired with is_error=True when set. Without it 'the agent finished' and 'the agent died mid-turn' are the same event on the wire. */
   error?: string | null;
+  /** `error` as fields, set exactly when `error` is (agent_end, provider_retry): `type` (the exception class name, always set), `status` (the HTTP status of a refusal), `retry_after` (seconds the server asked for), `headers` (the refusal's response headers, lowercased, set-cookie removed) and `retryable` (true for a transient failure — 408/429/502/503/504/529 or a connection failure — false for any other refusal, null when τ makes no judgement). Each is null when not known. See docs/RESPONSE-HEADERS.md §5. */
+  error_detail?: ErrorDetail | null;
   /** Whether this event represents an error. */
   is_error?: boolean;
   /** The emitting cursor's resulting leaf, on agent_end (E5/F3). Filled in by rpc/transport.py's writer immediately before this line is serialized — not by rpc/wire_events.py at event-projection time — because persistence happens strictly AFTER agent_end fires; reading it any earlier reproduces the exact stale-tip bug this field exists to close. None for all other event types. */
   leaf?: string | null;
+  /** The most retries that request will make, on provider_retry. None for all other event types. */
+  max_retries?: number | null;
   /** Count of messages produced this turn, on agent_end (E2). The messages themselves are pulled via get_messages, never pushed. None for all other event types. */
   message_count?: number | null;
+  /** On a tool_execution_* event for a call a tool made, the calling tool's call id; None for a call the model made. Experimental. */
+  parent_tool_call_id?: string | null;
   /** Which side completion a side_completion_* event reports: 'compaction' or 'branch_summary'. Side work spends tokens and produces text outside any turn, so it stamps no submission_id and a host keys on this instead. The summary TEXT and what it cost are deliberately not on the wire — both land in the session log as a compaction or branch_summary entry, which get_entry serves with tokens_before, covered_tokens and summary_usage attached. Pushing unbounded content through an event is what WireEvent exists to avoid. None for all other event types. See docs/STREAMING-SIDE-WORK.md. */
   purpose?: "compaction" | "branch_summary" | null;
   /** What asked for a side completion: 'manual' (a person or this host), 'threshold' (the auto-trigger, which nobody asked for) or 'navigate' (the tree browser's summarising move). On all three side_completion_* events, so a host that attached mid-summary still learns whether the work was requested or imposed. None for all other event types. */
   reason?: "manual" | "threshold" | "navigate" | null;
+  /** The thinking level this completion was requested with, after the provider clamped it to what the model supports, on the message_end that carries usage. Null when no reasoning control was sent — no level was set, or the model does not declare reasoning — so a requested level that was clamped or not sent is visible rather than silent. None for all other event types. See docs/REASONING-WIRE.md §3. */
+  reasoning_level?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
   /** Only meaningful when delta is set. False (the common case): delta is an incremental suffix — append it to whatever was already accumulated for this block_type this turn. True: the provider replaced rather than extended the block's content — delta is the block's ENTIRE new value, and the receiver must RESET its accumulator to delta rather than appending. Mirrors event_projection.BlockDelta.replace exactly. */
   replace?: boolean;
+  /** The HTTP response headers of the completion this message_end closes, names lowercased, set-cookie removed. Set on the message_end that carries stop_reason; null there when the transport did not capture them, {} when the server sent none. τ parses none of them: rate-limit counters differ per vendor. None for all other event types. See docs/RESPONSE-HEADERS.md §5. */
+  response_headers?: Record<string, string> | null;
   /** The submission's origin (E4). None alongside submission_id. */
   source?: "interactive" | "rpc" | "extension" | "bus" | "timer" | "webhook" | "voice" | "agent" | null;
   /** Why the model stopped this completion, on the message_end that carries usage. 'length' means the output cap ended it, so the content is a PREFIX and not an answer — the one value an operator has to act on. None on the content-only duplicate message_end (which carries no usage either) and on every other event type. This rides a field of its own because the message it belongs to is excluded from the wire; it is a closed enum, not unbounded content. See docs/TRUNCATED-TOOL-CALLS.md. */
@@ -2207,7 +2317,7 @@ export interface WireEvent {
   /** Turn number (turn_*). */
   turn_index?: number | null;
   /** Event type discriminator. */
-  type: "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "side_completion_start" | "side_completion_update" | "side_completion_end";
+  type: "agent_start" | "agent_end" | "turn_start" | "turn_end" | "message_start" | "message_update" | "message_end" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "side_completion_start" | "side_completion_update" | "side_completion_end" | "provider_retry" | "follow_ups_dropped";
   [key: string]: unknown;
 }
 
@@ -2360,6 +2470,11 @@ export type ClientFrame = {
 } | {
   id: number | string;
   jsonrpc: "2.0";
+  method: "set_reasoning";
+  params?: SetReasoning;
+} | {
+  id: number | string;
+  jsonrpc: "2.0";
   method: "set_session_name";
   params?: SetSessionName;
 } | {
@@ -2498,6 +2613,7 @@ export interface Requests {
   get_last_assistant_text: GetLastAssistantText;
   set_model: SetModel;
   set_auto_compaction: SetAutoCompaction;
+  set_reasoning: SetReasoning;
   set_session_name: SetSessionName;
   complete_path: CompletePath;
   next_step: NextStep;
@@ -2552,6 +2668,7 @@ export interface Results {
   get_last_assistant_text: GetLastAssistantTextResult;
   set_model: SetModelResult;
   set_auto_compaction: SetAutoCompactionResult;
+  set_reasoning: SetReasoningResult;
   set_session_name: SetSessionNameResult;
   complete_path: CompletePathResult;
   next_step: NextStepResult;
@@ -2595,7 +2712,7 @@ export interface EventData {
 export type EventKind = keyof EventData;
 
 /** Every method, in the schema's order. */
-export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
+export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_reasoning","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
 /** Every error code a request can fail with, by name. */
 export const ERROR_CODES = {
   PARSE_ERROR: -32700,

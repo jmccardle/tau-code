@@ -119,6 +119,31 @@ test('message_end hands the text to the entry, and notes a truncation by the out
   assert.deepEqual(store.state.live.truncation, { droppedToolCalls: 2 });
 });
 
+test('a provider retry is a passing notice: the next message clears it', async () => {
+  const { store, client } = await attachedStore();
+  client.push(2, 'agent_event', {
+    type: 'provider_retry', timestamp: 0, cursor_id: 'head', attempt: 1, max_retries: 3, delay_seconds: 1, error: 'HTTP 503',
+  });
+  assert.deepEqual(store.state.live.retry, { attempt: 1, maxRetries: 3, delaySeconds: 1, error: 'HTTP 503' });
+  client.push(3, 'agent_event', { type: 'message_start', timestamp: 0, cursor_id: 'head' });
+  assert.equal(store.state.live.retry, null);
+});
+
+test('a retry that ran out is cleared by agent_end, whose own error stands', async () => {
+  const { store, client } = await attachedStore();
+  client.push(2, 'agent_event', { type: 'provider_retry', timestamp: 0, cursor_id: 'head', attempt: 3, error: 'HTTP 503' });
+  client.push(3, 'agent_event', { type: 'agent_end', timestamp: 0, cursor_id: 'head', end_reason: 'error', error: 'HTTP 503' });
+  assert.equal(store.state.live.retry, null);
+});
+
+test('follow-ups an abort dropped are kept whole, until the next turn starts', async () => {
+  const { store, client } = await attachedStore();
+  client.push(2, 'agent_event', { type: 'follow_ups_dropped', timestamp: 0, cursor_id: 'head', dropped: ['and then this'] });
+  assert.deepEqual(store.state.live.droppedFollowUps, ['and then this']);
+  client.push(3, 'agent_event', { type: 'agent_start', timestamp: 0, cursor_id: 'head' });
+  assert.equal(store.state.live.droppedFollowUps, null);
+});
+
 test('a running tool shows the arguments its assistant entry asked for, and leaves when it ends', async () => {
   const { store, client } = await attachedStore();
   // The event stream carries no arguments: they are in the assistant entry

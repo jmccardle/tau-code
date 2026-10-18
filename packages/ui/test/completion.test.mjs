@@ -41,6 +41,8 @@ const COMMANDS = [
   { name: 'model', description: 'switch the model', origin: 'builtin', flow: true, hidden: false },
   { name: 'notes', description: 'an extension command', origin: 'extension', flow: false, hidden: false },
   { name: 'ext:notebook.notes', description: 'an extension command', origin: 'extension', flow: false, hidden: true },
+  { name: 'review', description: 'a prompt template', origin: 'template', flow: false, hidden: false },
+  { name: 'skill:demo', description: 'a skill', origin: 'skill', flow: false, hidden: false },
 ];
 
 /** The rows a reader who has not typed `ext:` should ever see. */
@@ -64,12 +66,19 @@ test('matching is a case-sensitive prefix test, like tau resolve_command', () =>
   assert.deepEqual(completeCommand('/CO', COMMANDS, NONE).candidates, []);
 });
 
-test('built-ins come before extension commands', () => {
+test('built-ins come before extension commands, then templates, then skills', () => {
   // tau resolves in that order, so an extension that registered a built-in's
   // name is unreachable. Offering it first would advertise a command that
   // cannot run.
   const values = completeCommand('/', COMMANDS, NONE).candidates.map((c) => c.value);
-  assert.equal(values.indexOf('notes'), values.length - 1);
+  assert.deepEqual(values.slice(-3), ['notes', 'review', 'skill:demo']);
+});
+
+test('a template that shares a built-in name is unreachable, so it is not offered', () => {
+  const shadowed = [...COMMANDS, { name: 'compact', description: 'a template', origin: 'template', flow: false, hidden: false }];
+  const rows = completeCommand('/compact', shadowed, NONE).candidates;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail, 'compact the conversation');
 });
 
 test('a command this head cannot perform is listed, not hidden', () => {
@@ -307,6 +316,14 @@ test('a word tau does not know comes back as prose, for the model to see', async
   const { host: h } = host();
   const outcome = await performCommand('zzz', '', COMMANDS, h);
   assert.equal(outcome.kind, 'prose');
+});
+
+test('a template or a skill comes back as a prompt, and nothing is sent from here', async () => {
+  // The composer submits it as typed, `@file` expansion included; τ expands it.
+  const { host: h, record } = host();
+  assert.equal((await performCommand('review', 'the parser', COMMANDS, h)).kind, 'prompt');
+  assert.equal((await performCommand('skill:demo', '', COMMANDS, h)).kind, 'prompt');
+  assert.deepEqual(record.calls, []);
 });
 
 test('a view opens this head panel and calls nothing', async () => {
