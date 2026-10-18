@@ -83,7 +83,8 @@ export interface Live {
    */
   retry: { attempt: number | null; maxRetries: number | null; delaySeconds: number | null; error: string | null } | null;
   /**
-   * Queued follow-ups a Stop discarded, in queue order. They were never
+   * What a Stop discarded: queued follow-ups, then the prompts that were
+   * waiting for the turn, in the order they were queued. They were never
    * written to the session, so this is the only place they still exist.
    */
   droppedFollowUps: readonly string[] | null;

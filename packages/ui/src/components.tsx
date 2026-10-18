@@ -289,9 +289,10 @@ export function Transcript({ state }: TranscriptProps): JSX.Element {
 
       {live.droppedFollowUps && live.droppedFollowUps.length > 0 ? (
         <div className="tau-notice tau-warn">
-          {/* τ's wording (follow_ups.py), whole texts rather than its previews:
-              nothing else holds them. */}
-          Aborted: dropped {live.droppedFollowUps.length} queued follow-up
+          {/* Whole texts rather than τ's 40-character previews (follow_ups.py):
+              nothing else holds them. Mostly they are this reader's own
+              prompts, sent while the turn ran, so they are called messages. */}
+          Stopped: dropped {live.droppedFollowUps.length} queued message
           {live.droppedFollowUps.length === 1 ? '' : 's'}, never sent:
           {live.droppedFollowUps.map((text, i) => (
             <pre key={i} className="tau-pre">

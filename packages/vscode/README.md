@@ -18,7 +18,7 @@ missing, so you find out here rather than after installing.
 
 ## Requirements
 
-τ 0.12.0 or later, with its `serve` extra, and its `tau` console script
+τ 0.13.0, with its `serve` extra (serve protocol 0.10), and its `tau` console script
 reachable:
 
 ```bash
