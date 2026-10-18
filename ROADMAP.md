@@ -32,6 +32,11 @@ State as of 2026-10-18. `master` == `v0.7.0` (30181fe), plus this file.
 
 ## External blockers
 - **Forgejo tau #35, extension listing (τ 0.14.0):** tau-code asked for a `tau ext list` serve verb that tells installed from enabled extensions. Showing extensions in tau-code waits on τ 0.14.0.
+  - τ has decided the design:
+    - An extension's identity is its full dotted module name everywhere.
+    - Drop-ins (.py files and package directories) and pip packages pass through one authorization gate.
+    - A subscription to a topic that no extension emits shows up in `tau ext list` or as a debug notice.
+  - So tau-code's installed / enabled / authorized display should also show those orphaned subscriptions.
 
 ## Maintenance
 - **Azure DevOps `VSCE_PAT`** (org `ffwf`, Marketplace Manage):
