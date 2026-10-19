@@ -15,7 +15,7 @@ import { SessionStore } from '../dist/session.js';
 const SURFACE = { commands: [], command_args: {}, shortcuts: [], extensions: [], loaded: [], load_errors: [], warnings: [] };
 
 function cursor(id, leaf, busy = false) {
-  return { cursor_id: id, leaf, label: id, owner_id: null, busy, model: 'm', request: null };
+  return { cursor_id: id, leaf, label: id, owner_id: null, busy, model: 'm', model_error: null, request: null };
 }
 
 function attached(overrides = {}) {

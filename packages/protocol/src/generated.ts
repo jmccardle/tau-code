@@ -484,8 +484,10 @@ export interface CursorState {
   cursor_id: string;
   label: string;
   leaf: string | null;
-  /** The config name of the model its next turn calls, as `set_model` takes it and `get_models` lists it; not the model id, which two names may share. */
+  /** The config name of the model its next turn calls, as `set_model` takes it and `get_models` lists it; not the model id, which two names may share. A recorded model that no longer resolves keeps its name. */
   model: string;
+  /** Why a turn here would be refused for that model, naming the fix; `None` when it resolves (`AgentSession.model_unavailable`). */
+  model_error: string | null;
   owner_id: string | null;
   /** The extension request at its leaf, or `None`. */
   request: ExtensionRequest | null;
@@ -1148,10 +1150,10 @@ export interface GetSessionStatsResult {
   compaction_settings: CompactionSettingsRecord;
   /** estimate_context_tokens(session.messages) (compaction.py) projected as {tokens, usage_tokens, trailing_tokens, last_usage_index}: tokens is the total estimate the compaction threshold is checked against; usage_tokens is the anchored provider-reported count up to the last assistant Usage, trailing_tokens the heuristic estimate for messages after it, last_usage_index that message's index (null if no assistant Usage exists yet, in which case tokens==trailing_tokens and the whole list was heuristically estimated). */
   context: ContextEstimate;
-  /** context_window - context.tokens. Can be negative: an honest over-budget number, never clamped to zero. */
-  context_headroom: number;
-  /** The active model's context_window (get_model()). */
-  context_window: number;
+  /** context_window - context.tokens. Can be negative: an honest over-budget number, never clamped to zero. Null with context_window. */
+  context_headroom: number | null;
+  /** The active model's context_window (get_model()); null while that model is unavailable (get_state's model_error says why). */
+  context_window: number | null;
   /** {id, timestamp, summary, first_kept_id, tokens_before} for the most recent type=='compaction' entry in session_log.entries(), or null if this session has never compacted — an honest absence, never a fabricated entry. */
   last_compaction: LastCompaction | null;
   /** AgentSession.get_usage() — null before the first completion. */
@@ -1178,8 +1180,10 @@ export interface GetStateResult {
   leaf: string | null;
   /** len(AgentSession.messages). */
   message_count: number;
-  /** AgentSession.get_model(): {id, provider, context_window}. */
+  /** AgentSession.get_model(): {id, provider, context_window}; null while the session's recorded model is unavailable (model_error says why). */
   model: ModelSpec;
+  /** AgentSession.model_unavailable: why a turn would be refused for its model, naming the model and the fix; null when the model resolves. */
+  model_error: string | null;
   /** AgentSession.state.session_id. */
   session_id: string;
   /** AgentSession.state.status. */
@@ -1338,7 +1342,7 @@ export interface ListExtensions {
 }
 
 export interface ListExtensionsResult {
-  /** Every extension this session knows of and its state, as the rows of `tau ext list` (docs/EXTENSION-PACKAGES.md §7): loaded, disabled, failed, and found-but-not-loaded (unauthorized, unusable, collision). Each row names the identifier, source kind, target, distribution and version for a package, why it is not loaded, and the subscribed ext: topics whose emitter is not loaded (#44). Read-only: authorizing is not on the wire. */
+  /** Every extension this session knows of and its state, as the rows of `tau ext list` (docs/EXTENSION-PACKAGES.md §7): loaded, disabled, failed, and found-but-not-loaded (unauthorized, unusable, collision). `disabled` is either turned off in this session or, with a reason, disabled by `tau ext disable` and never imported (#58). Each row names the identifier, source kind, target, distribution and version for a package, why it is not loaded, and the subscribed ext: topics whose emitter is not loaded (#44). Read-only: authorizing is not on the wire. */
   extensions: ExtensionRecordWire[];
   [key: string]: unknown;
 }

@@ -881,6 +881,8 @@ export interface ModelPickerProps {
   models: readonly ModelRecord[];
   /** The name this head's cursor runs on. */
   active: string | null;
+  /** Why a turn at this cursor would be refused for its model, or null. */
+  activeError: string | null;
   running: boolean;
   onClose: () => void;
 }
@@ -893,7 +895,7 @@ export interface ModelPickerProps {
  * file. A switch is per CURSOR -- another head on the same session keeps its
  * own -- and takes effect on that cursor's next turn.
  */
-export function ModelPicker({ session, models, active, running, onClose }: ModelPickerProps): JSX.Element {
+export function ModelPicker({ session, models, active, activeError, running, onClose }: ModelPickerProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -916,6 +918,7 @@ export function ModelPicker({ session, models, active, running, onClose }: Model
     <ModelPanel
       models={models}
       active={active}
+      activeError={activeError}
       running={running}
       busy={busy || !session}
       error={error}
@@ -928,6 +931,8 @@ export function ModelPicker({ session, models, active, running, onClose }: Model
 export interface ModelPanelProps {
   models: readonly ModelRecord[];
   active: string | null;
+  /** `CursorState.model_error`: why the cursor's next turn would be refused. */
+  activeError: string | null;
   running: boolean;
   /** A call is in flight, or there is no session to make one with. */
   busy: boolean;
@@ -940,8 +945,11 @@ export interface ModelPanelProps {
  * What the model picker looks like. Everything, and no calls -- split out so
  * the markup can be rendered from a fixture.
  */
-export function ModelPanel({ models, active, running, busy, error, onClose, onChoose }: ModelPanelProps): JSX.Element {
+export function ModelPanel({ models, active, activeError, running, busy, error, onClose, onChoose }: ModelPanelProps): JSX.Element {
   const record = recordFor(models, active);
+  // τ's own sentence for why this cursor cannot run a turn. Shown whenever it
+  // is set, unless the line above already says exactly it.
+  const refusal = activeError !== null && activeError !== record?.error ? activeError : null;
   const aliases = aliasesOf(models, active).filter((name) => name !== active);
 
   return (
@@ -969,6 +977,7 @@ export function ModelPanel({ models, active, running, busy, error, onClose, onCh
             Running: <code>{active}</code>, which is no longer a name in the daemon&apos;s config.
           </div>
         )}
+        {refusal !== null ? <div className="tau-notice tau-warn">{refusal}</div> : null}
       </div>
 
       {aliases.length > 0 ? (
@@ -1139,10 +1148,10 @@ export function StatusBar({
       ) : null}
       {onToggleModels ? (
         <button
-          className="tau-status-button tau-status-model"
+          className={`tau-status-button tau-status-model${cursor?.model_error ? ' tau-status-warnings' : ''}`}
           onClick={onToggleModels}
           aria-pressed={modelsOpen === true}
-          title="Switch the model this view's cursor uses"
+          title={cursor?.model_error ?? "Switch the model this view's cursor uses"}
         >
           {cursor?.model ?? 'Model'}
         </button>
@@ -1548,6 +1557,9 @@ export function Chat({
         {...(disconnectedHint ? { hint: disconnectedHint } : {})}
       />
       {state?.failure ? <div className="tau-notice tau-warn">{state.failure}</div> : null}
+      {/* Said before the reader types, not only when a prompt is refused: the
+          session still opens and reads, and this is what a turn would hit. */}
+      {cursor?.model_error ? <div className="tau-notice tau-warn">{cursor.model_error}</div> : null}
       {panel === 'sessions' ? (
         <SessionPicker
           daemon={ready ? daemon : null}
@@ -1566,6 +1578,7 @@ export function Chat({
           session={session}
           models={state.attached?.models ?? []}
           active={cursor?.model ?? null}
+          activeError={cursor?.model_error ?? null}
           running={running}
           onClose={() => setPanel(null)}
         />

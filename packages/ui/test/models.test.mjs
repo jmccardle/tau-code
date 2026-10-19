@@ -54,6 +54,7 @@ const panel = (props) =>
     React.createElement(ModelPanel, {
       models: MODELS,
       active: 'local-llm',
+      activeError: null,
       running: false,
       busy: false,
       error: null,
@@ -119,4 +120,18 @@ test('an entry that does not build is listed with its reason and cannot be chose
 test('running a name the config no longer builds says why', () => {
   const html = panel({ models: [...MODELS, BROKEN], active: 'typo' });
   assert.match(html, /no longer builds: unknown backend/);
+});
+
+const GONE = "model 'local-llm-tun' is not configured (configured: local-llm); /model to pick one";
+
+test('a cursor whose model is unavailable says τ\'s reason, under the running line', () => {
+  const html = panel({ active: 'local-llm-tun', activeError: GONE });
+  assert.match(html, /no longer a name in the daemon/);
+  assert.match(html, /tau-notice tau-warn">model &#x27;local-llm-tun&#x27; is not configured/);
+});
+
+test('the reason is not said twice when the config entry already gives it', () => {
+  const html = panel({ models: [...MODELS, BROKEN], active: 'typo', activeError: BROKEN.error });
+  assert.match(html, /no longer builds: unknown backend/);
+  assert.doesNotMatch(html, /tau-warn">unknown backend/);
 });
