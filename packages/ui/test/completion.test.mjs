@@ -29,7 +29,7 @@ import { ServeError } from '@ffwf/tau-code-protocol';
  * same rows RPC `get_commands` lists, built by the same code.
  *
  * `notes` carries its `ext:` twin because a real one always does: tau mints
- * `ext:<extension>.<command>` for every extension command and nothing can take
+ * `ext:<extension>:<command>` for every extension command and nothing can take
  * it away. A fixture with only the bare half would have made the popup look
  * correct while the wire it models says otherwise.
  */
@@ -40,7 +40,7 @@ const COMMANDS = [
   { name: 'extensions', description: 'list loaded extensions', origin: 'builtin', flow: false, hidden: false },
   { name: 'model', description: 'switch the model', origin: 'builtin', flow: true, hidden: false },
   { name: 'notes', description: 'an extension command', origin: 'extension', flow: false, hidden: false },
-  { name: 'ext:notebook.notes', description: 'an extension command', origin: 'extension', flow: false, hidden: true },
+  { name: 'ext:notebook:notes', description: 'an extension command', origin: 'extension', flow: false, hidden: true },
   { name: 'review', description: 'a prompt template', origin: 'template', flow: false, hidden: false },
   { name: 'skill:demo', description: 'a skill', origin: 'skill', flow: false, hidden: false },
 ];
@@ -98,7 +98,7 @@ test('the ext: twin is not offered until ext: is typed', () => {
   assert.deepEqual(bare, ['notes']);
 
   const asked = completeCommand('/ext:', COMMANDS, NONE).candidates.map((c) => c.value);
-  assert.deepEqual(asked, ['ext:notebook.notes']);
+  assert.deepEqual(asked, ['ext:notebook:notes']);
 });
 
 test('a hidden name is filtered for noise, never for reachability', () => {
@@ -106,7 +106,7 @@ test('a hidden name is filtered for noise, never for reachability', () => {
   // asked for -- the opposite of the `unavailable` set, which greys a command
   // this head genuinely cannot perform.
   const [row] = completeCommand('/ext:notebook', COMMANDS, NONE).candidates;
-  assert.equal(row.value, 'ext:notebook.notes');
+  assert.equal(row.value, 'ext:notebook:notes');
   assert.equal(row.available, true);
 });
 

@@ -6,11 +6,11 @@
  * installed τ. τ's protocol dataclasses are the source of truth; nothing here is
  * hand-maintained, and `npm run check:protocol` fails when this file is stale.
  *
- * tau serve protocol 0.10
+ * tau serve protocol 0.11
  */
 
 /** The protocol version `hello` must name. */
-export const PROTOCOL_VERSION = "0.10" as const;
+export const PROTOCOL_VERSION = "0.11" as const;
 /** The port `tau serve` listens on when its config names none. */
 export const DEFAULT_PORT = 8256 as const;
 
@@ -232,7 +232,7 @@ export interface CommandInfo {
   description: string;
   /** Whether `NextStep` steps it. */
   flow: boolean;
-  /** A qualified extension name (`ext:pirate.speak`): it resolves, and a completion list leaves it out. */
+  /** A qualified extension name (`ext:pirate:speak`): it resolves, and a completion list leaves it out. */
   hidden: boolean;
   name: string;
   /** `builtin` for τ's own, `extension` for one an extension registered, `template` or `skill` for one the session expands into a prompt (docs/PROMPT-TEMPLATES-AND-SKILLS.md). */
@@ -833,6 +833,25 @@ export interface ExtensionInfo {
 }
 
 /**
+ * One row of `list_extensions`: an extension and its state
+ * (`extension_sources.ExtensionRecord`).
+ */
+export interface ExtensionRecordWire {
+  authorization: string | null;
+  distribution: string | null;
+  entry_point: string | null;
+  identifier: string;
+  kind: string;
+  orphan_topics: string[];
+  previous_version: string | null;
+  reason: string | null;
+  state: string;
+  target: string;
+  version: string | null;
+  [key: string]: unknown;
+}
+
+/**
  * An extension request at a cursor, as `get_pending_request` answers it
  * (docs/EXTENSION-LOCKS.md).
  */
@@ -950,7 +969,7 @@ export interface GetCommandsResult {
     description: string;
     /** Whether this command DECLARES what it takes. True means `next_step` will step it and `enumerate_domain` will list its argument's values, so a host can build a form or a completion list for it; false means the command takes one opaque line and there is nothing to ask about. Every built-in flow is true and the two view commands are false; an extension command is true only if it used `register_flow` (docs/EXTENSION-FLOWS.md). */
     flow: boolean;
-    /** True for a private-registry name — `ext:<extension>.<command>`, which every extension command always has and which nothing can take from it (docs/EXTENSION-NAMESPACE.md). It resolves exactly like any other name; it is marked because offering both halves of the same command in one completion list is noise. Show these only once the reader has typed `ext:`. False for every name a reader would type unprompted. */
+    /** True for a private-registry name — `ext:<extension>:<command>`, which every extension command always has and which nothing can take from it (docs/EXTENSION-NAMESPACE.md). It resolves exactly like any other name; it is marked because offering both halves of the same command in one completion list is noise. Show these only once the reader has typed `ext:`. False for every name a reader would type unprompted. */
     hidden: boolean;
     /** The command word, with no leading '/'. */
     name: string;
@@ -1166,16 +1185,20 @@ export interface GetTools {
 }
 
 export interface GetToolsResult {
-  /** This session's bound AgentTool set, in binding order. */
-  tools: {
+  /** Every tool on the acting cursor: constructor tools, then extension tools, narrowed by the cursor's frame; hidden ones included. */
+  tools: ({
+    /** Whether the request's `tools` block declares it. */
+    declared: boolean;
     /** What the model is told the tool does. */
     description: string;
+    /** The effective exposure, overrides applied. */
+    exposure: "direct" | "model-only" | "callable" | "deferred" | "hidden";
     /** The tool's name, as a tool call addresses it. */
     name: string;
     /** The tool's own JSON Schema, passed to the provider unchanged — this table's supported-keyword rule does not govern it. */
     parameters: Record<string, unknown>;
     [key: string]: unknown;
-  }[];
+  })[];
   [key: string]: unknown;
 }
 
@@ -1286,6 +1309,22 @@ export interface LastCompaction {
   /** ISO-8601. */
   timestamp: string;
   tokens_before: number | null;
+  [key: string]: unknown;
+}
+
+/**
+ * RPC `list_extensions` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's own
+ * handler at `cursor_id`.
+ */
+export interface ListExtensions {
+  /** The cursor the verb acts at. */
+  cursor_id: string;
+  session_id: string;
+}
+
+export interface ListExtensionsResult {
+  /** Every extension this session knows of and its state, as the rows of `tau ext list` (docs/EXTENSION-PACKAGES.md §7): loaded, disabled, failed, and found-but-not-loaded (unauthorized, unusable, collision). Each row names the identifier, source kind, target, distribution and version for a package, why it is not loaded, and the subscribed ext: topics whose emitter is not loaded (#44). Read-only: authorizing is not on the wire. */
+  extensions: ExtensionRecordWire[];
   [key: string]: unknown;
 }
 
@@ -2530,6 +2569,11 @@ export type ClientFrame = {
 } | {
   id: number | string;
   jsonrpc: "2.0";
+  method: "list_extensions";
+  params?: ListExtensions;
+} | {
+  id: number | string;
+  jsonrpc: "2.0";
   method: "get_extension_config";
   params?: GetExtensionConfig;
 } | {
@@ -2625,6 +2669,7 @@ export interface Requests {
   answer_request: AnswerRequest;
   list_managed_extensions: ListManagedExtensions;
   get_extension_state: GetExtensionState;
+  list_extensions: ListExtensions;
   get_extension_config: GetExtensionConfig;
   set_extension_config: SetExtensionConfig;
   enable_extension: EnableExtension;
@@ -2680,6 +2725,7 @@ export interface Results {
   answer_request: AnswerRequestResult;
   list_managed_extensions: ListManagedExtensionsResult;
   get_extension_state: GetExtensionStateResult;
+  list_extensions: ListExtensionsResult;
   get_extension_config: GetExtensionConfigResult;
   set_extension_config: SetExtensionConfigResult;
   enable_extension: EnableExtensionResult;
@@ -2712,7 +2758,7 @@ export interface EventData {
 export type EventKind = keyof EventData;
 
 /** Every method, in the schema's order. */
-export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_reasoning","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
+export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_reasoning","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","list_extensions","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
 /** Every error code a request can fail with, by name. */
 export const ERROR_CODES = {
   PARSE_ERROR: -32700,

@@ -60,7 +60,7 @@ export interface Completions {
  * `origin` decides the ORDER here -- built-ins resolve first in τ, so an
  * extension that registered a built-in's name is unreachable and offering it
  * would advertise a command the reader cannot run. `hidden` marks the
- * private-registry half of an extension command (`ext:<extension>.<command>`):
+ * private-registry half of an extension command (`ext:<extension>:<command>`):
  * the same command as its public name, shown only once `ext:` is typed.
  */
 export type { CommandInfo };
@@ -101,7 +101,7 @@ export function commandSpan(
  * resolves in that order: such a name is unreachable, so
  * offering it would advertise a command the user cannot run.
  *
- * A `hidden` name (`ext:pirate.speak`) appears only once `ext:` has been typed.
+ * A `hidden` name (`ext:pirate:speak`) appears only once `ext:` has been typed.
  * It resolves like any other name and is never unreachable -- the rule here is
  * about noise, not about capability, which is why it is a display filter and not
  * a drop: the reader who wants the unshadowable half asks for it and gets it.
