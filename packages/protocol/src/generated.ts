@@ -1048,6 +1048,8 @@ export interface GetExtensionStateResult {
   errors: LoadError[];
   /** Every loaded extension and what it registered, as [{name, path, tools, commands, shortcuts, hooks, content_hash, subjects}] — sdk.summarize_extensions of the live registry, which is the same projection the TUI's /extensions listing draws. Read LIVE, not from the load-time snapshot, so a reload_extension is reflected here. */
   extensions: ExtensionInfo[];
+  /** The session's current extension warnings, as AgentSession.extension_warnings() reads them now (#60): the cheap read for a host that polls, where get_capabilities is the whole protocol document. */
+  warnings: ExtensionWarning[];
   [key: string]: unknown;
 }
 
