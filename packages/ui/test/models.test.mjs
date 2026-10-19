@@ -18,9 +18,9 @@ import { ModelPanel } from '../dist/components.js';
 // `local-llm` is the point of this fixture: the config NAME and the model ID
 // are different strings, which is why a name cannot be inferred from an id.
 const MODELS = [
-  { name: 'claude-3.5-sonnet', model: { id: 'claude-3-5-sonnet-20241022', provider: 'anthropic', context_window: 128000 } },
-  { name: 'gpt-4o', model: { id: 'gpt-4o', provider: 'openai', context_window: 128000 } },
-  { name: 'local-llm', model: { id: 'qwen38-27B', provider: 'openai', context_window: 128000 } },
+  { name: 'claude-3.5-sonnet', model: { id: 'claude-3-5-sonnet-20241022', provider: 'anthropic', context_window: 128000 }, error: null },
+  { name: 'gpt-4o', model: { id: 'gpt-4o', provider: 'openai', context_window: 128000 }, error: null },
+  { name: 'local-llm', model: { id: 'qwen38-27B', provider: 'openai', context_window: 128000 }, error: null },
 ];
 
 test('a name resolves to its record, and a name the config dropped resolves to nothing', () => {
@@ -30,10 +30,19 @@ test('a name resolves to its record, and a name the config dropped resolves to n
 });
 
 test('aliases are found by id AND provider', () => {
-  const withAlias = [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 } }];
+  const withAlias = [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 }, error: null }];
   assert.deepEqual(aliasesOf(withAlias, 'gpt-4o').sort(), ['fast', 'gpt-4o']);
-  const otherProvider = [...MODELS, { name: 'azure', model: { id: 'gpt-4o', provider: 'azure', context_window: 1 } }];
+  const otherProvider = [...MODELS, { name: 'azure', model: { id: 'gpt-4o', provider: 'azure', context_window: 1 }, error: null }];
   assert.deepEqual(aliasesOf(otherProvider, 'gpt-4o'), ['gpt-4o']);
+});
+
+// An entry τ's config cannot build: listed with its reason, never selectable.
+const BROKEN = { name: 'typo', model: null, error: "unknown backend 'opnai' and no base_url" };
+
+test('an entry that does not build has no aliases and is no one\'s alias', () => {
+  const models = [...MODELS, BROKEN];
+  assert.deepEqual(aliasesOf(models, 'typo'), []);
+  assert.deepEqual(aliasesOf(models, 'gpt-4o'), ['gpt-4o']);
 });
 
 test('the label pairs provider with id', () => {
@@ -76,7 +85,7 @@ test('a name the config no longer has is said, and marks nothing', () => {
 
 test('an alias of the running model says switching to it changes nothing', () => {
   const html = panel({
-    models: [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 } }],
+    models: [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 }, error: null }],
     active: 'gpt-4o',
   });
   assert.match(html, /fast resolves to the same model/);
@@ -97,4 +106,17 @@ test('an empty config is a sentence about where models live, not a blank list', 
 test('an error from τ is shown verbatim', () => {
   const html = panel({ error: "unknown model 'no-such-model'" });
   assert.match(html, /unknown model &#x27;no-such-model&#x27;/);
+});
+
+test('an entry that does not build is listed with its reason and cannot be chosen', () => {
+  const html = panel({ models: [...MODELS, BROKEN] });
+  const row = html.split('<li>').slice(1).find((r) => r.includes('>typo<'));
+  assert.match(row, /tau-model-unavailable/);
+  assert.match(row, /disabled/);
+  assert.match(row, /unavailable — unknown backend &#x27;opnai&#x27; and no base_url/);
+});
+
+test('running a name the config no longer builds says why', () => {
+  const html = panel({ models: [...MODELS, BROKEN], active: 'typo' });
+  assert.match(html, /no longer builds: unknown backend/);
 });

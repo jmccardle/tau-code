@@ -826,3 +826,5 @@
   max-width: 100%;
 }
 .tau-session-list { min-width: 0; }
+
+.tau-model-unavailable .tau-session-meta { color: var(--tau-warn); }

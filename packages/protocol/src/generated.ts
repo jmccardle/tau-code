@@ -1413,7 +1413,8 @@ export interface ModelChangeEntry {
 
 /** One model the config defines, as `get_models` lists it. */
 export interface ModelRecord {
-  model: ModelSpec;
+  error: string | null;
+  model: ModelSpec | null;
   name: string;
   [key: string]: unknown;
 }
@@ -1893,7 +1894,7 @@ export interface SetExtensionConfigResult {
 export interface SetModel {
   /** The cursor the verb acts at. */
   cursor_id: string;
-  /** A config model NAME (a key in ~/.tau/config.json's 'models' map), resolved through AgentSession's bound model resolver (set_model_resolver) — the same name --model NAME accepts headlessly. NOT a model id; a config key may alias one. */
+  /** A config model NAME (a key in <τ home>/config.json's 'models' map), resolved through AgentSession's bound model resolver (set_model_resolver) — the same name --model NAME accepts headlessly. NOT a model id; a config key may alias one. */
   name: string;
   session_id: string;
 }

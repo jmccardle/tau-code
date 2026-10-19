@@ -6,7 +6,7 @@ import type { LiveToolCall, SessionState, SessionStore } from './session.js';
 import { blocksToText, hasUserMessage, itemsOf, type ContentBlock, type Item } from './messages.js';
 import { formatWhen, groupByCwd, sessionLabel } from './sessions.js';
 import { applyCandidate, commandSpan, completeCommand, completePath, nextIndex, type Completions } from './completion.js';
-import { aliasesOf, modelLabel, recordFor } from './models.js';
+import { aliasesOf, isBuilt, modelLabel, recordFor } from './models.js';
 import { performCommand, type CommandResult } from './commands.js';
 import { warningsLabel, type ExtensionWarning } from './warnings.js';
 import { initialValues, requestOf } from './requests.js';
@@ -956,9 +956,13 @@ export function ModelPanel({ models, active, running, busy, error, onClose, onCh
       <div className="tau-sessions-scope">
         {active === null ? (
           <div>This view has no cursor yet, so no model.</div>
-        ) : record ? (
+        ) : record && isBuilt(record) ? (
           <div>
             Running: <code>{active}</code> → <code>{modelLabel(record)}</code>
+          </div>
+        ) : record ? (
+          <div>
+            Running: <code>{active}</code>, which the daemon&apos;s config no longer builds: {record.error}
           </div>
         ) : (
           <div>
@@ -988,20 +992,22 @@ export function ModelPanel({ models, active, running, busy, error, onClose, onCh
         <ul className="tau-session-list">
           {models.map((row) => {
             const current = row.name === active;
+            const built = isBuilt(row);
             return (
               <li key={row.name}>
                 <button
-                  className={`tau-session-row${current ? ' tau-session-current' : ''}`}
-                  disabled={busy || current}
+                  className={`tau-session-row${current ? ' tau-session-current' : ''}${built ? '' : ' tau-model-unavailable'}`}
+                  disabled={busy || current || !built}
                   onClick={() => onChoose(row.name)}
-                  title={`set_model ${row.name}`}
+                  title={built ? `set_model ${row.name}` : `Not selectable: ${row.error}`}
                 >
                   <span className="tau-session-title">{row.name}</span>
                   <span className="tau-session-meta">
                     {current ? 'active · ' : ''}
                     {/* The id is what the name RESOLVED to, and it is often a
-                        different string. Showing both is the point. */}
-                    {modelLabel(row)}
+                        different string. Showing both is the point. An entry
+                        that does not build says why instead. */}
+                    {built ? modelLabel(row) : `unavailable — ${row.error}`}
                   </span>
                 </button>
               </li>
