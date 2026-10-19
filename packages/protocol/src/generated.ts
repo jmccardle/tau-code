@@ -873,6 +873,19 @@ export interface ExtensionRequest {
   [key: string]: unknown;
 }
 
+/** One current warning on a session. */
+export interface ExtensionWarning {
+  /** Its name within `source`; setting the same key replaces it. */
+  key: string;
+  /** One line for the user. */
+  message: string;
+  /** One of `WARNING_SEVERITIES`. */
+  severity: "warning" | "error";
+  /** The extension identifier that set it, or `"tau"`. */
+  source: string;
+  [key: string]: unknown;
+}
+
 /** The answer to a request that failed, matched by `id`. */
 export interface Failure {
   error: Error;
@@ -2099,6 +2112,8 @@ export interface Surface {
   loaded: ExtensionInfo[];
   /** `[key, command, args, description]` per extension shortcut. */
   shortcuts: string[][];
+  /** The session's current extension warnings (#60); a `ui` event with op `warnings` carries each change. */
+  warnings: ExtensionWarning[];
   [key: string]: unknown;
 }
 
@@ -2195,7 +2210,7 @@ export interface UiEvent {
 }
 
 /** An extension display call, told apart by `op`. */
-export type UiEventData = UiNotify | UiStatus | UiPanel;
+export type UiEventData = UiNotify | UiStatus | UiPanel | UiWarnings;
 
 /** An extension's notification. */
 export interface UiNotify {
@@ -2218,6 +2233,13 @@ export interface UiStatus {
   key: string;
   op: "status";
   text: string | null;
+  [key: string]: unknown;
+}
+
+/** The session's extension warnings after a change, every one: replaces `Surface.warnings`. */
+export interface UiWarnings {
+  op: "warnings";
+  warnings: ExtensionWarning[];
   [key: string]: unknown;
 }
 

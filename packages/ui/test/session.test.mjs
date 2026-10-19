@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionStore } from '../dist/session.js';
 
-const SURFACE = { commands: [], command_args: {}, shortcuts: [], extensions: [], loaded: [], load_errors: [] };
+const SURFACE = { commands: [], command_args: {}, shortcuts: [], extensions: [], loaded: [], load_errors: [], warnings: [] };
 
 function cursor(id, leaf, busy = false) {
   return { cursor_id: id, leaf, label: id, owner_id: null, busy, model: 'm', request: null };
@@ -203,6 +203,20 @@ test('a gap in seq re-attaches from where the replica is current', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const reattach = client.calls.filter((call) => call.type === 'attach').at(-1);
   assert.deepEqual(reattach.fields, { session_id: 's1', epoch: 'e1', since: 1 });
+});
+
+test('a warnings event replaces the surface set and is not a display call', async () => {
+  const flagged = { source: 'tau', key: 'load:broken', message: 'broken did not load', severity: 'error' };
+  const { store, client } = await attachedStore(fakeClient([attached({ surface: { ...SURFACE, warnings: [flagged] } })]));
+  assert.deepEqual(store.state.attached.surface.warnings, [flagged]);
+  const next = { source: 'notes', key: 'stale', message: 'index is stale', severity: 'warning' };
+  client.push(2, 'ui', { op: 'warnings', warnings: [next] });
+  assert.deepEqual(store.state.attached.surface.warnings, [next]);
+  client.push(3, 'ui', { op: 'warnings', warnings: [] });
+  assert.deepEqual(store.state.attached.surface.warnings, []);
+  assert.deepEqual(store.state.ui, []);
+  // The rest of the surface is untouched.
+  assert.equal(store.state.attached.surface.commands, SURFACE.commands);
 });
 
 test('the attachment report of a submission is kept by its id', async () => {

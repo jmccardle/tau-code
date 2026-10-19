@@ -8,6 +8,7 @@ import { formatWhen, groupByCwd, sessionLabel } from './sessions.js';
 import { applyCandidate, commandSpan, completeCommand, completePath, nextIndex, type Completions } from './completion.js';
 import { aliasesOf, modelLabel, recordFor } from './models.js';
 import { performCommand, type CommandResult } from './commands.js';
+import { warningsLabel, type ExtensionWarning } from './warnings.js';
 import { initialValues, requestOf } from './requests.js';
 import { AskBody, Field, RequestPanel } from './request-panel.js';
 import { TreePanel } from './tree-panel.js';
@@ -1088,6 +1089,10 @@ export interface StatusBarProps {
   modelsOpen?: boolean;
   onToggleTree?: () => void;
   treeOpen?: boolean;
+  /** The session's current extension warnings; marked while there are any. */
+  warnings?: readonly ExtensionWarning[];
+  onToggleExtensions?: () => void;
+  extensionsOpen?: boolean;
 }
 
 export function StatusBar({
@@ -1100,7 +1105,11 @@ export function StatusBar({
   modelsOpen,
   onToggleTree,
   treeOpen,
+  warnings,
+  onToggleExtensions,
+  extensionsOpen,
 }: StatusBarProps): JSX.Element {
+  const marked = warnings ? warningsLabel(warnings) : null;
   const label = phase === 'ready' ? (cursor === null ? 'no session' : cursor.busy ? 'running' : 'idle') : phase;
   return (
     <div className={`tau-status tau-status-${phase}`}>
@@ -1112,6 +1121,16 @@ export function StatusBar({
         </span>
       ) : null}
       <span className="tau-status-spacer" />
+      {marked !== null && onToggleExtensions ? (
+        <button
+          className={`tau-status-button tau-status-warnings${warnings?.some((w) => w.severity === 'error') ? ' tau-status-errors' : ''}`}
+          onClick={onToggleExtensions}
+          aria-pressed={extensionsOpen === true}
+          title="What extensions flagged on this session (/extensions)"
+        >
+          {marked}
+        </button>
+      ) : null}
       {onToggleModels ? (
         <button
           className="tau-status-button tau-status-model"
@@ -1301,7 +1320,7 @@ function ExtensionDisplay({
     } else if (data.op === 'panel') {
       if (data.spec === null) panels.delete(data.key);
       else panels.set(data.key, data.spec);
-    } else {
+    } else if (data.op === 'notify') {
       notes.push({ seq: call.seq, level: data.level, message: data.message });
     }
   }
@@ -1500,10 +1519,14 @@ export function Chat({
         sessionsOpen={panel === 'sessions'}
         modelsOpen={panel === 'models'}
         treeOpen={panel === 'tree'}
+        extensionsOpen={panel === 'extensions'}
+        {...(state?.attached ? { warnings: state.attached.surface.warnings } : {})}
         {...(ready
           ? {
               onToggleSessions: toggle('sessions'),
-              ...(session ? { onToggleModels: toggle('models'), onToggleTree: toggle('tree') } : {}),
+              ...(session
+                ? { onToggleModels: toggle('models'), onToggleTree: toggle('tree'), onToggleExtensions: toggle('extensions') }
+                : {}),
             }
           : {})}
       />

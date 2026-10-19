@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ExtensionInfo, Surface } from '@ffwf/tau-code-protocol';
 import { messageOf } from './daemon.js';
 import type { SessionStore } from './session.js';
+import { orderWarnings } from './warnings.js';
 
 /**
  * `/extensions`: what is loaded, what each registered, and what failed to load.
@@ -53,6 +54,13 @@ export function ExtensionPanel({ session, surface, onClose }: ExtensionPanelProp
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const rows = useMemo(() => (surface ? rowsOf(surface) : null), [surface]);
+  // τ mirrors each load failure as a `tau` error keyed `load:<label>`, so the
+  // status bar's count includes it. Listed here it would be the "Did not load"
+  // row below a second time, with less in it.
+  const flagged = useMemo(
+    () => (surface ? orderWarnings(surface.warnings.filter((w) => !(w.source === 'tau' && w.key.startsWith('load:')))) : []),
+    [surface],
+  );
 
   const act = async (method: 'enable_extension' | 'disable_extension' | 'reload_extension', path: string): Promise<void> => {
     if (!session) return;
@@ -87,6 +95,18 @@ export function ExtensionPanel({ session, surface, onClose }: ExtensionPanelProp
       </header>
 
       {error ? <p className="tau-notice tau-warn">{error}</p> : null}
+
+      {flagged.length > 0 ? (
+        <div className="tau-extensions-warnings">
+          <h3>Flagged</h3>
+          {flagged.map((warning) => (
+            <div key={`${warning.source}\u0000${warning.key}`} className="tau-notice tau-warn">
+              <strong>{warning.severity === 'error' ? 'Error' : 'Warning'}</strong>{' '}
+              <span className="tau-muted">{warning.source === 'tau' ? 'τ' : warning.source}</span> {warning.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {surface && surface.load_errors.length > 0 ? (
         <div className="tau-extensions-failed">
