@@ -6,8 +6,9 @@ import type { LiveToolCall, SessionState, SessionStore } from './session.js';
 import { blocksToText, hasUserMessage, itemsOf, type ContentBlock, type Item } from './messages.js';
 import { formatWhen, groupByCwd, sessionLabel } from './sessions.js';
 import { applyCandidate, commandSpan, completeCommand, completePath, nextIndex, type Completions } from './completion.js';
-import { aliasesOf, modelLabel, recordFor } from './models.js';
+import { aliasesOf, isBuilt, modelLabel, recordFor } from './models.js';
 import { performCommand, type CommandResult } from './commands.js';
+import { warningsLabel, type ExtensionWarning } from './warnings.js';
 import { initialValues, requestOf } from './requests.js';
 import { AskBody, Field, RequestPanel } from './request-panel.js';
 import { TreePanel } from './tree-panel.js';
@@ -880,6 +881,8 @@ export interface ModelPickerProps {
   models: readonly ModelRecord[];
   /** The name this head's cursor runs on. */
   active: string | null;
+  /** Why a turn at this cursor would be refused for its model, or null. */
+  activeError: string | null;
   running: boolean;
   onClose: () => void;
 }
@@ -892,7 +895,7 @@ export interface ModelPickerProps {
  * file. A switch is per CURSOR -- another head on the same session keeps its
  * own -- and takes effect on that cursor's next turn.
  */
-export function ModelPicker({ session, models, active, running, onClose }: ModelPickerProps): JSX.Element {
+export function ModelPicker({ session, models, active, activeError, running, onClose }: ModelPickerProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -915,6 +918,7 @@ export function ModelPicker({ session, models, active, running, onClose }: Model
     <ModelPanel
       models={models}
       active={active}
+      activeError={activeError}
       running={running}
       busy={busy || !session}
       error={error}
@@ -927,6 +931,8 @@ export function ModelPicker({ session, models, active, running, onClose }: Model
 export interface ModelPanelProps {
   models: readonly ModelRecord[];
   active: string | null;
+  /** `CursorState.model_error`: why the cursor's next turn would be refused. */
+  activeError: string | null;
   running: boolean;
   /** A call is in flight, or there is no session to make one with. */
   busy: boolean;
@@ -939,8 +945,11 @@ export interface ModelPanelProps {
  * What the model picker looks like. Everything, and no calls -- split out so
  * the markup can be rendered from a fixture.
  */
-export function ModelPanel({ models, active, running, busy, error, onClose, onChoose }: ModelPanelProps): JSX.Element {
+export function ModelPanel({ models, active, activeError, running, busy, error, onClose, onChoose }: ModelPanelProps): JSX.Element {
   const record = recordFor(models, active);
+  // τ's own sentence for why this cursor cannot run a turn. Shown whenever it
+  // is set, unless the line above already says exactly it.
+  const refusal = activeError !== null && activeError !== record?.error ? activeError : null;
   const aliases = aliasesOf(models, active).filter((name) => name !== active);
 
   return (
@@ -955,15 +964,20 @@ export function ModelPanel({ models, active, running, busy, error, onClose, onCh
       <div className="tau-sessions-scope">
         {active === null ? (
           <div>This view has no cursor yet, so no model.</div>
-        ) : record ? (
+        ) : record && isBuilt(record) ? (
           <div>
             Running: <code>{active}</code> → <code>{modelLabel(record)}</code>
+          </div>
+        ) : record ? (
+          <div>
+            Running: <code>{active}</code>, which the daemon&apos;s config no longer builds: {record.error}
           </div>
         ) : (
           <div>
             Running: <code>{active}</code>, which is no longer a name in the daemon&apos;s config.
           </div>
         )}
+        {refusal !== null ? <div className="tau-notice tau-warn">{refusal}</div> : null}
       </div>
 
       {aliases.length > 0 ? (
@@ -987,20 +1001,22 @@ export function ModelPanel({ models, active, running, busy, error, onClose, onCh
         <ul className="tau-session-list">
           {models.map((row) => {
             const current = row.name === active;
+            const built = isBuilt(row);
             return (
               <li key={row.name}>
                 <button
-                  className={`tau-session-row${current ? ' tau-session-current' : ''}`}
-                  disabled={busy || current}
+                  className={`tau-session-row${current ? ' tau-session-current' : ''}${built ? '' : ' tau-model-unavailable'}`}
+                  disabled={busy || current || !built}
                   onClick={() => onChoose(row.name)}
-                  title={`set_model ${row.name}`}
+                  title={built ? `set_model ${row.name}` : `Not selectable: ${row.error}`}
                 >
                   <span className="tau-session-title">{row.name}</span>
                   <span className="tau-session-meta">
                     {current ? 'active · ' : ''}
                     {/* The id is what the name RESOLVED to, and it is often a
-                        different string. Showing both is the point. */}
-                    {modelLabel(row)}
+                        different string. Showing both is the point. An entry
+                        that does not build says why instead. */}
+                    {built ? modelLabel(row) : `unavailable — ${row.error}`}
                   </span>
                 </button>
               </li>
@@ -1088,6 +1104,10 @@ export interface StatusBarProps {
   modelsOpen?: boolean;
   onToggleTree?: () => void;
   treeOpen?: boolean;
+  /** The session's current extension warnings; marked while there are any. */
+  warnings?: readonly ExtensionWarning[];
+  onToggleExtensions?: () => void;
+  extensionsOpen?: boolean;
 }
 
 export function StatusBar({
@@ -1100,7 +1120,11 @@ export function StatusBar({
   modelsOpen,
   onToggleTree,
   treeOpen,
+  warnings,
+  onToggleExtensions,
+  extensionsOpen,
 }: StatusBarProps): JSX.Element {
+  const marked = warnings ? warningsLabel(warnings) : null;
   const label = phase === 'ready' ? (cursor === null ? 'no session' : cursor.busy ? 'running' : 'idle') : phase;
   return (
     <div className={`tau-status tau-status-${phase}`}>
@@ -1112,12 +1136,22 @@ export function StatusBar({
         </span>
       ) : null}
       <span className="tau-status-spacer" />
+      {marked !== null && onToggleExtensions ? (
+        <button
+          className={`tau-status-button tau-status-warnings${warnings?.some((w) => w.severity === 'error') ? ' tau-status-errors' : ''}`}
+          onClick={onToggleExtensions}
+          aria-pressed={extensionsOpen === true}
+          title="What extensions flagged on this session (/extensions)"
+        >
+          {marked}
+        </button>
+      ) : null}
       {onToggleModels ? (
         <button
-          className="tau-status-button tau-status-model"
+          className={`tau-status-button tau-status-model${cursor?.model_error ? ' tau-status-warnings' : ''}`}
           onClick={onToggleModels}
           aria-pressed={modelsOpen === true}
-          title="Switch the model this view's cursor uses"
+          title={cursor?.model_error ?? "Switch the model this view's cursor uses"}
         >
           {cursor?.model ?? 'Model'}
         </button>
@@ -1301,7 +1335,7 @@ function ExtensionDisplay({
     } else if (data.op === 'panel') {
       if (data.spec === null) panels.delete(data.key);
       else panels.set(data.key, data.spec);
-    } else {
+    } else if (data.op === 'notify') {
       notes.push({ seq: call.seq, level: data.level, message: data.message });
     }
   }
@@ -1500,10 +1534,14 @@ export function Chat({
         sessionsOpen={panel === 'sessions'}
         modelsOpen={panel === 'models'}
         treeOpen={panel === 'tree'}
+        extensionsOpen={panel === 'extensions'}
+        {...(state?.attached ? { warnings: state.attached.surface.warnings } : {})}
         {...(ready
           ? {
               onToggleSessions: toggle('sessions'),
-              ...(session ? { onToggleModels: toggle('models'), onToggleTree: toggle('tree') } : {}),
+              ...(session
+                ? { onToggleModels: toggle('models'), onToggleTree: toggle('tree'), onToggleExtensions: toggle('extensions') }
+                : {}),
             }
           : {})}
       />
@@ -1519,6 +1557,9 @@ export function Chat({
         {...(disconnectedHint ? { hint: disconnectedHint } : {})}
       />
       {state?.failure ? <div className="tau-notice tau-warn">{state.failure}</div> : null}
+      {/* Said before the reader types, not only when a prompt is refused: the
+          session still opens and reads, and this is what a turn would hit. */}
+      {cursor?.model_error ? <div className="tau-notice tau-warn">{cursor.model_error}</div> : null}
       {panel === 'sessions' ? (
         <SessionPicker
           daemon={ready ? daemon : null}
@@ -1537,6 +1578,7 @@ export function Chat({
           session={session}
           models={state.attached?.models ?? []}
           active={cursor?.model ?? null}
+          activeError={cursor?.model_error ?? null}
           running={running}
           onClose={() => setPanel(null)}
         />

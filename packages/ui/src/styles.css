@@ -357,6 +357,8 @@
   font-size: 0.9em;
   cursor: pointer;
 }
+.tau-status-warnings { color: var(--tau-warn); }
+.tau-status-errors { font-weight: 600; }
 .tau-status-button[aria-pressed='true'] {
   border-color: var(--tau-accent);
   color: var(--tau-accent);
@@ -824,3 +826,5 @@
   max-width: 100%;
 }
 .tau-session-list { min-width: 0; }
+
+.tau-model-unavailable .tau-session-meta { color: var(--tau-warn); }

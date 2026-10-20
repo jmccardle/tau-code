@@ -7,6 +7,7 @@ export * from './flows.js';
 export * from './markdown.js';
 export * from './messages.js';
 export * from './models.js';
+export * from './warnings.js';
 export * from './request-panel.js';
 export * from './requests.js';
 export * from './session.js';

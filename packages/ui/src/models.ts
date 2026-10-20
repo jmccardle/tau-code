@@ -1,4 +1,4 @@
-import type { ModelRecord } from '@ffwf/tau-code-protocol';
+import type { ModelRecord, ModelSpec } from '@ffwf/tau-code-protocol';
 
 /**
  * The model picker's rows.
@@ -14,9 +14,26 @@ import type { ModelRecord } from '@ffwf/tau-code-protocol';
 
 export type { ModelRecord };
 
-/** `provider/id`, the model a name resolves to. */
-export function modelLabel(record: ModelRecord): string {
-  return `${record.model.provider}/${record.model.id}`;
+/**
+ * A record whose config entry builds. The other kind carries `error` instead
+ * of `model` -- a malformed entry, or a backend τ cannot reach -- and is listed
+ * so the reader sees why it is there and cannot be chosen, never offered.
+ */
+export type BuiltModelRecord = ModelRecord & { model: ModelSpec; error: null; has_api_key: boolean };
+
+export function isBuilt(record: ModelRecord): record is BuiltModelRecord {
+  return record.model !== null;
+}
+
+/**
+ * `provider/id`, the model a name resolves to, and `(no API key)` when a
+ * request to it would carry none. That is not an error -- a local backend
+ * needs no key -- so the entry stays selectable; but against a vendor that
+ * wants one, the turn ends in a 401, and the reader should know beforehand.
+ */
+export function modelLabel(record: BuiltModelRecord): string {
+  const label = `${record.model.provider}/${record.model.id}`;
+  return record.has_api_key ? label : `${label} (no API key)`;
 }
 
 /** The record for `name`, or null when the daemon's config no longer has it. */
@@ -34,8 +51,9 @@ export function recordFor(models: readonly ModelRecord[], name: string | null): 
  */
 export function aliasesOf(models: readonly ModelRecord[], name: string | null): string[] {
   const active = recordFor(models, name);
-  if (!active) return [];
+  if (!active || !isBuilt(active)) return [];
   return models
+    .filter(isBuilt)
     .filter((record) => record.model.id === active.model.id && record.model.provider === active.model.provider)
     .map((record) => record.name);
 }

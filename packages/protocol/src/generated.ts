@@ -6,11 +6,11 @@
  * installed τ. τ's protocol dataclasses are the source of truth; nothing here is
  * hand-maintained, and `npm run check:protocol` fails when this file is stale.
  *
- * tau serve protocol 0.10
+ * tau serve protocol 0.11
  */
 
 /** The protocol version `hello` must name. */
-export const PROTOCOL_VERSION = "0.10" as const;
+export const PROTOCOL_VERSION = "0.11" as const;
 /** The port `tau serve` listens on when its config names none. */
 export const DEFAULT_PORT = 8256 as const;
 
@@ -232,7 +232,7 @@ export interface CommandInfo {
   description: string;
   /** Whether `NextStep` steps it. */
   flow: boolean;
-  /** A qualified extension name (`ext:pirate.speak`): it resolves, and a completion list leaves it out. */
+  /** A qualified extension name (`ext:pirate:speak`): it resolves, and a completion list leaves it out. */
   hidden: boolean;
   name: string;
   /** `builtin` for τ's own, `extension` for one an extension registered, `template` or `skill` for one the session expands into a prompt (docs/PROMPT-TEMPLATES-AND-SKILLS.md). */
@@ -484,8 +484,10 @@ export interface CursorState {
   cursor_id: string;
   label: string;
   leaf: string | null;
-  /** The config name of the model its next turn calls, as `set_model` takes it and `get_models` lists it; not the model id, which two names may share. */
+  /** The config name of the model its next turn calls, as `set_model` takes it and `get_models` lists it; not the model id, which two names may share. A recorded model that no longer resolves keeps its name. */
   model: string;
+  /** Why a turn here would be refused for that model, naming the fix; `None` when it resolves (`AgentSession.model_unavailable`). */
+  model_error: string | null;
   owner_id: string | null;
   /** The extension request at its leaf, or `None`. */
   request: ExtensionRequest | null;
@@ -794,10 +796,13 @@ export interface Error {
  * transient: True for a retryable status or a connection failure, False for any other HTTP
  * refusal and for a ``ProviderStreamError``, None for an exception τ makes no transience
  * judgement about. On ``agent_end`` a True means τ's own retries ran out, or the server asked
- * for a longer wait than τ will make inside a turn.
+ * for a longer wait than τ will make inside a turn. key_sent: A ``ProviderHttpError``'s
+ * ``key_sent``: whether the request carried a key, which tells "no API key" from "API key
+ * refused" on a 401; None when not an HTTP refusal or the provider did not say.
  */
 export interface ErrorDetail {
   headers?: Record<string, string> | null;
+  key_sent?: boolean | null;
   retry_after?: number | null;
   retryable?: boolean | null;
   status?: number | null;
@@ -833,6 +838,25 @@ export interface ExtensionInfo {
 }
 
 /**
+ * One row of `list_extensions`: an extension and its state
+ * (`extension_sources.ExtensionRecord`).
+ */
+export interface ExtensionRecordWire {
+  authorization: string | null;
+  distribution: string | null;
+  entry_point: string | null;
+  identifier: string;
+  kind: string;
+  orphan_topics: string[];
+  previous_version: string | null;
+  reason: string | null;
+  state: string;
+  target: string;
+  version: string | null;
+  [key: string]: unknown;
+}
+
+/**
  * An extension request at a cursor, as `get_pending_request` answers it
  * (docs/EXTENSION-LOCKS.md).
  */
@@ -851,6 +875,19 @@ export interface ExtensionRequest {
   /** A command that clears the lock, or `None`. */
   release: string | null;
   sentence: string;
+  [key: string]: unknown;
+}
+
+/** One current warning on a session. */
+export interface ExtensionWarning {
+  /** Its name within `source`; setting the same key replaces it. */
+  key: string;
+  /** One line for the user. */
+  message: string;
+  /** One of `WARNING_SEVERITIES`. */
+  severity: "warning" | "error";
+  /** The extension identifier that set it, or `"tau"`. */
+  source: string;
   [key: string]: unknown;
 }
 
@@ -950,7 +987,7 @@ export interface GetCommandsResult {
     description: string;
     /** Whether this command DECLARES what it takes. True means `next_step` will step it and `enumerate_domain` will list its argument's values, so a host can build a form or a completion list for it; false means the command takes one opaque line and there is nothing to ask about. Every built-in flow is true and the two view commands are false; an extension command is true only if it used `register_flow` (docs/EXTENSION-FLOWS.md). */
     flow: boolean;
-    /** True for a private-registry name — `ext:<extension>.<command>`, which every extension command always has and which nothing can take from it (docs/EXTENSION-NAMESPACE.md). It resolves exactly like any other name; it is marked because offering both halves of the same command in one completion list is noise. Show these only once the reader has typed `ext:`. False for every name a reader would type unprompted. */
+    /** True for a private-registry name — `ext:<extension>:<command>`, which every extension command always has and which nothing can take from it (docs/EXTENSION-NAMESPACE.md). It resolves exactly like any other name; it is marked because offering both halves of the same command in one completion list is noise. Show these only once the reader has typed `ext:`. False for every name a reader would type unprompted. */
     hidden: boolean;
     /** The command word, with no leading '/'. */
     name: string;
@@ -1016,6 +1053,8 @@ export interface GetExtensionStateResult {
   errors: LoadError[];
   /** Every loaded extension and what it registered, as [{name, path, tools, commands, shortcuts, hooks, content_hash, subjects}] — sdk.summarize_extensions of the live registry, which is the same projection the TUI's /extensions listing draws. Read LIVE, not from the load-time snapshot, so a reload_extension is reflected here. */
   extensions: ExtensionInfo[];
+  /** The session's current extension warnings, as AgentSession.extension_warnings() reads them now (#60): the cheap read for a host that polls, where get_capabilities is the whole protocol document. */
+  warnings: ExtensionWarning[];
   [key: string]: unknown;
 }
 
@@ -1114,10 +1153,10 @@ export interface GetSessionStatsResult {
   compaction_settings: CompactionSettingsRecord;
   /** estimate_context_tokens(session.messages) (compaction.py) projected as {tokens, usage_tokens, trailing_tokens, last_usage_index}: tokens is the total estimate the compaction threshold is checked against; usage_tokens is the anchored provider-reported count up to the last assistant Usage, trailing_tokens the heuristic estimate for messages after it, last_usage_index that message's index (null if no assistant Usage exists yet, in which case tokens==trailing_tokens and the whole list was heuristically estimated). */
   context: ContextEstimate;
-  /** context_window - context.tokens. Can be negative: an honest over-budget number, never clamped to zero. */
-  context_headroom: number;
-  /** The active model's context_window (get_model()). */
-  context_window: number;
+  /** context_window - context.tokens. Can be negative: an honest over-budget number, never clamped to zero. Null with context_window. */
+  context_headroom: number | null;
+  /** The active model's context_window (get_model()); null while that model is unavailable (get_state's model_error says why). */
+  context_window: number | null;
   /** {id, timestamp, summary, first_kept_id, tokens_before} for the most recent type=='compaction' entry in session_log.entries(), or null if this session has never compacted — an honest absence, never a fabricated entry. */
   last_compaction: LastCompaction | null;
   /** AgentSession.get_usage() — null before the first completion. */
@@ -1144,8 +1183,10 @@ export interface GetStateResult {
   leaf: string | null;
   /** len(AgentSession.messages). */
   message_count: number;
-  /** AgentSession.get_model(): {id, provider, context_window}. */
+  /** AgentSession.get_model(): {id, provider, context_window}; null while the session's recorded model is unavailable (model_error says why). */
   model: ModelSpec;
+  /** AgentSession.model_unavailable: why a turn would be refused for its model, naming the model and the fix; null when the model resolves. */
+  model_error: string | null;
   /** AgentSession.state.session_id. */
   session_id: string;
   /** AgentSession.state.status. */
@@ -1166,16 +1207,20 @@ export interface GetTools {
 }
 
 export interface GetToolsResult {
-  /** This session's bound AgentTool set, in binding order. */
-  tools: {
+  /** Every tool on the acting cursor: constructor tools, then extension tools, narrowed by the cursor's frame; hidden ones included. */
+  tools: ({
+    /** Whether the request's `tools` block declares it. */
+    declared: boolean;
     /** What the model is told the tool does. */
     description: string;
+    /** The effective exposure, overrides applied. */
+    exposure: "direct" | "model-only" | "callable" | "deferred" | "hidden";
     /** The tool's name, as a tool call addresses it. */
     name: string;
     /** The tool's own JSON Schema, passed to the provider unchanged — this table's supported-keyword rule does not govern it. */
     parameters: Record<string, unknown>;
     [key: string]: unknown;
-  }[];
+  })[];
   [key: string]: unknown;
 }
 
@@ -1290,6 +1335,22 @@ export interface LastCompaction {
 }
 
 /**
+ * RPC `list_extensions` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's own
+ * handler at `cursor_id`.
+ */
+export interface ListExtensions {
+  /** The cursor the verb acts at. */
+  cursor_id: string;
+  session_id: string;
+}
+
+export interface ListExtensionsResult {
+  /** Every extension this session knows of and its state, as the rows of `tau ext list` (docs/EXTENSION-PACKAGES.md §7): loaded, disabled, failed, and found-but-not-loaded (unauthorized, unusable, collision). `disabled` is either turned off in this session or, with a reason, disabled by `tau ext disable` and never imported (#58). Each row names the identifier, source kind, target, distribution and version for a package, why it is not loaded, and the subscribed ext: topics whose emitter is not loaded (#44). Read-only: authorizing is not on the wire. */
+  extensions: ExtensionRecordWire[];
+  [key: string]: unknown;
+}
+
+/**
  * RPC `list_managed_extensions` (docs/RPC-PROTOCOL.md) at one cursor. The daemon runs RPC's
  * own handler at `cursor_id`.
  */
@@ -1359,7 +1420,9 @@ export interface ModelChangeEntry {
 
 /** One model the config defines, as `get_models` lists it. */
 export interface ModelRecord {
-  model: ModelSpec;
+  error: string | null;
+  has_api_key: boolean | null;
+  model: ModelSpec | null;
   name: string;
   [key: string]: unknown;
 }
@@ -1839,7 +1902,7 @@ export interface SetExtensionConfigResult {
 export interface SetModel {
   /** The cursor the verb acts at. */
   cursor_id: string;
-  /** A config model NAME (a key in ~/.tau/config.json's 'models' map), resolved through AgentSession's bound model resolver (set_model_resolver) — the same name --model NAME accepts headlessly. NOT a model id; a config key may alias one. */
+  /** A config model NAME (a key in <τ home>/config.json's 'models' map), resolved through AgentSession's bound model resolver (set_model_resolver) — the same name --model NAME accepts headlessly. NOT a model id; a config key may alias one. */
   name: string;
   session_id: string;
 }
@@ -2060,6 +2123,8 @@ export interface Surface {
   loaded: ExtensionInfo[];
   /** `[key, command, args, description]` per extension shortcut. */
   shortcuts: string[][];
+  /** The session's current extension warnings (#60); a `ui` event with op `warnings` carries each change. */
+  warnings: ExtensionWarning[];
   [key: string]: unknown;
 }
 
@@ -2156,7 +2221,7 @@ export interface UiEvent {
 }
 
 /** An extension display call, told apart by `op`. */
-export type UiEventData = UiNotify | UiStatus | UiPanel;
+export type UiEventData = UiNotify | UiStatus | UiPanel | UiWarnings;
 
 /** An extension's notification. */
 export interface UiNotify {
@@ -2179,6 +2244,13 @@ export interface UiStatus {
   key: string;
   op: "status";
   text: string | null;
+  [key: string]: unknown;
+}
+
+/** The session's extension warnings after a change, every one: replaces `Surface.warnings`. */
+export interface UiWarnings {
+  op: "warnings";
+  warnings: ExtensionWarning[];
   [key: string]: unknown;
 }
 
@@ -2530,6 +2602,11 @@ export type ClientFrame = {
 } | {
   id: number | string;
   jsonrpc: "2.0";
+  method: "list_extensions";
+  params?: ListExtensions;
+} | {
+  id: number | string;
+  jsonrpc: "2.0";
   method: "get_extension_config";
   params?: GetExtensionConfig;
 } | {
@@ -2625,6 +2702,7 @@ export interface Requests {
   answer_request: AnswerRequest;
   list_managed_extensions: ListManagedExtensions;
   get_extension_state: GetExtensionState;
+  list_extensions: ListExtensions;
   get_extension_config: GetExtensionConfig;
   set_extension_config: SetExtensionConfig;
   enable_extension: EnableExtension;
@@ -2680,6 +2758,7 @@ export interface Results {
   answer_request: AnswerRequestResult;
   list_managed_extensions: ListManagedExtensionsResult;
   get_extension_state: GetExtensionStateResult;
+  list_extensions: ListExtensionsResult;
   get_extension_config: GetExtensionConfigResult;
   set_extension_config: SetExtensionConfigResult;
   enable_extension: EnableExtensionResult;
@@ -2712,7 +2791,7 @@ export interface EventData {
 export type EventKind = keyof EventData;
 
 /** Every method, in the schema's order. */
-export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_reasoning","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
+export const REQUEST_TYPES = ["hello","list_sessions","new_session","fork","attach","detach","open_cursor","close_cursor","move_cursor","answer","perform_ready","describe","shutdown","compare","end_compare","submit","prompt","abort","compact","get_state","get_messages","get_commands","get_tools","get_models","get_session_name","get_session_stats","get_last_assistant_text","set_model","set_auto_compaction","set_reasoning","set_session_name","complete_path","next_step","enumerate_domain","complete_message_id","get_tree","get_entry","get_pending_request","answer_request","list_managed_extensions","get_extension_state","list_extensions","get_extension_config","set_extension_config","enable_extension","disable_extension","reload_extension","navigate","summarize_and_navigate","elide_span","commit_branch","paste_subtree"] as const;
 /** Every error code a request can fail with, by name. */
 export const ERROR_CODES = {
   PARSE_ERROR: -32700,

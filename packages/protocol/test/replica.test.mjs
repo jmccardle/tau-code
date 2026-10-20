@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Replica } from '../dist/index.js';
 
-const SURFACE = { commands: [], command_args: {}, shortcuts: [], extensions: [], loaded: [], load_errors: [] };
+const SURFACE = { commands: [], command_args: {}, shortcuts: [], extensions: [], loaded: [], load_errors: [], warnings: [] };
 
 function attached(overrides = {}) {
   return {

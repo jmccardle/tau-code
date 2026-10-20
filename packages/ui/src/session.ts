@@ -96,10 +96,14 @@ export interface OpenForm {
   spec: FormSpec;
 }
 
-/** An extension's display call: a notification, a status line, a panel. */
+/**
+ * An extension's display call: a notification, a status line, a panel. The
+ * `warnings` op is not one of these -- it is state, and it lands in
+ * `attached.surface.warnings`.
+ */
 export interface UiCall {
   seq: number;
-  data: UiEventData;
+  data: Exclude<UiEventData, { op: 'warnings' }>;
 }
 
 export interface SessionState {
@@ -319,9 +323,19 @@ export class SessionStore {
       case 'request_closed':
         this.#patch({ forms: this.#state.forms.filter((form) => form.requestId !== event.data.request_id) });
         return;
-      case 'ui':
-        this.#patch({ ui: [...this.#state.ui, { seq: event.seq, data: event.data }].slice(-UI_KEPT) });
+      case 'ui': {
+        const data = event.data;
+        if (data.op === 'warnings') {
+          // The whole current set, replacing the one `attach` answered with.
+          // Before that answer there is nothing to replace, and the answer
+          // itself carries the set as of the attach.
+          const attached = this.#state.attached;
+          if (attached) this.#patch({ attached: { ...attached, surface: { ...attached.surface, warnings: data.warnings } } });
+          return;
+        }
+        this.#patch({ ui: [...this.#state.ui, { seq: event.seq, data }].slice(-UI_KEPT) });
         return;
+      }
       case 'compaction_end':
         this.#patch({ compaction: compactionSentence(event.data) });
         return;
