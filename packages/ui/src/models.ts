@@ -19,15 +19,21 @@ export type { ModelRecord };
  * of `model` -- a malformed entry, or a backend τ cannot reach -- and is listed
  * so the reader sees why it is there and cannot be chosen, never offered.
  */
-export type BuiltModelRecord = ModelRecord & { model: ModelSpec; error: null };
+export type BuiltModelRecord = ModelRecord & { model: ModelSpec; error: null; has_api_key: boolean };
 
 export function isBuilt(record: ModelRecord): record is BuiltModelRecord {
   return record.model !== null;
 }
 
-/** `provider/id`, the model a name resolves to. */
+/**
+ * `provider/id`, the model a name resolves to, and `(no API key)` when a
+ * request to it would carry none. That is not an error -- a local backend
+ * needs no key -- so the entry stays selectable; but against a vendor that
+ * wants one, the turn ends in a 401, and the reader should know beforehand.
+ */
 export function modelLabel(record: BuiltModelRecord): string {
-  return `${record.model.provider}/${record.model.id}`;
+  const label = `${record.model.provider}/${record.model.id}`;
+  return record.has_api_key ? label : `${label} (no API key)`;
 }
 
 /** The record for `name`, or null when the daemon's config no longer has it. */

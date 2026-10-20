@@ -18,9 +18,9 @@ import { ModelPanel } from '../dist/components.js';
 // `local-llm` is the point of this fixture: the config NAME and the model ID
 // are different strings, which is why a name cannot be inferred from an id.
 const MODELS = [
-  { name: 'claude-3.5-sonnet', model: { id: 'claude-3-5-sonnet-20241022', provider: 'anthropic', context_window: 128000 }, error: null },
-  { name: 'gpt-4o', model: { id: 'gpt-4o', provider: 'openai', context_window: 128000 }, error: null },
-  { name: 'local-llm', model: { id: 'qwen38-27B', provider: 'openai', context_window: 128000 }, error: null },
+  { name: 'claude-3.5-sonnet', model: { id: 'claude-3-5-sonnet-20241022', provider: 'anthropic', context_window: 128000 }, error: null, has_api_key: true },
+  { name: 'gpt-4o', model: { id: 'gpt-4o', provider: 'openai', context_window: 128000 }, error: null, has_api_key: true },
+  { name: 'local-llm', model: { id: 'qwen38-27B', provider: 'openai', context_window: 128000 }, error: null, has_api_key: true },
 ];
 
 test('a name resolves to its record, and a name the config dropped resolves to nothing', () => {
@@ -30,14 +30,14 @@ test('a name resolves to its record, and a name the config dropped resolves to n
 });
 
 test('aliases are found by id AND provider', () => {
-  const withAlias = [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 }, error: null }];
+  const withAlias = [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 }, error: null, has_api_key: true }];
   assert.deepEqual(aliasesOf(withAlias, 'gpt-4o').sort(), ['fast', 'gpt-4o']);
-  const otherProvider = [...MODELS, { name: 'azure', model: { id: 'gpt-4o', provider: 'azure', context_window: 1 }, error: null }];
+  const otherProvider = [...MODELS, { name: 'azure', model: { id: 'gpt-4o', provider: 'azure', context_window: 1 }, error: null, has_api_key: true }];
   assert.deepEqual(aliasesOf(otherProvider, 'gpt-4o'), ['gpt-4o']);
 });
 
 // An entry τ's config cannot build: listed with its reason, never selectable.
-const BROKEN = { name: 'typo', model: null, error: "unknown backend 'opnai' and no base_url" };
+const BROKEN = { name: 'typo', model: null, error: "unknown backend 'opnai' and no base_url", has_api_key: null };
 
 test('an entry that does not build has no aliases and is no one\'s alias', () => {
   const models = [...MODELS, BROKEN];
@@ -47,6 +47,31 @@ test('an entry that does not build has no aliases and is no one\'s alias', () =>
 
 test('the label pairs provider with id', () => {
   assert.equal(modelLabel(MODELS[2]), 'openai/qwen38-27B');
+});
+
+// No key is not an error: a local backend needs none. Said, and still offered.
+const KEYLESS = { name: 'ollama', model: { id: 'llama3', provider: 'openai', context_window: 8192 }, error: null, has_api_key: false };
+
+test('an entry with no API key says so in its label', () => {
+  assert.equal(modelLabel(KEYLESS), 'openai/llama3 (no API key)');
+});
+
+test('an entry with no API key is listed as such and can still be chosen', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ModelPanel, {
+      models: [...MODELS, KEYLESS],
+      active: 'local-llm',
+      activeError: null,
+      running: false,
+      busy: false,
+      error: null,
+      onClose: () => {},
+      onChoose: () => {},
+    }),
+  );
+  const row = html.split('<li>').slice(1).find((r) => r.includes('>ollama<'));
+  assert.match(row, /openai\/llama3 \(no API key\)/);
+  assert.doesNotMatch(row, /disabled|tau-model-unavailable/);
 });
 
 const panel = (props) =>
@@ -86,7 +111,7 @@ test('a name the config no longer has is said, and marks nothing', () => {
 
 test('an alias of the running model says switching to it changes nothing', () => {
   const html = panel({
-    models: [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 }, error: null }],
+    models: [...MODELS, { name: 'fast', model: { id: 'gpt-4o', provider: 'openai', context_window: 1 }, error: null, has_api_key: true }],
     active: 'gpt-4o',
   });
   assert.match(html, /fast resolves to the same model/);

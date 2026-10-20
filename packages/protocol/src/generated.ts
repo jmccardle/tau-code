@@ -1418,6 +1418,7 @@ export interface ModelChangeEntry {
 /** One model the config defines, as `get_models` lists it. */
 export interface ModelRecord {
   error: string | null;
+  has_api_key: boolean | null;
   model: ModelSpec | null;
   name: string;
   [key: string]: unknown;
