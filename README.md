@@ -13,8 +13,8 @@ and in the editor, with Tab completion for `/commands` and `@files`. The editor
 integrations — jump-to-edit, diff views — are designed for but not built:
 `docs/ARCHITECTURE.md` §7.1 says what τ still computes and discards.
 
-Requires **τ 0.13.0** (`pip install 'ffwf-tau[serve]==0.13.0'`), which speaks
-serve protocol 0.10. The client says which serve protocol it speaks in its
+Requires **τ 0.14.0** (`pip install 'ffwf-tau[serve]==0.14.0'`), which speaks
+serve protocol 0.11. The client says which serve protocol it speaks in its
 first frame, and a daemon speaking another refuses it with a sentence naming
 both versions.
 
@@ -57,7 +57,7 @@ components run in the browser and in the editor.
 ## Requirements
 
 - Node 20 or later.
-- τ 0.13.0 with its `serve` extra, and its `tau` console script
+- τ 0.14.0 with its `serve` extra, and its `tau` console script
   reachable. Set `TAU_BIN` if it is not on `PATH`:
 
   ```bash
@@ -141,7 +141,7 @@ Then open `http://127.0.0.1:8256/`.
   remapped port (`-p 9000:8256`) works: the daemon's Origin check compares a
   page's origin with the host it dialled, not with the port it listens on.
 - Which τ is baked in is the `TAU_SPEC` build argument,
-  `ffwf-tau[serve]==0.13.0`. To build against a τ that is not on PyPI yet, use
+  `ffwf-tau[serve]==0.14.0`. To build against a τ that is not on PyPI yet, use
   local wheels with `docker build --build-context tau-wheels=DIR .`, or
   `TAU_WHEELS=DIR npm run package:image`.
 
@@ -167,7 +167,7 @@ To build an installable `.vsix` instead:
 
 ```bash
 npm run package:vsix                              # -> ffwf-tau-code-<version>.vsix
-code --install-extension ffwf-tau-code-0.7.0.vsix
+code --install-extension ffwf-tau-code-0.8.0.vsix
 ```
 
 **If you installed 0.1.x, uninstall it first.** The extension ID changed from
