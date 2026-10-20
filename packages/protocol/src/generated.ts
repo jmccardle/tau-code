@@ -796,10 +796,13 @@ export interface Error {
  * transient: True for a retryable status or a connection failure, False for any other HTTP
  * refusal and for a ``ProviderStreamError``, None for an exception τ makes no transience
  * judgement about. On ``agent_end`` a True means τ's own retries ran out, or the server asked
- * for a longer wait than τ will make inside a turn.
+ * for a longer wait than τ will make inside a turn. key_sent: A ``ProviderHttpError``'s
+ * ``key_sent``: whether the request carried a key, which tells "no API key" from "API key
+ * refused" on a 401; None when not an HTTP refusal or the provider did not say.
  */
 export interface ErrorDetail {
   headers?: Record<string, string> | null;
+  key_sent?: boolean | null;
   retry_after?: number | null;
   retryable?: boolean | null;
   status?: number | null;
