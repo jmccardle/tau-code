@@ -1,6 +1,6 @@
 # Architecture
 
-**Status: both hosts speak `tau serve` (0.8.0, alongside τ 0.14.0).** The web
+**Status: both hosts speak `tau serve` (0.8.1, alongside τ 0.14.1).** The web
 client and the VS Code extension are clients of τ's daemon; the Node connection
 server and the stdio runner that stood between them and `tau --mode rpc` are
 deleted. A browser tab, a VS Code panel and `tau --connect` attached to one

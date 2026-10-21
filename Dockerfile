@@ -52,13 +52,13 @@ RUN npx tsc --build packages/web \
 # -------------------------------------------------------------- runtime stage
 FROM python:3.12-slim-bookworm AS runtime
 
-# Which τ. `[serve]` brings the WebSocket daemon. 0.14.0 speaks serve protocol
+# Which τ. `[serve]` brings the WebSocket daemon. 0.14.1 speaks serve protocol
 # 0.11, the one this client was generated against. A τ that is not on PyPI
 # yet builds with --build-context tau-wheels (above).
 #
 # packages/runtime pins the same release. Those two move together: two
 # artifacts shipping two τs is how a client ends up tested against neither.
-ARG TAU_SPEC=ffwf-tau[serve]==0.14.0
+ARG TAU_SPEC=ffwf-tau[serve]==0.14.1
 
 # The agent's tools resolve against a bind-mounted /work, so the container user
 # has to match the host user who owns it.

@@ -1,8 +1,13 @@
 # tau-code roadmap
 
-State as of 2026-10-20. `master` == `v0.8.0`.
+State as of 2026-10-21. `master` == `v0.8.1`.
 
 ## Shipped
+
+### v0.8.1 (2026-10-21), targeting τ 0.14.1
+- The bundled runtime is CPython 3.14.7 (was 3.11.16, never a deliberate choice). cp314 wheels resolve for all nine targets.
+- τ 0.14.1 fixes #79: `tau serve -d` re-launched the daemon without `-I`, so the runtime read the user's `~/.local` site-packages and model calls failed (`ImportError: sentinel`, or Anthropic's bare "Connection error.").
+- The runtime build's verify now starts `serve -d` with a `usercustomize.py` canary in the throwaway HOME's user site, and fails if any interpreter in the chain reads it. It fails against τ 0.14.0.
 
 ### v0.8.0 (2026-10-20), targeting τ 0.14.0 (serve protocol 0.11, RPC 3.0)
 - generated.ts regenerated for protocol 0.11. `npm run check:protocol` passes against PyPI `ffwf-tau[serve]==0.14.0`.
