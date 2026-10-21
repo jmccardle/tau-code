@@ -55,11 +55,11 @@ concurrency:
 # extension host still gets what it has always got.
 env:
   NODE_VERSION: '24'
-  # The version the payloads are built for. `--python-version 311` is passed to
+  # The version the payloads are built for. `--python-version 314` is passed to
   # pip explicitly by build-payload.mjs, so this only decides which interpreter
   # resolves the wheels -- but matching it to the payload keeps the two from
   # being separately true.
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.14'
 
 jobs:
   # ---------------------------------------------------------------- checks

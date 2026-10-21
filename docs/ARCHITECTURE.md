@@ -1087,16 +1087,21 @@ Three details the implementation needed:
 
 Four properties, each of which was measured rather than assumed.
 
-**Isolated.** Spawned as `python3.11 -I -m tau_coding_agent.cli`. `-I` drops
+**Isolated.** Spawned as `python3.14 -I -m tau_coding_agent.cli`. `-I` drops
 `PYTHONPATH`, `PYTHONHOME`, the user site directory **and the working
 directory** from `sys.path`. Two of those are load-bearing, and the user site
-directory turned out to be the worse of them: `~/.local/lib/python3.11/
+directory turned out to be the worse of them: `~/.local/lib/python3.14/
 site-packages` is on this interpreter's path by default like any other's, and
 a stale `typing_extensions` there shadowed the payload's and surfaced as
 `ImportError: cannot import name 'sentinel'` raised inside a model streaming
 call. The cwd case needs a project with an unluckily-named file; that one is
 machine-wide and permanent. Demonstrated both ways in
-`packages/runtime/README.md`. This is also why the runtime hands over an
+`packages/runtime/README.md`. It has to hold for every interpreter in the
+chain, not only the one the extension spawns: τ 0.14.0's `serve -d` re-launched
+the daemon without `-I` (τ #79), and the same `sentinel` error came back. The
+payload's build-time check therefore starts the daemon as the extension does,
+`serve -d`, with a `usercustomize.py` canary in a throwaway HOME's user site,
+and fails if any interpreter in the chain imports it. This is also why the runtime hands over an
 interpreter and arguments rather than the `tau` console script — the script
 pip generates carries an absolute shebang written on the build machine.
 
@@ -1128,7 +1133,7 @@ This is gobboclippy's SONAME lesson: a bundled runtime that silently resolves
 against the host's works on every machine that builds or tests it, and on no
 machine that installs it.
 
-**Usable on its own.** `pip` ships, and `python3.11 -m pip install` into the
+**Usable on its own.** `pip` ships, and `python3.14 -m pip install` into the
 tree works after relocation — pbs's console scripts use the `#!/bin/sh`
 re-exec form rather than an absolute shebang. That is how a τ extension's
 dependency gets installed, and it is why `pip` is excluded from the pruning
@@ -1150,14 +1155,14 @@ linux-x64, from the upstream tarball to the shipped `.vsix`:
 
 What the pruning removes, and the two that were not obvious:
 
-- **`libpython3.11.so.1.0`, 21 MB.** python-build-standalone links libpython
+- **`libpython3.14.so.1.0`, 21 MB.** python-build-standalone links libpython
   *statically* into the executable and also ships it as a shared library, for
   embedders. Nothing in the payload names it. Deleted only after a **byte scan
   for the SONAME** across every plausible referrer — a scan and not `ldd`,
   because eight of the nine targets cannot be executed on the machine that
   builds them, and a check only the host gets is not a check.
 - **Two-thirds of the interpreter, 16 MB of `.vsix`.** `bin/` ships
-  `python3.11` with `python` and `python3` symlinked to it, and **vsce
+  `python3.14` with `python` and `python3` symlinked to it, and **vsce
   dereferences symlinks**: the first package carried three independent 20.7 MB
   copies and came to 34.3 MB. Nothing warns about this — the extension works,
   it is just three times the interpreter. Collapsing `bin/` to one name is what

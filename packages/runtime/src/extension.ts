@@ -37,7 +37,7 @@ export interface TauRuntimeApi {
    * runtime this editor owns and a runtime that happens to live here.
    */
   readonly shim: string;
-  /** `3.11.13`. */
+  /** `3.14.7`. */
   readonly pythonVersion: string;
   /** `0.10.3`, read from the installed dist-info at build time. */
   readonly tauVersion: string;

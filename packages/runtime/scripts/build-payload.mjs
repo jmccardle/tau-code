@@ -21,7 +21,7 @@
  * package.json, one copy, and the manifest this writes records what pip
  * actually installed by reading the dist-info back off disk.
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   cpSync,
@@ -47,13 +47,13 @@ const PAYLOAD = join(PKG_ROOT, 'runtime');
 /**
  * Which CPython. Pinned, not "latest": a build that resolves a different
  * interpreter each time it runs is a build whose output nobody can reproduce,
- * and the ABI tag below (`cp311`) has to agree with it or pip picks wheels this
+ * and the ABI tag below (`cp314`) has to agree with it or pip picks wheels this
  * interpreter cannot import.
  */
 const PBS_RELEASE = '20260901';
-const PY_VERSION = '3.11.16';
-const PY_TAG = '311';
-const PY_SHORT = '3.11';
+const PY_VERSION = '3.14.7';
+const PY_TAG = '314';
+const PY_SHORT = '3.14';
 
 const PBS_BASE = `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}`;
 
@@ -310,9 +310,9 @@ function prune(root, names) {
 }
 
 /**
- * Drop `libpython3.11.so.1.0`, but only after proving nothing asks for it.
+ * Drop `libpython3.14.so.1.0`, but only after proving nothing asks for it.
  *
- * python-build-standalone links libpython statically INTO the `python3.11`
+ * python-build-standalone links libpython statically INTO the `python3.14`
  * executable and ALSO ships it as a shared library, for embedders. Measured on
  * linux-x64: `ldd` on the executable names no libpython, and neither does any
  * lib-dynload module. It is 21 MB of file that nothing in this payload opens.
@@ -368,7 +368,7 @@ function dropUnreferencedLibpython(python, layout) {
  * gone.
  *
  * A .vsix is a zip, and vsce DEREFERENCES symlinks when it builds one. The
- * interpreter ships as `python3.11` with `python` and `python3` pointing at it,
+ * interpreter ships as `python3.14` with `python` and `python3` pointing at it,
  * so the archive got three independent 20.7 MB copies of the same binary --
  * measured, 34.3 MB packaged. Nothing warns about this: the extension works,
  * it is just three times the interpreter.
@@ -591,7 +591,7 @@ function writeShim(payload, layout) {
       '  esac',
       'done',
       'here=$(cd "$(dirname "$self")" && pwd)',
-      // python3.11 and not python3: the aliases are deleted, because a .vsix is
+      // python3.14 and not python3: the aliases are deleted, because a .vsix is
       // a zip and vsce turns each symlink into a full copy of the interpreter.
       `exec "$here/../python/bin/python${PY_SHORT}" -I -m tau_coding_agent.cli "$@"`,
       '',
@@ -673,6 +673,20 @@ async function verify(interpreter, args, modules) {
   // the check would be the thing that spoiled what it checked.
   const env = { HOME: home, PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' };
 
+  // A user site in that HOME, with a canary in it. Python imports
+  // `usercustomize` at startup from the user site, so any interpreter in the
+  // daemon's chain that reaches it leaves the marker. That is the τ 0.14.0
+  // failure (τ #79): `serve -d` re-launched itself without `-I`, and on a host
+  // whose ~/.local/lib/python3.x held an older typing_extensions every model
+  // call failed. Only a real user site in the HOME the daemon runs with shows it.
+  const userSite = join(home, '.local', 'lib', `python${PY_SHORT}`, 'site-packages');
+  const leaked = join(home, 'user-site-reached');
+  mkdirSync(userSite, { recursive: true });
+  writeFileSync(
+    join(userSite, 'usercustomize.py'),
+    `import sys\nopen(${JSON.stringify(leaked)}, "a").write(" ".join(sys.orig_argv) + "\\n")\n`,
+  );
+
   // Every provider SDK τ imports lazily, on the first request to that wire
   // protocol. Missing one passes every other check here and fails at the
   // user's first prompt to that model, so each is imported now.
@@ -684,16 +698,19 @@ async function verify(interpreter, args, modules) {
   }
   say(`  verify  imports ${modules.join(', ')}`);
 
+  // Started the way the extension starts it -- `serve -d --json` -- because the
+  // detached daemon is a second interpreter, and it is the one that serves.
   const port = await freePort();
-  const daemon = spawn(interpreter, [...args, 'serve', '--listen', `127.0.0.1:${port}`], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const started = spawnSync(interpreter, [...args, 'serve', '-d', '--json', '--listen', `127.0.0.1:${port}`], {
+    encoding: 'utf8',
     env,
   });
-  let daemonOutput = '';
-  daemon.stdout.setEncoding('utf8');
-  daemon.stderr.setEncoding('utf8');
-  daemon.stdout.on('data', (chunk) => (daemonOutput += chunk));
-  daemon.stderr.on('data', (chunk) => (daemonOutput += chunk));
+  if (started.error || started.status !== 0) {
+    rmSync(home, { recursive: true, force: true });
+    throw new Error(`\`tau serve -d\` from the payload failed: ${started.error?.message ?? started.stderr}`);
+  }
+  const daemon = JSON.parse(started.stdout);
+  const daemonLog = () => (existsSync(daemon.log) ? readFileSync(daemon.log, 'utf8') : '(no log)');
 
   // The protocol version is whatever the daemon answers; hello names the one
   // this client was generated against, so a payload pinned to a τ that speaks
@@ -723,13 +740,23 @@ async function verify(interpreter, args, modules) {
     if ('error' in answer) {
       throw new Error(`the payload's daemon refused hello: ${JSON.stringify(answer.error)}`);
     }
+    if (existsSync(leaked)) {
+      throw new Error(
+        `an interpreter in the daemon's chain read the user site, so a user's ~/.local packages ` +
+          `would shadow the payload's. It ran:\n${readFileSync(leaked, 'utf8')}`,
+      );
+    }
     const protocol = answer.result.protocol;
-    say(`  verify  tau serve speaks protocol ${protocol}, with no PYTHONPATH and no HOME of yours`);
+    say(`  verify  tau serve -d speaks protocol ${protocol}, and never reads a user site, PYTHONPATH or HOME of yours`);
     return protocol;
   } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\ndaemon output:\n${daemonOutput}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\ndaemon log:\n${daemonLog()}`);
   } finally {
-    daemon.kill('SIGKILL');
+    try {
+      process.kill(daemon.pid, 'SIGKILL');
+    } catch {
+      // Already gone: the error above, if any, says why.
+    }
     rmSync(home, { recursive: true, force: true });
   }
 }

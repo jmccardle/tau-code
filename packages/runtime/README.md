@@ -14,8 +14,8 @@ runtime/
   manifest.json                    what this payload is, read by the extension
   bin/tau                          a shim, for your terminal
   python/
-    bin/python3.11                 the interpreter
-    lib/python3.11/                the standard library
+    bin/python3.14                 the interpreter
+    lib/python3.14/                the standard library
       site-packages/               tau, pydantic, httpx, websockets, and pip
 ```
 
@@ -31,15 +31,15 @@ site directory and **the working directory** are all off `sys.path`. Two of
 those are load-bearing, and each has a measured failure behind it.
 
 **Your user site directory.** This is the one that bites without a project in
-sight, because `~/.local/lib/python3.11/site-packages` is on every interpreter's
+sight, because `~/.local/lib/python3.14/site-packages` is on every interpreter's
 path by default — including this one:
 
 ```console
-$ .../python/bin/python3.11 -c 'import typing_extensions as t; print(t.__file__)'
-/home/you/.local/lib/python3.11/site-packages/typing_extensions.py   # yours
+$ .../python/bin/python3.14 -c 'import typing_extensions as t; print(t.__file__)'
+/home/you/.local/lib/python3.14/site-packages/typing_extensions.py   # yours
 
-$ .../python/bin/python3.11 -I -c 'import typing_extensions as t; print(t.__file__)'
-.../runtime/python/lib/python3.11/site-packages/typing_extensions.py # ours
+$ .../python/bin/python3.14 -I -c 'import typing_extensions as t; print(t.__file__)'
+.../runtime/python/lib/python3.14/site-packages/typing_extensions.py # ours
 ```
 
 An old `typing_extensions` there surfaces as `ImportError: cannot import name
@@ -51,7 +51,7 @@ project would be imported instead of the real one:
 
 ```console
 $ cd a-project-with-a-pydantic.py
-$ .../python/bin/python3.11 -m tau_coding_agent.cli --version
+$ .../python/bin/python3.14 -m tau_coding_agent.cli --version
 SHADOWED: the workspace pydantic.py was imported
 
 $ .../bin/tau --version          # the shim, which passes -I
@@ -82,7 +82,7 @@ Show Runtime Info** prints everything below.
 
 ```sh
 "$RUNTIME/bin/tau" --help                     # the shim; -I is already in it
-"$RUNTIME/python/bin/python3.11" -m pip list  # its own pip, its own site-packages
+"$RUNTIME/python/bin/python3.14" -m pip list  # its own pip, its own site-packages
 ```
 
 `pip install` into it works and is how a τ extension's dependency gets there.
