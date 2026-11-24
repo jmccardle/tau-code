@@ -1,13 +1,14 @@
 {
   "name": "@ffwf/tau-code-web",
   "version": "0.8.1",
-  "description": "Standalone browser client for tau, served by `tau serve` from its serve.web_root.",
+  "description": "The browser client for τ: built to dist/, which `tau serve --web-root packages/web/dist` serves. `npm run dev` serves it with live reload, proxying /stream to a running tau serve.",
   "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite"
+    "build": "tsc --build && vite build",
+    "dev": "vite",
+    "test": "node --test test/"
   },
   "dependencies": {
     "@ffwf/tau-code-protocol": "*",

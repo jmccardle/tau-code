@@ -7,3 +7,5 @@ dist-types/
 *.vsix
 .DS_Store
 .env
+dist-tsc/
+test-results/

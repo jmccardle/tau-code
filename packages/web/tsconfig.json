@@ -1,11 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
+    // Vite builds the page into dist/ (what `tau serve --web-root` serves). tsc's output goes to
+    // dist-tsc/, out of its way: only the tests import it.
+    "outDir": "dist-tsc",
     "rootDir": "src",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "noEmit": false,
     "types": []
   },
   "include": ["src/**/*"],
