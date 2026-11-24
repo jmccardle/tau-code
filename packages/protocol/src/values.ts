@@ -3,7 +3,7 @@
  * string (`"Core"`, `"Done"`), a variant with data a one-key object (`{"User": "hi"}`). These turn
  * them into what a view shows. Pure functions; no τ concept is added here.
  */
-import type { Author, Body, Ending, ItemData, Outcome, Prose } from './generated.js';
+import type { Author, Body, Ending, Image, ItemData, Outcome, Prose } from './generated.js';
 
 /** Who wrote something: `you`-agnostic, e.g. `provider`, `frontend john@laptop:web`. */
 export function authorText(author: Author): string {
@@ -35,11 +35,27 @@ export function endingText(ending: Ending): string {
   return `failed: ${ending.Failed}`;
 }
 
-/** A call's outcome: whether it failed, and its text. */
-export function outcomeOf(outcome: Outcome): { ok: boolean; text: string } {
-  if (outcome === 'Interrupted') return { ok: false, text: 'interrupted' };
-  if ('Ok' in outcome) return { ok: true, text: outcome.Ok };
-  return { ok: false, text: outcome.Err };
+/**
+ * A call's outcome: whether it failed, its text, and the images an `Ok` carries (protocol 2, D30).
+ * `Ok` is the bare text when there are no images, `{value, images}` when there are.
+ */
+export function outcomeOf(outcome: Outcome): { ok: boolean; text: string; images: Image[] } {
+  if (outcome === 'Interrupted') return { ok: false, text: 'interrupted', images: [] };
+  if ('Ok' in outcome) {
+    const ok = outcome.Ok;
+    if (typeof ok === 'string') return { ok: true, text: ok, images: [] };
+    return { ok: true, text: ok.value, images: ok.images };
+  }
+  return { ok: false, text: outcome.Err, images: [] };
+}
+
+/**
+ * An image as a label, the way τ's terminal UI and `tau export` show one: `[image WxH mime]`.
+ * The wire carries no bytes (protocol 2 has no call that fetches them), so a label is all a
+ * client can draw.
+ */
+export function imageLabel(image: Image): string {
+  return `[image ${image.width}x${image.height} ${image.mime}]`;
 }
 
 /** A pending item, as a line: its text and who wrote it. */

@@ -3,7 +3,7 @@
 State as of 2026-11-24. `master` == `v0.8.1`. The port to τ 0.16 is on branch
 `feat/http-edge-client` (forgejo and goblin only, until 0.9.0).
 
-## In progress: the port to τ 0.16 (protocol 1, the HTTP edge)
+## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
 
 - **Phase 1, built:** TC-01 the generator from `tau serve --schema` (a pinned schema,
@@ -16,7 +16,12 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
   controls (TC-08); the 0.11 replica, panels, planners and smokes deleted, and
   `npm run smoke:browser` in headless Chrome (TC-09); `npm run dev` with a dev-only proxy that
   adds the serve record's token.
-- **Needs τ ≥ `ea0a3dcd`** (master; 0.16.1 is not released). Nothing here works against 0.16.0.
+- **Needs τ ≥ 0.17.0** (protocol 2). The port was built against protocol 1 (τ master `ea0a3dcd`,
+  planned as 0.16.1, never released) and regenerated for protocol 2 when 0.17.0 shipped. A 0.16
+  server refuses this client at `hello`, and a 0.17 server refuses a protocol-1 one.
+- **Images in tool results (protocol 2):** a result's images are labelled `[image WxH mime]`, as τ's
+  terminal UI does. Drawing them needs a wire call that fetches an image's bytes; τ 0.17 has none
+  (its release notes list it under "Not yet").
 - **What the old (0.8.1) UI had that the port does not**, one per line:
   - the completion popup with each command's description, and `@file` completion: the composer
     completes through `complete_line` only, and never calls `commands` (which has the descriptions);
@@ -27,7 +32,7 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
   - the extension panels and flows of protocol 0.11 (gone from τ; commands and their forms replace
     them);
   - the session picker (one `tau serve` is one session: Q-G (a));
-  - the tree's elide, commit-branch and paste-subtree (no wire counterpart in protocol 1).
+  - the tree's elide, commit-branch and paste-subtree (no wire counterpart in protocol 2).
 - **Not built:** the `tau_web` Python package (`ffwf-tau-web`?) that `tau serve` would find without
   `--web-root`, and τ's `ffwf-tau[web]` extra that would name it: Q-H is open.
 

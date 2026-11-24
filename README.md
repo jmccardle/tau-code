@@ -3,13 +3,14 @@
 Clients for [τ](https://github.com/jmccardle/tau), the agent harness: a web client, and a VS Code /
 VSCodium extension, both speaking τ's wire to `tau serve`.
 
-**Status: being ported to τ 0.16's wire (protocol 1), over `tau serve`'s HTTP edge.** The protocol
+**Status: being ported to τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge.** The protocol
 package, the session model and the web client are ported and tested against a real `tau serve`.
 The VS Code extension and its runtime bundle are not yet (Phase R, [ROADMAP.md](ROADMAP.md)): they
 are written against τ 0.14's serve protocol 0.11 and are left out of the default build.
 
-**Requires τ with the HTTP edge**: τ `master` at or after `ea0a3dcd` (to be released as 0.16.1).
-τ 0.16.0 serves only a Unix socket, which a browser cannot reach.
+**Requires τ 0.17.0 or later** (`pip install 'ffwf-tau>=0.17'`): the HTTP edge, and protocol 2.
+τ 0.16 serves only a Unix socket, which a browser cannot reach, and speaks protocol 1, which this
+client does not.
 
 ## What is here
 
@@ -30,7 +31,7 @@ editor's webview.
 
 ## The wire
 
-τ 0.16 serves one session per `tau serve` process. Its HTTP edge (τ's D29) is:
+τ serves one session per `tau serve` process. Its HTTP edge (τ's D29) is:
 
 - `GET /stream` with `Authorization: Bearer <token>`: a server-sent-events stream whose first
   event is the connection id, then one JSON-RPC message per event;
@@ -39,7 +40,9 @@ editor's webview.
 `HttpTransport` speaks it with `fetch` and a `ReadableStream` (it can send `Authorization`,
 which `EventSource` cannot), POSTing one request at a time so calls arrive in order. The same
 code runs in a browser and in Node. `ServeClient` says `hello` with the protocol number and
-matches answers by id; `SessionModel` folds the snapshot and the events into the cursors, the
+matches answers by id. A tool result can carry images (protocol 2, τ's D30); the wire gives each
+image's type, size and sha256 but not its bytes, so the transcript labels each one the way τ's
+terminal UI does (`[image 640x480 image/png]`). `SessionModel` folds the snapshot and the events into the cursors, the
 labels, a node cache and each watched cursor's live layer; `SessionLink` reconnects (there is no
 resume: a new connection gets a new snapshot), stops on a refusal that a retry cannot change (a
 wrong token, a refused origin, a protocol mismatch), follows one cursor and reads the tree.
@@ -50,7 +53,7 @@ The token is in the serve record (`$TAU_HOME/serve/<session>.json`, mode 600), w
 ## Requirements
 
 - Node 20 or later.
-- τ at or after `ea0a3dcd`, its `tau` console script reachable. Set `TAU_BIN` if it is not the
+- τ 0.17.0 or later, its `tau` console script reachable. Set `TAU_BIN` if it is not the
   `tau` on `PATH`:
 
   ```bash

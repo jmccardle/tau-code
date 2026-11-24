@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EdgeError, SessionLink } from '../dist/index.js';
+import { EdgeError, PROTOCOL, SessionLink } from '../dist/index.js';
 import { node, pair, view } from './helpers.mjs';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
-const WELCOME = { protocol: 1, version: '0.16.1', session: 's1', cwd: '/w', pid: 7 };
+const WELCOME = { protocol: PROTOCOL, version: '0.17.0', session: 's1', cwd: '/w', pid: 7 };
 
 /**
  * A scripted server behind fake transports: `hello` gets the snapshot then the Welcome, `watch`
@@ -76,7 +76,7 @@ test('ready after hello: the snapshot is in the model, the first open cursor fol
   assert.deepEqual(link.state.welcome, WELCOME);
   assert.equal(link.state.focus, 0);
   assert.deepEqual(fake.calls.map(([m]) => m), ['hello', 'watch', 'walk']);
-  assert.deepEqual(fake.calls[0][1], { protocol: 1, client: 'me@test:web' });
+  assert.deepEqual(fake.calls[0][1], { protocol: PROTOCOL, client: 'me@test:web' });
   assert.deepEqual(fake.calls[1][1], { cursors: [0] });
   assert.deepEqual(link.state.model.walk(2).map((n) => n.id), [0, 1, 2]);
   link.dispose();
@@ -229,7 +229,7 @@ test('a protocol mismatch is final: it stays failed, with no reconnect', async (
   link.dispose();
 });
 
-test('an event kind protocol 1 does not have is final, and says which', async () => {
+test('an event kind protocol 2 does not have is final, and says which', async () => {
   const fake = server({ tree });
   const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
   link.start();
@@ -241,7 +241,7 @@ test('an event kind protocol 1 does not have is final, and says which', async ()
   link.dispose();
 });
 
-test('a message protocol 1 does not allow is final', async () => {
+test('a message protocol 2 does not allow is final', async () => {
   const fake = server({ tree });
   const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
   link.start();

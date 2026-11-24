@@ -10,7 +10,7 @@ test('hello names PROTOCOL and the client id, and resolves with the Welcome', as
   assert.deepEqual(peer.sent, [
     { jsonrpc: '2.0', id: 0, method: 'hello', params: { protocol: PROTOCOL, client: 'me@host:test' } },
   ]);
-  const answer = { protocol: 1, version: '0.16.1', session: 's', cwd: '/w', pid: 1 };
+  const answer = { protocol: PROTOCOL, version: '0.17.0', session: 's', cwd: '/w', pid: 1 };
   peer.deliver({ jsonrpc: '2.0', id: 0, result: answer });
   assert.deepEqual(await welcome, answer);
 });

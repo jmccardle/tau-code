@@ -1,4 +1,4 @@
-import { ERROR_CODES } from './generated.js';
+import { ERROR_CODES, PROTOCOL } from './generated.js';
 import type { Error as WireError, ErrorCode } from './generated.js';
 
 /** An error code's name, as the schema's `x-names` gives it (`"Busy"`, `"NotFound"`, ...). */
@@ -13,7 +13,7 @@ export function errorName(code: number): ErrorName | null {
   return NAMES.get(code) ?? null;
 }
 
-/** The server sent something protocol 1 does not allow. The connection is closed for it. */
+/** The server sent something protocol 2 does not allow. The connection is closed for it. */
 export class ProtocolViolation extends Error {
   constructor(detail: string) {
     super(`protocol violation: ${detail}`);
@@ -40,7 +40,7 @@ export class ServeError extends Error {
     const name = errorName(error.code);
     if (name === null) {
       // The schema's enum is closed: a code outside it is a server newer than this client.
-      throw new ProtocolViolation(`${method} failed with code ${error.code}, which protocol 1 does not name`);
+      throw new ProtocolViolation(`${method} failed with code ${error.code}, which protocol ${PROTOCOL} does not name`);
     }
     super(`${method}: ${name}: ${error.message}`);
     this.name = 'ServeError';

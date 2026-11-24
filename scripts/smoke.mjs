@@ -10,6 +10,11 @@
  * then the cursor at rest with `ending` Done; `walk` holds the reply; a second client, through
  * `SessionLink`, sees the same session and can read the whole tree; and `tau serve --stop` ends
  * the first client's stream with `end {error: null}`.
+ *
+ * Then, protocol 2 (τ 0.17, D30): a second `tau serve` whose model is a fake OpenAI-compatible
+ * server here, with `images: true`. It answers the first request with a call to τ's `read` on a
+ * PNG, and the next with text. The `Results` node must reach the client as `Ok {value, images}`,
+ * and `outcomeOf` must give its text and its image (type, size, sha256).
  */
 import assert from 'node:assert/strict';
 import {
@@ -20,8 +25,14 @@ import {
   SessionLink,
   SessionModel,
   bodyKind,
+  imageLabel,
+  outcomeOf,
   proseText,
 } from '../packages/protocol/dist/index.js';
+import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fakeModel, png } from './lib/fake-model.mjs';
 import { serve, until } from './lib/serve.mjs';
 
 const served = await serve();
@@ -120,5 +131,57 @@ try {
     console.error(error);
   });
 }
+if (!failed) failed = !(await images());
 if (failed) process.exit(1);
 console.log('smoke: green');
+
+/** Protocol 2: a tool result with an image reaches the client whole. True when green. */
+async function images() {
+  const picture = png();
+  const sha256 = createHash('sha256').update(picture).digest('hex');
+  const model = await fakeModel('pixel.png');
+  let served = null;
+  try {
+    served = await serve({
+      config: { default_model: 'v', models: { v: { model: 'm', base_url: model.url, images: true } } },
+    });
+    writeFileSync(join(served.work, 'pixel.png'), picture);
+    const { url, token } = served.record;
+    const client = new ServeClient(await HttpTransport.open({ url, token }));
+    const sessionModel = new SessionModel();
+    const appended = [];
+    client.on('event', (event) => {
+      sessionModel.hear(event);
+      if (event.kind === 'Appended') appended.push(...event.nodes);
+    });
+    sessionModel.welcome = await client.hello('smoke@tau-code:images');
+    const cursor = sessionModel.openCursors()[0].cursor;
+    await client.call('watch', { cursors: [cursor] });
+    await client.call('send', { cursor, text: 'look at pixel.png' });
+    await until(() => appended.some((n) => bodyKind(n.body) === 'Assistant' && n.body.Assistant.stop === 'End'), 'the reply after the read', 20_000);
+
+    const results = appended.find((n) => bodyKind(n.body) === 'Results');
+    assert.ok(results, 'a Results node was appended');
+    const [callId, outcome] = results.body.Results[0];
+    assert.equal(callId, 'c0');
+    assert.equal(typeof outcome.Ok, 'object', `Ok carries images: ${JSON.stringify(outcome)}`);
+    const { ok, text, images: got } = outcomeOf(outcome);
+    assert.equal(ok, true);
+    assert.match(text, /^\[image .*pixel\.png: image\/png 1x1, \d+ bytes\]$/);
+    assert.deepEqual(got, [{ mime: 'image/png', sha256, width: 1, height: 1 }]);
+    assert.equal(imageLabel(got[0]), '[image 1x1 image/png]');
+    const sent = JSON.stringify(model.bodies[1]);
+    assert.ok(sent.includes('image_url'), 'τ sent the image on to the model');
+    const walk = await client.call('walk', { id: sessionModel.views.get(cursor).at });
+    assert.deepEqual(outcomeOf(walk.find((n) => bodyKind(n.body) === 'Results').body.Results[0][1]).images, got, 'walk agrees');
+    console.log(`ok: protocol 2 image in a tool result: "${text}" + ${imageLabel(got[0])} sha256 ${sha256.slice(0, 12)}…`);
+    client.close();
+    return true;
+  } catch (error) {
+    console.error(error);
+    return false;
+  } finally {
+    model.close();
+    if (served) await served.stop().catch((error) => console.error(error));
+  }
+}

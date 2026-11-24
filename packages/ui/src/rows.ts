@@ -1,5 +1,5 @@
 import { authorText, bodyKind, isFrontend, outcomeOf, proseText } from '@ffwf/tau-code-protocol';
-import type { LiveLayer, Node } from '@ffwf/tau-code-protocol';
+import type { Image, LiveLayer, Node } from '@ffwf/tau-code-protocol';
 
 /** How a transcript row is drawn. */
 export type RowKind = 'system' | 'user' | 'assistant' | 'thinking' | 'call' | 'result' | 'stop' | 'config' | 'custom';
@@ -19,6 +19,8 @@ export interface Row {
   label?: string;
   /** A result: whether the call succeeded. */
   ok?: boolean;
+  /** A result: the images it gave the model, in order (protocol 2). Absent when there are none. */
+  images?: Image[];
 }
 
 /** The rows of a walk, root first. Pure: a view draws them. */
@@ -55,7 +57,7 @@ export function rows(walk: readonly Node[], client: string): Row[] {
       case 'Results': {
         const results = (body as { Results: Extract<Node['body'], { Results: unknown }>['Results'] }).Results;
         results.forEach(([callId, outcome, author], i) => {
-          const { ok, text } = outcomeOf(outcome);
+          const { ok, text, images } = outcomeOf(outcome);
           out.push({
             ...base,
             by: authorText(author),
@@ -64,6 +66,7 @@ export function rows(walk: readonly Node[], client: string): Row[] {
             label: callId,
             ok,
             text,
+            ...(images.length > 0 ? { images } : {}),
           });
         });
         break;

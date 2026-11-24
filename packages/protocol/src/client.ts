@@ -9,7 +9,7 @@ export interface ServeClientHandlers {
   /**
    * The connection is gone. `end` is the server's last message when it sent one (`error` null: the
    * server stopped; `CutOff`: this client fell behind; `Stopped`: the driver failed), else null (a
-   * drop, or this client closed). `violation`: the server broke protocol 1 (final; see Transport).
+   * drop, or this client closed). `violation`: the server broke protocol 2 (final; see Transport).
    */
   closed: (reason: string, end: End | null, violation: boolean) => void;
 }
@@ -27,7 +27,7 @@ export function describeEnd(end: End): string {
 }
 
 /**
- * A JSON-RPC client for one connection to `tau serve` (protocol 1).
+ * A JSON-RPC client for one connection to `tau serve` (protocol 2).
  *
  * It numbers requests, matches answers by `id`, hands each `event` notification up, and keeps the
  * one contract the wire has before anything else: `hello` first, naming `PROTOCOL`. A server
@@ -37,7 +37,7 @@ export function describeEnd(end: End): string {
  * nobody will answer is rejected when the connection closes, with `ConnectionClosed` and why.
  * It does not reconnect (there is no resume): `SessionLink` makes a new client for that.
  *
- * Anything the server sends that protocol 1 does not allow closes the connection, naming it.
+ * Anything the server sends that protocol 2 does not allow closes the connection, naming it.
  */
 export class ServeClient {
   readonly #transport: Transport;
@@ -97,7 +97,7 @@ export class ServeClient {
     });
   }
 
-  /** Close the connection. `close` is not a call in protocol 1: a client just goes. */
+  /** Close the connection. `close` is not a call in protocol 2: a client just goes. */
   close(): void {
     this.#transport.close();
   }
@@ -115,7 +115,7 @@ export class ServeClient {
     this.#emit('closed', why, this.#end, violation);
   }
 
-  /** Close for something the server sent that protocol 1 does not allow. Final for a link. */
+  /** Close for something the server sent that protocol 2 does not allow. Final for a link. */
   violation(detail: string): void {
     this.#closed(new ProtocolViolation(detail).message, true);
     this.#transport.close();

@@ -9,7 +9,7 @@
  */
 
 /** The protocol `hello` names. The server refuses any other number (`ProtocolMismatch`). */
-export const PROTOCOL = 1 as const;
+export const PROTOCOL = 2 as const;
 
 /** Nodes added to the tree, in id order, bodies included. */
 export interface Appended {
@@ -180,6 +180,25 @@ export interface HookFailure {
   [key: string]: unknown;
 }
 
+/**
+ * One image in a tool result (D30): its type, its identity and its size. The bytes are not in this
+ * encoding: the session keeps them beside its log, named by `sha256`.
+ */
+export interface Image {
+  /** Height in pixels. */
+  height: number;
+  /** `image/png`, `image/jpeg`, `image/gif` or `image/webp`. */
+  mime: string;
+  /**
+   * Lowercase hex of the SHA-256 of the bytes: the image's identity. Exactly 64 of `0-9a-f`: a
+   * decode refuses anything else, so the name is safe to use as a file name.
+   */
+  sha256: string;
+  /** Width in pixels. */
+  width: number;
+  [key: string]: unknown;
+}
+
 export interface Item {
   data: ItemData;
   id: number;
@@ -270,8 +289,17 @@ export interface OpenQuestion {
   [key: string]: unknown;
 }
 
+/**
+ * `Outcome` as the log and the wire encode it: `Ok` without images is a string, as before D30, so
+ * a log written before images loads unchanged.
+ */
 export type Outcome = "Interrupted" | {
-  Ok: string;
+  /** `Outcome::Ok`'s two encodings: the text alone, or the text with its images. */
+  Ok: string | {
+    images: Image[];
+    value: string;
+    [key: string]: unknown;
+  };
 } | {
   Err: string;
 };

@@ -11,13 +11,16 @@
  * two tabs (the late tab sees it in its snapshot, and sees it close); a command (`/flood`) asked
  * for its missing argument through its form; `/config tuner` from its options form; auto-step off
  * and on; the tree, a cursor opened at a node, closed, and reopened; a label set and removed; a
- * reload (the tab's token); a page with no token. Any console error (a CSP refusal, say) fails it.
+ * reload (the tab's token); a page with no token. Then, against a second `tau serve` whose model is
+ * a fake vision model (scripts/lib/fake-model.mjs), a tool result with an image (protocol 2): the
+ * row says it holds one, and labels it as τ does. Any console error (a CSP refusal, say) fails it.
  */
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { fakeModel, png } from './lib/fake-model.mjs';
 import { serve } from './lib/serve.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -252,6 +255,33 @@ try {
 
   await context.close();
   await context2.close();
+
+  // Protocol 2: a tool result with an image, from a second server with a fake vision model.
+  const model = await fakeModel('pixel.png');
+  const pictured = await serve({
+    webRoot: DIST,
+    config: { default_model: 'v', models: { v: { model: 'm', base_url: model.url, images: true } } },
+  });
+  try {
+    writeFileSync(join(pictured.work, 'pixel.png'), png());
+    const context3 = await browser.newContext();
+    const p = await tab(context3, `${pictured.record.url}#token=${pictured.record.token}`);
+    await p.locator('.tau-status-ready').waitFor();
+    await say(p, 'look at pixel.png');
+    await transcript(p).getByText('a single pixel').waitFor();
+    const result = transcript(p).locator('.tau-row-result');
+    await result.locator('.tau-images-count', { hasText: '1 image' }).waitFor();
+    await result.locator('summary').click();
+    const label = result.locator('.tau-image');
+    assert.equal(await label.innerText(), '[image 1x1 image/png]');
+    assert.match(await label.getAttribute('title'), /^sha256 [0-9a-f]{64}$/);
+    await context3.close();
+    step('a tool result with an image says so, and labels it [image 1x1 image/png] (protocol 2)');
+  } finally {
+    model.close();
+    await pictured.stop();
+  }
+
   assert.deepEqual(problems, [], 'no console errors');
   step('no console errors (CSP included)');
 } catch (error) {

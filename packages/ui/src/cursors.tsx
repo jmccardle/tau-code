@@ -112,7 +112,7 @@ export interface StepControlsProps {
 }
 
 /**
- * The step debugger of protocol 1 is auto-step: with it off a cursor takes one step when told
+ * The step debugger of protocol 2 is auto-step: with it off a cursor takes one step when told
  * (`step`); `abort` stops a busy one. The indicator says which, and how the last step ended.
  */
 export function StepControls({ view, call, report }: StepControlsProps): JSX.Element {

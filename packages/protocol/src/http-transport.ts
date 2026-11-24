@@ -31,7 +31,7 @@ export interface SseEvent {
 /**
  * The text/event-stream format, incrementally: `feed` takes decoded text as it arrives and returns
  * every event it completed. Comments (`: ping`, the edge's heartbeat) are dropped; `id:` and
- * `retry:` are read past, since protocol 1 has no resume (D29 §2).
+ * `retry:` are read past, since protocol 2 has no resume (D29 §2).
  */
 export class SseParser {
   #buffer = '';

@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionModel, ServeError } from '@ffwf/tau-code-protocol';
+import { SessionModel, ServeError, imageLabel } from '@ffwf/tau-code-protocol';
 import { complete, editorOf, initial, planLine, qualified, rows, treeLines } from '../dist/index.js';
 
 const node = (id, parent, body, by = { Frontend: 'me' }, extra = {}) => ({ id, parent, time: 0, by, body, delivers: [], ...extra });
@@ -41,6 +41,24 @@ test('a walk becomes rows: parts, calls, results, a stop that was not the end', 
     ['stop', 'the reply stopped: Length (length)', false, null, null],
     ['user', 'from another', false, null, null],
   ]);
+});
+
+test('a result with images (protocol 2): its text, and each image as τ labels one', () => {
+  const png = { mime: 'image/png', sha256: 'a'.repeat(64), width: 640, height: 480 };
+  const gif = { mime: 'image/gif', sha256: 'b'.repeat(64), width: 1, height: 1 };
+  const walk = [
+    node(0, null, { Results: [
+      ['c0', { Ok: { value: '[image shot.png: image/png 640x480, 9 bytes]', images: [png, gif] } }, 'Tools'],
+      ['c1', { Ok: 'plain' }, 'Tools'],
+    ] }, 'Tools'),
+  ];
+  const [withImages, plain] = rows(walk, 'me');
+  assert.equal(withImages.ok, true);
+  assert.equal(withImages.text, '[image shot.png: image/png 640x480, 9 bytes]');
+  assert.deepEqual(withImages.images, [png, gif]);
+  assert.deepEqual(withImages.images.map(imageLabel), ['[image 640x480 image/png]', '[image 1x1 image/gif]']);
+  assert.equal(plain.text, 'plain');
+  assert.equal('images' in plain, false);
 });
 
 test('tree lines: the first child continues the line, the others branch one deeper', () => {

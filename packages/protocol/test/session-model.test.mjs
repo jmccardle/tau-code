@@ -102,7 +102,7 @@ test('notices are numbered, dismissable and bounded; every change bumps version'
   assert.equal(model.version, heard);
 });
 
-test('an event kind protocol 1 does not have is a protocol violation', () => {
+test('an event kind protocol 2 does not have is a protocol violation', () => {
   const model = new SessionModel();
   assert.throws(() => model.hear({ kind: 'Panel' }), ProtocolViolation);
   assert.throws(() => model.hear(live(0, { kind: 'Sparkle' })), ProtocolViolation);

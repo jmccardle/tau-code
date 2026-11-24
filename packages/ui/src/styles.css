@@ -174,6 +174,8 @@
 .tau-tool { font-family: var(--tau-mono); color: var(--tau-accent); }
 .tau-row-result.tau-failed { border-left-color: var(--tau-error); }
 .tau-row-result.tau-ok { border-left-color: var(--tau-ok); }
+.tau-images-count { font-size: 0.85em; color: var(--tau-accent); }
+.tau-images { margin: 4px 0 0; padding-left: 0; list-style: none; font-family: var(--tau-mono); font-size: 0.9em; color: var(--tau-muted); }
 .tau-row-stop { color: var(--tau-warn); }
 .tau-row summary { cursor: pointer; }
 .tau-live { opacity: 0.85; }

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { LiveLayer, Node } from '@ffwf/tau-code-protocol';
+import { imageLabel, type LiveLayer, type Node } from '@ffwf/tau-code-protocol';
 import { LiveMarkdown, Markdown } from './markdown.js';
 import { layerShows, prettyArgs, rows, type Row } from './rows.js';
 
@@ -54,9 +54,23 @@ function RowView({ row }: { row: Row }): JSX.Element {
         <details className={`tau-row tau-row-result ${row.ok ? 'tau-ok' : 'tau-failed'}`} data-node={row.node}>
           <summary>
             {row.ok ? 'result' : 'failed'} <span className="tau-hint">{row.label}</span>{' '}
+            {row.images && (
+              <span className="tau-images-count">
+                {row.images.length === 1 ? '1 image' : `${row.images.length} images`}
+              </span>
+            )}{' '}
             <span className="tau-hint">{firstLine(row.text)}</span>
           </summary>
           <pre>{row.text}</pre>
+          {row.images && (
+            <ul className="tau-images">
+              {row.images.map((image, i) => (
+                <li key={i} className="tau-image" title={`sha256 ${image.sha256}`}>
+                  {imageLabel(image)}
+                </li>
+              ))}
+            </ul>
+          )}
         </details>
       );
     case 'system':

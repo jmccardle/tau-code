@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generate packages/protocol/src/generated.ts from τ's wire schema (protocol 1, τ ≥ 0.16).
+ * Generate packages/protocol/src/generated.ts from τ's wire schema (protocol 2, τ ≥ 0.17).
  *
  * The input is pinned: packages/protocol/schema/protocol.schema.json, a copy of what
  * `tau serve --schema` prints. The build reads only that file, so building tau-code needs no τ;
@@ -280,7 +280,7 @@ function wrap(text, width) {
 // ── reading the schema's structure ──────────────────────────────────────────
 
 function need(object, key, where) {
-  if (!(key in object)) throw new Error(`${where} has no '${key}'. This is not τ's protocol 1 schema.`);
+  if (!(key in object)) throw new Error(`${where} has no '${key}'. This is not τ's wire schema.`);
   return object[key];
 }
 
