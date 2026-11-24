@@ -1,5 +1,6 @@
 {
   "files": [],
+  "//references": "packages/vscode is left out while it is ported to serve protocol 1 (ROADMAP.md, Phase R): it does not build against the new protocol package.",
   "references": [
     {
       "path": "packages/protocol"
@@ -9,9 +10,6 @@
     },
     {
       "path": "packages/web"
-    },
-    {
-      "path": "packages/vscode"
     },
     {
       "path": "packages/runtime"
