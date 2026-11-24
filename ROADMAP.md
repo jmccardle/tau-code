@@ -1,7 +1,8 @@
 # tau-code roadmap
 
-State as of 2026-11-24. `master` == `v0.8.1`. The port to τ 0.16 is on branch
-`feat/http-edge-client` (forgejo and goblin only, until 0.9.0).
+State as of 2026-11-24. `master` is `v0.8.1` plus the port to τ 0.17 (protocol 2), merged from
+`feat/http-edge-client`. It is on forgejo and goblin only, untagged, until 0.9.0; master does not
+build the VS Code extension until Phase R.
 
 ## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
