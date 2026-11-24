@@ -13,7 +13,10 @@ const WELCOME = { protocol: 1, version: '0.16.1', session: 's1', cwd: '/w', pid:
 function server({ snapshot = [view(0, 2), { kind: 'Labels', labels: [] }], tree = [], hello = null } = {}) {
   const connections = [];
   const calls = [];
+  const control = { refuse: null, opens: 0 };
   const open = async () => {
+    control.opens++;
+    if (control.refuse) throw control.refuse;
     const peer = pair();
     connections.push(peer);
     const { transport } = peer;
@@ -45,8 +48,22 @@ function server({ snapshot = [view(0, 2), { kind: 'Labels', labels: [] }], tree 
     };
     return transport;
   };
-  return { open, connections, calls };
+  return { open, connections, calls, control };
 }
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const FAST = { firstMs: 1, maxMs: 2 };
+
+/** The link's state after `ms`, sampled every few ms: a final failure must not move. */
+async function settle(link, ms = 60) {
+  const phases = new Set();
+  for (let t = 0; t < ms; t += 5) {
+    phases.add(link.state.phase);
+    await wait(5);
+  }
+  return phases;
+}
+
 
 const tree = [node(0, null, { System: 's' }, 'Core'), node(1, 0), node(2, 1)];
 
@@ -82,7 +99,7 @@ test('focus moves the watch; a closed followed cursor moves to the lowest open o
 
 test('a dropped connection reconnects into a fresh model; calls in between are refused', async () => {
   const fake = server({ tree });
-  const link = new SessionLink({ open: fake.open, client: 'me', retry: { firstMs: 1, maxMs: 1 } });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
   link.start();
   await tick();
   const first = link.state.model;
@@ -97,17 +114,74 @@ test('a dropped connection reconnects into a fresh model; calls in between are r
   link.dispose();
 });
 
-test('a CutOff reconnects at once', async () => {
+test('a CutOff reconnects after the backoff, not in a tight loop', async () => {
   const fake = server({ tree });
-  const link = new SessionLink({ open: fake.open, client: 'me', retry: { firstMs: 60_000, maxMs: 60_000 } });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: { firstMs: 40, maxMs: 40 } });
   link.start();
   await tick();
   const peer = fake.connections[0];
   peer.deliver({ jsonrpc: '2.0', method: 'end', params: { error: { code: -32014, message: 'fell behind' } } });
   peer.drop('the server ended the stream');
+  assert.equal(link.state.phase, 'reconnecting');
+  assert.match(link.state.detail, /cut off: fell behind/);
   await tick();
-  assert.equal(link.state.phase, 'ready', 'no backoff wait for a cut-off');
+  assert.equal(fake.connections.length, 1, 'not at once');
+  await wait(60);
+  assert.equal(link.state.phase, 'ready');
   assert.equal(fake.connections.length, 2);
+  link.dispose();
+});
+
+test('retry() while connected makes exactly one new connection and closes the old', async () => {
+  const fake = server({ tree });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
+  link.start();
+  await tick();
+  let closed = 0;
+  const old = fake.connections[0].transport;
+  const close = old.close;
+  old.close = () => {
+    closed++;
+    close();
+  };
+  link.retry();
+  await wait(30); // well past any backoff the old connection's close could have armed
+  assert.equal(link.state.phase, 'ready');
+  assert.equal(closed, 1, 'the old connection is closed');
+  assert.equal(fake.control.opens, 2, 'one open for start, one for retry: nothing more');
+  link.dispose();
+});
+
+test('retry() while backing off connects once, now', async () => {
+  const fake = server({ tree });
+  fake.control.refuse = new EdgeError('unreachable', 'nothing answers');
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: { firstMs: 40, maxMs: 40 } });
+  link.start();
+  await tick();
+  assert.equal(link.state.phase, 'connecting');
+  assert.equal(fake.control.opens, 1);
+  fake.control.refuse = null;
+  link.retry();
+  await tick();
+  assert.equal(link.state.phase, 'ready');
+  await wait(60); // the cancelled backoff timer must not open another
+  assert.equal(fake.control.opens, 2);
+  link.dispose();
+});
+
+test('a 401 in the middle of a session (a restarted server, a new token) is final', async () => {
+  const fake = server({ tree });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
+  link.start();
+  await tick();
+  fake.control.refuse = new EdgeError('unauthorized', 'http://edge/ answered HTTP 401: a bearer token is required', 401);
+  fake.connections[0].drop('the server ended the stream');
+  await wait(40);
+  assert.equal(link.state.phase, 'failed');
+  assert.equal(link.state.refusal, 'unauthorized');
+  const opens = fake.control.opens;
+  await wait(40);
+  assert.equal(fake.control.opens, opens, 'no retry after a final refusal');
   link.dispose();
 });
 
@@ -118,9 +192,10 @@ test('a refused token or origin is final; an unreachable server is retried', asy
         throw new EdgeError(kind, `refused: ${kind}`);
       },
       client: 'me',
+      retry: FAST,
     });
     link.start();
-    await tick();
+    assert.deepEqual(await settle(link), new Set(['connecting', 'failed']));
     assert.equal(link.state.phase, 'failed');
     assert.equal(link.state.refusal, kind);
     link.dispose();
@@ -142,14 +217,42 @@ test('a refused token or origin is final; an unreachable server is retried', asy
   link.dispose();
 });
 
-test('a protocol mismatch is final and says to use a matching tau-code', async () => {
+test('a protocol mismatch is final: it stays failed, with no reconnect', async () => {
   const fake = server({ hello: { code: -32006, message: 'this server speaks protocol 2', data: { server: 2 } } });
-  const link = new SessionLink({ open: fake.open, client: 'me' });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
   link.start();
   await tick();
-  assert.equal(link.state.phase, 'failed');
+  assert.deepEqual(await settle(link), new Set(['failed']));
   assert.equal(link.state.refusal, 'protocol');
   assert.match(link.state.detail, /protocol 2/);
+  assert.equal(fake.control.opens, 1);
+  link.dispose();
+});
+
+test('an event kind protocol 1 does not have is final, and says which', async () => {
+  const fake = server({ tree });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
+  link.start();
+  await tick();
+  fake.connections[0].deliver({ jsonrpc: '2.0', method: 'event', params: { kind: 'Panel' } });
+  assert.deepEqual(await settle(link), new Set(['failed']));
+  assert.match(link.state.detail, /unknown kind "Panel"/);
+  assert.equal(fake.control.opens, 1);
+  link.dispose();
+});
+
+test('a message protocol 1 does not allow is final', async () => {
+  const fake = server({ tree });
+  const link = new SessionLink({ open: fake.open, client: 'me', retry: FAST });
+  link.start();
+  await tick();
+  fake.connections[0].deliver({ jsonrpc: '2.0', id: 999, result: null });
+  assert.deepEqual(await settle(link), new Set(['failed']));
+  assert.match(link.state.detail, /protocol violation: an answer to no call/);
+  assert.equal(fake.control.opens, 1);
+  link.retry();
+  await tick();
+  assert.equal(link.state.phase, 'ready', 'retry() after a final failure tries again');
   link.dispose();
 });
 

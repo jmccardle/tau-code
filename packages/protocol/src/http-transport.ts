@@ -91,12 +91,15 @@ export class HttpTransport implements Transport {
   readonly #fetch: typeof fetch;
   readonly #connectMs: number;
   readonly #abort: AbortController;
-  #onMessage: (message: unknown) => void = () => {};
-  #onClose: (reason: string) => void = () => {};
+  #onMessage: ((message: unknown) => void) | null = null;
+  /** Messages that arrived before `onMessage` was called, handed over when it is. */
+  #early: unknown[] = [];
+  #onClose: (reason: string, violation: boolean) => void = () => {};
   #queue: Promise<void> = Promise.resolve();
   #closed = false;
   /** Why, when the transport closed before anyone registered `onClose`. */
   #closedReason: string | null = null;
+  #violation = false;
 
   private constructor(
     url: string,
@@ -189,11 +192,14 @@ export class HttpTransport implements Transport {
 
   onMessage(handler: (message: unknown) => void): void {
     this.#onMessage = handler;
+    const early = this.#early;
+    this.#early = [];
+    for (const message of early) handler(message);
   }
 
-  onClose(handler: (reason: string) => void): void {
+  onClose(handler: (reason: string, violation: boolean) => void): void {
     this.#onClose = handler;
-    if (this.#closedReason !== null) handler(this.#closedReason);
+    if (this.#closedReason !== null) handler(this.#closedReason, this.#violation);
   }
 
   send(message: object): void {
@@ -235,9 +241,9 @@ export class HttpTransport implements Transport {
     parser: SseParser,
     pending: SseEvent[],
   ): Promise<void> {
-    // Events read along with the connection id wait until a handler can be registered.
-    await Promise.resolve();
     try {
+      // Events read in the same chunk as the connection id; `#deliver` keeps them until a
+      // handler is registered.
       if (!this.#deliver(pending)) return;
       for (;;) {
         const chunk = await reader.read();
@@ -257,27 +263,29 @@ export class HttpTransport implements Transport {
     for (const event of events) {
       if (this.#closed) return false;
       if (event.event !== 'message') {
-        this.#finish(`protocol violation: the stream sent an event of type '${event.event}'`);
+        this.#finish(`protocol violation: the stream sent an event of type '${event.event}'`, true);
         return false;
       }
       let message: unknown;
       try {
         message = JSON.parse(event.data);
       } catch {
-        this.#finish(`protocol violation: the stream sent a message that is not JSON: ${event.data.slice(0, 200)}`);
+        this.#finish(`protocol violation: the stream sent a message that is not JSON: ${event.data.slice(0, 200)}`, true);
         return false;
       }
-      this.#onMessage(message);
+      if (this.#onMessage) this.#onMessage(message);
+      else this.#early.push(message);
     }
     return !this.#closed;
   }
 
-  #finish(reason: string): void {
+  #finish(reason: string, violation = false): void {
     if (this.#closed) return;
     this.#closed = true;
     this.#closedReason = reason;
+    this.#violation = violation;
     this.#abort.abort();
-    this.#onClose(reason);
+    this.#onClose(reason, violation);
   }
 }
 

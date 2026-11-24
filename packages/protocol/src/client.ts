@@ -9,9 +9,9 @@ export interface ServeClientHandlers {
   /**
    * The connection is gone. `end` is the server's last message when it sent one (`error` null: the
    * server stopped; `CutOff`: this client fell behind; `Stopped`: the driver failed), else null (a
-   * drop, or this client closed).
+   * drop, or this client closed). `violation`: the server broke protocol 1 (final; see Transport).
    */
-  closed: (reason: string, end: End | null) => void;
+  closed: (reason: string, end: End | null, violation: boolean) => void;
 }
 
 interface Pending {
@@ -53,7 +53,7 @@ export class ServeClient {
   constructor(transport: Transport) {
     this.#transport = transport;
     transport.onMessage((message) => this.#receive(message));
-    transport.onClose((reason) => this.#closed(reason));
+    transport.onClose((reason, violation) => this.#closed(reason, violation));
   }
 
   on<K extends keyof ServeClientHandlers>(name: K, handler: ServeClientHandlers[K]): () => void {
@@ -106,30 +106,30 @@ export class ServeClient {
     for (const handler of this.#handlers[name]) (handler as (...a: unknown[]) => void)(...args);
   }
 
-  #closed(reason: string): void {
+  #closed(reason: string, violation = false): void {
     if (this.#closedReason !== null) return;
     const why = this.#end ? describeEnd(this.#end) : reason;
     this.#closedReason = why;
     for (const pending of this.#pending.values()) pending.reject(new ConnectionClosed(pending.method, why));
     this.#pending.clear();
-    this.#emit('closed', why, this.#end);
+    this.#emit('closed', why, this.#end, violation);
   }
 
-  #violation(detail: string): void {
-    // The transport's close handler rejects what is pending and reports the reason.
-    this.#closed(new ProtocolViolation(detail).message);
+  /** Close for something the server sent that protocol 1 does not allow. Final for a link. */
+  violation(detail: string): void {
+    this.#closed(new ProtocolViolation(detail).message, true);
     this.#transport.close();
   }
 
   #receive(message: unknown): void {
     if (this.#closedReason !== null) return;
     if (typeof message !== 'object' || message === null || Array.isArray(message)) {
-      this.#violation(`a message is not an object: ${JSON.stringify(message)}`);
+      this.violation(`a message is not an object: ${JSON.stringify(message)}`);
       return;
     }
     const record = message as Record<string, unknown>;
     if (record['jsonrpc'] !== '2.0') {
-      this.#violation(`a message is not JSON-RPC 2.0: ${JSON.stringify(message).slice(0, 200)}`);
+      this.violation(`a message is not JSON-RPC 2.0: ${JSON.stringify(message).slice(0, 200)}`);
       return;
     }
     if (!('id' in record)) {
@@ -141,7 +141,7 @@ export class ServeClient {
     if (!pending) {
       const error = record['error'] as WireError | undefined;
       const said = error ? ` (${error.code}: ${error.message})` : '';
-      this.#violation(`an answer to no call, id ${JSON.stringify(id)}${said}`);
+      this.violation(`an answer to no call, id ${JSON.stringify(id)}${said}`);
       return;
     }
     this.#pending.delete(id as number);
@@ -151,7 +151,7 @@ export class ServeClient {
         error = new ServeError(pending.method, record['error'] as WireError);
       } catch (violation) {
         pending.reject(violation);
-        this.#violation((violation as Error).message);
+        this.violation((violation as Error).message.replace(/^protocol violation: /, ''));
         return;
       }
       pending.reject(error);
@@ -165,7 +165,7 @@ export class ServeClient {
   #notification(record: Record<string, unknown>): void {
     const params = record['params'];
     if (typeof params !== 'object' || params === null) {
-      this.#violation(`notification ${JSON.stringify(record['method'])} has no params object`);
+      this.violation(`notification ${JSON.stringify(record['method'])} has no params object`);
       return;
     }
     switch (record['method']) {
@@ -177,7 +177,7 @@ export class ServeClient {
         this.#end = params as End;
         return;
       default:
-        this.#violation(`a notification of unknown method ${JSON.stringify(record['method'])}`);
+        this.violation(`a notification of unknown method ${JSON.stringify(record['method'])}`);
     }
   }
 }

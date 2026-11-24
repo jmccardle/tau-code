@@ -14,8 +14,12 @@ export interface Transport {
   send(message: object): void;
   /** Register the sink for inbound messages, parsed. Called once. */
   onMessage(handler: (message: unknown) => void): void;
-  /** Register the sink for "the connection is gone", with why, as a sentence. Called once. */
-  onClose(handler: (reason: string) => void): void;
+  /**
+   * Register the sink for "the connection is gone", with why, as a sentence. `violation` is true
+   * when the transport closed because the server sent something protocol 1 does not allow: a
+   * retry would meet the same server, so it is final. Called once.
+   */
+  onClose(handler: (reason: string, violation: boolean) => void): void;
   /** Close the connection. Idempotent; the close handler runs once. */
   close(): void;
 }

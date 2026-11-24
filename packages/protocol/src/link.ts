@@ -115,14 +115,40 @@ export class SessionLink {
     void this.#connect();
   }
 
-  /** Try again now (after a final refusal, or to skip the backoff). */
+  /**
+   * Try again now: after a final refusal (once the user has changed something), to skip a
+   * backoff, or to start over while connected. Exactly one connection results: the current one,
+   * if any, is closed first and its close starts nothing.
+   */
   retry(): void {
     if (this.#disposed) return;
-    this.#clearTimer();
+    this.#abandon();
     this.#retryMs = this.#options.retry?.firstMs ?? 500;
-    this.#client?.close();
     this.#patch({ phase: 'connecting', detail: null, refusal: null });
     void this.#connect();
+  }
+
+  /** Forget the problem shown (a failed background call). */
+  clearProblem(): void {
+    this.#patch({ problem: null });
+  }
+
+  /**
+   * Stop whatever the current attempt is doing: its timer, its connection, and any handler of its
+   * that is still to run (they check the generation, which this moves on).
+   */
+  #abandon(): void {
+    this.#generation++;
+    this.#clearTimer();
+    const client = this.#client;
+    this.#client = null;
+    client?.close();
+  }
+
+  /** A refusal a retry cannot change: stay failed, saying why, until `retry()`. */
+  #fail(detail: string, refusal: NonNullable<LinkState['refusal']>): void {
+    this.#abandon();
+    this.#patch({ phase: 'failed', detail, refusal });
   }
 
   dispose(): void {
@@ -188,7 +214,7 @@ export class SessionLink {
     } catch (error) {
       if (generation !== this.#generation || this.#disposed) return;
       if (error instanceof EdgeError && !error.retryable) {
-        this.#patch({ phase: 'failed', detail: error.message, refusal: error.kind });
+        this.#fail(error.message, error.kind);
       } else {
         this.#reconnectLater(error instanceof Error ? error.message : String(error));
       }
@@ -211,18 +237,22 @@ export class SessionLink {
       try {
         model.hear(event);
       } catch (error) {
-        // A kind protocol 1 does not have: say so and drop the connection, loudly.
-        this.#patch({ problem: (error as Error).message });
-        client.close();
+        // A kind protocol 1 does not have: this server speaks something else. Final.
+        if (generation === this.#generation) this.#fail((error as Error).message, 'protocol');
       }
     });
-    client.on('closed', (reason, end) => {
+    client.on('closed', (reason, end, violation) => {
       if (generation !== this.#generation || this.#disposed) return;
       this.#client = null;
+      if (violation) {
+        this.#fail(reason, 'protocol');
+        return;
+      }
       if (end?.error?.code === ERROR_CODES.CutOff) {
-        // Fell behind: the snapshot of a new connection brings the client current. No wait.
-        this.#patch({ phase: 'reconnecting', detail: `cut off (${reason}); reconnecting` });
-        void this.#connect();
+        // Fell behind: a new connection's snapshot brings the client current, after the backoff
+        // (which a connection that reaches `ready` resets), so a client that keeps falling
+        // behind does not reconnect in a tight loop.
+        this.#reconnectLater(`cut off: ${reason}`);
         return;
       }
       this.#reconnectLater(reason);
@@ -234,17 +264,14 @@ export class SessionLink {
     } catch (error) {
       if (generation !== this.#generation) return;
       if (error instanceof ServeError && error.is('ProtocolMismatch')) {
-        client.close();
-        this.#patch({
-          phase: 'failed',
-          refusal: 'protocol',
-          detail: `the server refused this client's protocol: ${error.detail}. Use a tau-code built for this τ.`,
-        });
+        this.#fail(
+          `the server refused this client's protocol: ${error.detail}. Use a tau-code built for this τ.`,
+          'protocol',
+        );
       } else if (error instanceof ProtocolViolation || error instanceof ServeError) {
-        client.close();
-        this.#patch({ phase: 'failed', refusal: 'protocol', detail: error.message });
+        this.#fail(error.message, 'protocol');
       }
-      // ConnectionClosed: the `closed` handler is already reconnecting.
+      // ConnectionClosed: the `closed` handler has already decided (reconnect, or fail).
       return;
     }
     if (generation !== this.#generation) return;
@@ -258,7 +285,6 @@ export class SessionLink {
       model,
       welcome,
       focus,
-      problem: null,
       treeLoaded: false,
     });
     this.#watch();
