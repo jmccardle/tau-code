@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 /**
+ * PHASE R, NOT RUN: written for serve protocol 0.11 and the removed scripts/lib/daemon.mjs; it
+ * comes back with the runtime bundle (ROADMAP.md). Not in `npm run` or the gate.
+ *
  * Drive the BUNDLED runtime the way the extension does.
  *
  *   node scripts/build-payload.mjs --target <host>   # in packages/runtime

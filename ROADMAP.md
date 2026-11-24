@@ -1,6 +1,54 @@
 # tau-code roadmap
 
-State as of 2026-10-21. `master` == `v0.8.1`.
+State as of 2026-11-24. `master` is `v0.8.1` plus the port to τ 0.17 (protocol 2), merged from
+`feat/http-edge-client`. It is on forgejo and goblin only, untagged, until 0.9.0; master does not
+build the VS Code extension until Phase R.
+
+## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
+The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
+
+- **Phase 1, built:** TC-01 the generator from `tau serve --schema` (a pinned schema,
+  `check:protocol`); TC-02 one HTTP transport (SSE over `fetch` plus serialized POSTs, browser and
+  Node), `ws+unix` dropped; TC-03 `SessionModel` (and `SessionLink`); TC-04 `npm run smoke` against
+  a real `tau serve --no-unix` with the mock model.
+- **Phase 2, built:** the web client served by `tau serve --web-root packages/web/dist`; the token
+  from `#token=`, kept in `sessionStorage` and removed from the address (Q-I, decided by John
+  2026-11-24); views rebound to `Node` (TC-07); questions, the cursor switcher, auto-step and step
+  controls (TC-08); the 0.11 replica, panels, planners and smokes deleted, and
+  `npm run smoke:browser` in headless Chrome (TC-09); `npm run dev` with a dev-only proxy that
+  adds the serve record's token.
+- **Needs τ ≥ 0.17.0** (protocol 2). The port was built against protocol 1 (τ master `ea0a3dcd`,
+  planned as 0.16.1, never released) and regenerated for protocol 2 when 0.17.0 shipped. A 0.16
+  server refuses this client at `hello`, and a 0.17 server refuses a protocol-1 one.
+- **Images in tool results (protocol 2):** a result's images are labelled `[image WxH mime]`, as τ's
+  terminal UI does. Drawing them needs a wire call that fetches an image's bytes; τ 0.17 has none
+  (its release notes list it under "Not yet").
+- **What the old (0.8.1) UI had that the port does not**, one per line:
+  - the completion popup with each command's description, and `@file` completion: the composer
+    completes through `complete_line` only, and never calls `commands` (which has the descriptions);
+  - the model picker (in 0.16 the model is `CursorView.model`, shown in the status bar; changing it
+    is the `/model` command, with no picker);
+  - the extension-warnings panel (τ 0.16 has no such list on the wire; `Notice` and
+    `CursorView.shown` are what an extension says);
+  - the extension panels and flows of protocol 0.11 (gone from τ; commands and their forms replace
+    them);
+  - the session picker (one `tau serve` is one session: Q-G (a));
+  - the tree's elide, commit-branch and paste-subtree (no wire counterpart in protocol 2).
+- **Not built:** the `tau_web` Python package (`ffwf-tau-web`?) that `tau serve` would find without
+  `--web-root`, and τ's `ffwf-tau[web]` extra that would name it: Q-H is open.
+
+## Phase R (deferred, its own review)
+- **The VS Code extension** (`packages/vscode`): still τ 0.14's protocol 0.11 (a WebSocket daemon of
+  many sessions, `tau-code.token`). It is **out of the npm workspaces and the TypeScript build**
+  so the gate is honest; nothing was deleted. Port: the webview loads the web `dist/`, and the
+  extension host either relays `/stream` (the token stays in the host) or τ allows the webview's
+  origin (`--allow-origin`).
+- **The runtime** (`packages/runtime`): its extension shell still builds; its payload
+  (`tauSpec` = τ 0.14.1, `scripts/build-payload.mjs`, `scripts/smoke-runtime.mjs`) is not ported.
+  Q4–Q6 (targets, CPython, tau-tokens).
+- **The container** (`Dockerfile`, `docker/`): the entrypoint becomes `tau serve --port 3393 --host
+  0.0.0.0 --allow-network --allow-origin … --web-root …`.
+- **0.9.0**: the release that carries the port (a wire break), then GitHub.
 
 ## Shipped
 
@@ -35,17 +83,15 @@ State as of 2026-10-21. `master` == `v0.8.1`.
 - The first run was 39151067252 for v0.7.0. Both marketplaces list `ffwf.tau-code` and all nine `ffwf.tau-runtime` targets at 0.7.0.
 - v0.6.0 was deliberately not backfilled to the marketplaces.
 
-## In progress
-- Nothing.
-
 ## Next (no decision needed)
-- **Parallel-cursor button and compare UI:** deferred from the 0.7.0 scope.
+- **Compare (several watched cursors side by side):** deferred from the 0.7.0 scope; protocol 1's
+  `watch` takes several cursors.
 
-## Open decisions
-- **Pre-attach model picker from `hello.models` (new in protocol 0.10):** do we want one? Today the model is chosen after attach.
-
-## Next (waits on John's go)
-- **Extension list panel (τ #35):** τ 0.14.0 ships `list_extensions`, which tells installed from enabled from authorized, with orphaned subscriptions. tau-code has the types; the panel is not built.
+## Superseded by the port (protocol 0.11 items)
+- *Pre-attach model picker from `hello.models`*: protocol 1's `hello` carries no models; a cursor's
+  model is `CursorView.model`, set with the `/model` command.
+- *Extension list panel (τ #35)*: `list_extensions` is not in protocol 1. Kept for the record:
+ τ 0.14.0 ships `list_extensions`, which tells installed from enabled from authorized, with orphaned subscriptions. tau-code has the types; the panel is not built.
   - τ's design:
     - An extension's identity is its full dotted module name everywhere.
     - Drop-ins (.py files and package directories) and pip packages pass through one authorization gate.

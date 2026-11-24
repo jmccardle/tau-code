@@ -1,188 +1,183 @@
-import { ProtocolVersionError, ServeError } from './errors.js';
+import { ConnectionClosed, ProtocolViolation, ServeError } from './errors.js';
+import { PROTOCOL } from './generated.js';
+import type { End, Error as WireError, Event, Method, Requests, Results, Welcome } from './generated.js';
 import type { Transport } from './transport.js';
-import { ERROR_CODES, PROTOCOL_VERSION } from './generated.js';
-import type {
-  Error as WireError,
-  Event,
-  RequestFields,
-  RequestType,
-  Results,
-} from './generated.js';
 
-/**
- * The serve protocol version this client was generated against.
- *
- * Read off the generated file rather than written here: a literal is a second
- * copy of a number `npm run generate` already wrote.
- */
-export const BUILT_AGAINST: string = PROTOCOL_VERSION;
-
-export interface ServeClientEvents {
-  /** One event for an attached session. */
+export interface ServeClientHandlers {
+  /** One `event` notification's params. */
   event: (event: Event) => void;
-  /** A frame that is neither an answer nor an event, or an answer to no request. */
-  protocolViolation: (detail: string, raw: unknown) => void;
-  /** The peer is gone. */
-  close: (reason: string, code: number | null) => void;
+  /**
+   * The connection is gone. `end` is the server's last message when it sent one (`error` null: the
+   * server stopped; `CutOff`: this client fell behind; `Stopped`: the driver failed), else null (a
+   * drop, or this client closed). `violation`: the server broke protocol 2 (final; see Transport).
+   */
+  closed: (reason: string, end: End | null, violation: boolean) => void;
 }
 
-type Pending = {
+interface Pending {
   method: string;
   resolve: (value: never) => void;
   reject: (reason: unknown) => void;
-};
+}
+
+/** How `end` reads, for a person. */
+export function describeEnd(end: End): string {
+  if (end.error === null) return 'the server stopped';
+  return `${end.error.message} (${end.error.code})`;
+}
 
 /**
- * A client for one connection to `tau serve`.
+ * A JSON-RPC client for one connection to `tau serve` (protocol 2).
  *
- * Deliberately thin. It numbers requests, correlates answers, routes events,
- * and enforces the one contract that is cheap now and expensive later:
- * **`hello` first**, naming the protocol version, and a refusal is final.
+ * It numbers requests, matches answers by `id`, hands each `event` notification up, and keeps the
+ * one contract the wire has before anything else: `hello` first, naming `PROTOCOL`. A server
+ * speaking another protocol refuses with `ProtocolMismatch`, a `ServeError`; that is final.
  *
- * It does not reconnect. A connection is one transport's lifetime; resuming is
- * the replica's job (`attach` with the held `epoch` and `since`), on a new
- * client over a new transport.
+ * There is no deadline on a call, on purpose: `run` answers when its command finishes. A call
+ * nobody will answer is rejected when the connection closes, with `ConnectionClosed` and why.
+ * It does not reconnect (there is no resume): `SessionLink` makes a new client for that.
  *
- * The wire is JSON-RPC 2.0. A request is `{jsonrpc, id, method, params}`; its
- * answer carries the same `id` and either `result` or `error`; an event is the
- * notification `{jsonrpc, method: "event", params}`, whose `params` is the
- * event record itself.
- *
- * There is no deadline on a request, on purpose: `submit` answers when the
- * submission ENDS, which is as long as a turn takes. The price is that a
- * request nobody will answer must be rejected some other way, and that way is
- * the transport closing -- every pending request is rejected with the close's
- * reason. A relay with nothing behind it closes; it never drops.
+ * Anything the server sends that protocol 2 does not allow closes the connection, naming it.
  */
 export class ServeClient {
-  #transport: Transport;
-  #nextId = 1;
-  #pending = new Map<number, Pending>();
-  #listeners: { [K in keyof ServeClientEvents]: Set<ServeClientEvents[K]> } = {
+  readonly #transport: Transport;
+  #nextId = 0;
+  readonly #pending = new Map<number, Pending>();
+  readonly #handlers: { [K in keyof ServeClientHandlers]: Set<ServeClientHandlers[K]> } = {
     event: new Set(),
-    protocolViolation: new Set(),
-    close: new Set(),
+    closed: new Set(),
   };
-  /**
-   * Why this connection ended, kept after the `close` event has been emitted.
-   *
-   * A close can happen before anyone is listening -- a relay that learns there
-   * is no daemon while the page is still loading -- and the event is then
-   * emitted to nobody. The reason is a permanent fact about this client, so it
-   * is remembered and every later refusal is phrased with it.
-   */
+  #end: End | null = null;
   #closedReason: string | null = null;
-  #closed = false;
 
   constructor(transport: Transport) {
     this.#transport = transport;
-    transport.onMessage((frame) => this.#receive(frame));
-    transport.onClose((reason, code) => this.#handleClose(reason, code));
+    transport.onMessage((message) => this.#receive(message));
+    transport.onClose((reason, violation) => this.#closed(reason, violation));
   }
 
-  on<K extends keyof ServeClientEvents>(name: K, handler: ServeClientEvents[K]): () => void {
-    this.#listeners[name].add(handler);
+  on<K extends keyof ServeClientHandlers>(name: K, handler: ServeClientHandlers[K]): () => void {
+    this.#handlers[name].add(handler);
     return () => {
-      this.#listeners[name].delete(handler);
+      this.#handlers[name].delete(handler);
     };
   }
 
-  #emit<K extends keyof ServeClientEvents>(name: K, ...args: Parameters<ServeClientEvents[K]>): void {
-    for (const handler of this.#listeners[name]) {
-      (handler as (...a: unknown[]) => void)(...args);
-    }
+  /** Why the connection closed, or null while it is open. */
+  get closedReason(): string | null {
+    return this.#closedReason;
+  }
+
+  /** The server's `end`, once it has sent one. */
+  get end(): End | null {
+    return this.#end;
   }
 
   /**
-   * Say `hello`, which the daemon serves before anything else.
+   * Say `hello`: the first call of a connection. Its snapshot events (every cursor's
+   * `CursorView` or `CursorGone`, then `Labels`) arrive before it resolves.
    *
-   * A `PROTOCOL_MISMATCH` refusal closes this client and throws
-   * `ProtocolVersionError`; an `UNAUTHORIZED` one throws the `ServeError` as it
-   * is, because the caller can fix that one by asking for a token.
+   * `client` is this client's stable id (`john@laptop:vscode`): questions can be addressed to it
+   * and its input is written as `Frontend(client)`. `buffer` is the event buffer the server keeps
+   * for it (the server's default when left out).
    */
-  async hello(client: string, token: string | null): Promise<Results['hello']> {
-    try {
-      return await this.request('hello', { protocol: BUILT_AGAINST, client, token });
-    } catch (error) {
-      if (error instanceof ServeError && error.code === ERROR_CODES.PROTOCOL_MISMATCH) {
-        this.close();
-        throw new ProtocolVersionError(BUILT_AGAINST, error.detail);
-      }
-      throw error;
-    }
+  hello(client: string, buffer?: number): Promise<Welcome> {
+    const params: Requests['hello'] = { protocol: PROTOCOL, client };
+    if (buffer !== undefined) params.buffer = buffer;
+    return this.call('hello', params);
   }
 
-  /** Send one request and await its answer. */
-  request<T extends RequestType>(method: T, params: RequestFields<T>): Promise<Results[T]> {
-    if (this.#closed) {
-      // The reason, not the state. "The connection is closed" is the one thing
-      // the caller can already see; what it cannot see is why.
-      const why = this.#closedReason?.trim() || 'the connection is closed.';
-      return Promise.reject(new Error(`Cannot send ${method}: ${why}`));
-    }
+  /** Make one call and await its answer. Rejects with `ServeError` or `ConnectionClosed`. */
+  call<M extends Method>(method: M, params: Requests[M]): Promise<Results[M]> {
+    if (this.#closedReason !== null) return Promise.reject(new ConnectionClosed(method, this.#closedReason));
     const id = this.#nextId++;
-    return new Promise<Results[T]>((resolve, reject) => {
-      this.#pending.set(id, { method, resolve: resolve as (v: never) => void, reject });
+    return new Promise<Results[M]>((resolve, reject) => {
+      this.#pending.set(id, { method, resolve: resolve as (value: never) => void, reject });
       this.#transport.send({ jsonrpc: '2.0', id, method, params });
     });
   }
 
-  get closed(): boolean {
-    return this.#closed;
-  }
-
+  /** Close the connection. `close` is not a call in protocol 2: a client just goes. */
   close(): void {
-    if (this.#closed) return;
     this.#transport.close();
-    this.#handleClose('closed by this client', null);
   }
 
-  #handleClose(reason: string, code: number | null): void {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#closedReason = reason;
-    for (const [, pending] of this.#pending) {
-      pending.reject(new Error(`The connection closed before ${pending.method} answered: ${reason}`));
-    }
+  #emit<K extends keyof ServeClientHandlers>(name: K, ...args: Parameters<ServeClientHandlers[K]>): void {
+    for (const handler of this.#handlers[name]) (handler as (...a: unknown[]) => void)(...args);
+  }
+
+  #closed(reason: string, violation = false): void {
+    if (this.#closedReason !== null) return;
+    const why = this.#end ? describeEnd(this.#end) : reason;
+    this.#closedReason = why;
+    for (const pending of this.#pending.values()) pending.reject(new ConnectionClosed(pending.method, why));
     this.#pending.clear();
-    this.#emit('close', reason, code);
+    this.#emit('closed', why, this.#end, violation);
   }
 
-  #receive(frame: unknown): void {
-    if (typeof frame !== 'object' || frame === null) {
-      this.#emit('protocolViolation', 'frame is not an object', frame);
+  /** Close for something the server sent that protocol 2 does not allow. Final for a link. */
+  violation(detail: string): void {
+    this.#closed(new ProtocolViolation(detail).message, true);
+    this.#transport.close();
+  }
+
+  #receive(message: unknown): void {
+    if (this.#closedReason !== null) return;
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+      this.violation(`a message is not an object: ${JSON.stringify(message)}`);
       return;
     }
-    const record = frame as Record<string, unknown>;
-
+    const record = message as Record<string, unknown>;
+    if (record['jsonrpc'] !== '2.0') {
+      this.violation(`a message is not JSON-RPC 2.0: ${JSON.stringify(message).slice(0, 200)}`);
+      return;
+    }
     if (!('id' in record)) {
-      if (record['method'] === 'event') {
-        this.#emit('event', record['params'] as Event);
-        return;
-      }
-      this.#emit('protocolViolation', `notification of unknown method ${JSON.stringify(record['method'])}`, frame);
+      this.#notification(record);
       return;
     }
-
-    // An answer. `id: null` is the daemon saying it could not read the id of
-    // something this client sent, which no pending request can claim.
     const id = record['id'];
     const pending = typeof id === 'number' ? this.#pending.get(id) : undefined;
     if (!pending) {
       const error = record['error'] as WireError | undefined;
-      const detail = error ? `: ${error.code} ${error.message}` : '';
-      this.#emit('protocolViolation', `answer for unknown id ${JSON.stringify(id)}${detail}`, frame);
+      const said = error ? ` (${error.code}: ${error.message})` : '';
+      this.violation(`an answer to no call, id ${JSON.stringify(id)}${said}`);
       return;
     }
     this.#pending.delete(id as number);
     if ('error' in record) {
-      pending.reject(new ServeError(pending.method, record['error'] as WireError));
+      let error: ServeError;
+      try {
+        error = new ServeError(pending.method, record['error'] as WireError);
+      } catch (violation) {
+        pending.reject(violation);
+        this.violation((violation as Error).message.replace(/^protocol violation: /, ''));
+        return;
+      }
+      pending.reject(error);
+    } else if ('result' in record) {
+      pending.resolve(record['result'] as never);
+    } else {
+      pending.reject(new ProtocolViolation(`${pending.method} was answered with neither a result nor an error`));
+    }
+  }
+
+  #notification(record: Record<string, unknown>): void {
+    const params = record['params'];
+    if (typeof params !== 'object' || params === null) {
+      this.violation(`notification ${JSON.stringify(record['method'])} has no params object`);
       return;
     }
-    if (!('result' in record)) {
-      pending.reject(new Error(`${pending.method} was answered with neither a result nor an error.`));
-      return;
+    switch (record['method']) {
+      case 'event':
+        this.#emit('event', params as Event);
+        return;
+      case 'end':
+        // The last message; the server closes the stream next, and `#closed` reports it.
+        this.#end = params as End;
+        return;
+      default:
+        this.violation(`a notification of unknown method ${JSON.stringify(record['method'])}`);
     }
-    pending.resolve(record['result'] as never);
   }
 }

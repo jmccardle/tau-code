@@ -1,13 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { tauServeDev } from './dev/serve-record.mjs';
 
 export default defineConfig({
-  plugins: [react()],
-  // Not `dist`: that is where tsc puts declaration output for the other
-  // packages, and having two tools write the same directory is a race waiting
-  // to be debugged.
+  plugins: [react(), tauServeDev()],
   build: {
-    outDir: 'dist-web',
+    // What `tau serve --web-root packages/web/dist` serves. Under τ's CSP (D29 §9: scripts and
+    // styles from 'self', inline styles allowed, no inline scripts), which a Vite build meets.
+    outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
   },

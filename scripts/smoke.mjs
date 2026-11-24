@@ -1,51 +1,187 @@
 #!/usr/bin/env node
 /**
- * End-to-end smoke test: start `tau serve`, say hello, open a session, and list
- * what it offers.
+ * TC-04: the protocol package against a real `tau serve --no-unix` (the HTTP edge alone), with
+ * the mock model in a throwaway TAU_HOME. Run after `npm run build`:
  *
- * Sends no prompt, so it costs no tokens and needs no reachable model. The
- * daemon runs in a throwaway HOME (scripts/lib/daemon.mjs); `~/.tau` is never
- * touched.
+ *   TAU_BIN=/path/to/venv/bin/tau npm run smoke
  *
- *   TAU_BIN=/path/to/venv/bin/tau node scripts/smoke.mjs
+ * It checks, in order: the edge refuses a wrong token (401) and a foreign origin (403); `hello`'s
+ * snapshot arrives before its answer; `watch` then `send` streams `Live` text, then `Appended`,
+ * then the cursor at rest with `ending` Done; `walk` holds the reply; a second client, through
+ * `SessionLink`, sees the same session and can read the whole tree; and `tau serve --stop` ends
+ * the first client's stream with `end {error: null}`.
+ *
+ * Then, protocol 2 (τ 0.17, D30): a second `tau serve` whose model is a fake OpenAI-compatible
+ * server here, with `images: true`. It answers the first request with a call to τ's `read` on a
+ * PNG, and the next with text. The `Results` node must reach the client as `Ok {value, images}`,
+ * and `outcomeOf` must give its text and its image (type, size, sha256).
  */
-import { check, connect, startDaemon } from './lib/daemon.mjs';
-import { BUILT_AGAINST } from '../packages/protocol/dist/index.js';
+import assert from 'node:assert/strict';
+import {
+  EdgeError,
+  HttpTransport,
+  PROTOCOL,
+  ServeClient,
+  SessionLink,
+  SessionModel,
+  bodyKind,
+  imageLabel,
+  outcomeOf,
+  proseText,
+} from '../packages/protocol/dist/index.js';
+import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fakeModel, png } from './lib/fake-model.mjs';
+import { serve, until } from './lib/serve.mjs';
 
-const daemon = await startDaemon();
+const served = await serve();
+const { url, token, session } = served.record;
+let failed = false;
 try {
-  const client = await connect(daemon.url, 'smoke');
-  const hello = client.helloResult;
-  console.log(`tau serve ${hello.version} (pid ${hello.pid}) at protocol ${hello.protocol}, cwd ${hello.cwd}`);
-  check(`the daemon speaks the protocol this client was generated against (${BUILT_AGAINST})`, hello.protocol === BUILT_AGAINST);
+  assert.equal(served.record.socket, undefined, '--no-unix: the record names no socket');
+  console.log(`τ ${served.record.version} serving ${session} at ${url}`);
 
-  const before = await client.request('list_sessions', {});
-  check('a fresh store lists no sessions', before.sessions.length === 0);
+  // Refusals.
+  await assert.rejects(HttpTransport.open({ url, token: 'wrong' }), (e) => e instanceof EdgeError && e.kind === 'unauthorized');
+  const foreign = await fetch(new URL('stream', url), {
+    headers: { Authorization: `Bearer ${token}`, Origin: 'http://evil.example' },
+  });
+  assert.equal(foreign.status, 403, 'a foreign Origin is refused');
+  console.log('ok: a wrong token is 401, a foreign origin 403');
 
-  const opened = await client.request('new_session', { cwd: daemon.home });
-  const session_id = opened.session.session_id;
-  const attached = await client.request('attach', { session_id });
-  console.log(`session ${session_id.slice(0, 8)} in ${attached.cwd}`);
-  check('attach answers a snapshot', Array.isArray(attached.entries));
-  check('the head cursor is one of the cursors', attached.cursors.some((c) => c.cursor_id === attached.head_cursor_id));
-  check('the configured model is offered', attached.models.some((m) => m.name === 'unused'));
+  // Client A, by hand: hello's snapshot first.
+  const a = new ServeClient(await HttpTransport.open({ url, token }));
+  const order = [];
+  const events = [];
+  const model = new SessionModel();
+  a.on('event', (event) => {
+    order.push(`event:${event.kind}`);
+    events.push(event);
+    model.hear(event);
+  });
+  let closedA = null;
+  a.on('closed', (reason, end) => (closedA = { reason, end }));
+  const welcome = await a.hello('smoke@tau-code:a');
+  order.push('hello');
+  model.welcome = welcome;
+  assert.equal(welcome.protocol, PROTOCOL);
+  assert.equal(welcome.session, session);
+  assert.deepEqual(order, ['event:CursorView', 'event:Labels', 'hello'], 'the snapshot comes before hello answers');
+  const cursor = model.openCursors()[0].cursor;
+  console.log(`ok: hello after its snapshot; cursor ${cursor} at node ${model.views.get(cursor).at}`);
 
-  const commands = attached.surface.commands;
-  console.log(`\n${commands.length} commands:`);
-  for (const command of commands.filter((c) => !c.hidden)) {
-    console.log(`  /${command.name.padEnd(16)} ${command.origin.padEnd(9)} ${command.flow ? 'flow' : '    '}  ${command.description}`);
-  }
-  check('built-ins are listed with the vocabulary', commands.some((c) => c.origin === 'builtin'));
+  // A turn, watched.
+  await a.call('watch', { cursors: [cursor] });
+  events.length = 0;
+  const item = await a.call('send', { cursor, text: 'hello from the smoke' });
+  assert.equal(typeof item, 'number');
+  let sawBusy = false;
+  await until(() => {
+    const view = model.views.get(cursor);
+    sawBusy ||= view.busy;
+    return sawBusy && !view.busy;
+  }, 'the step to end');
+  const text = events
+    .filter((e) => e.kind === 'Live' && e.delta.kind === 'TextDelta')
+    .map((e) => e.delta.text)
+    .join('');
+  assert.equal(text, 'mock: hello from the smoke', 'Live streamed the reply');
+  const firstLive = events.findIndex((e) => e.kind === 'Live');
+  const reply = events.findIndex(
+    (e) => e.kind === 'Appended' && e.nodes.some((n) => bodyKind(n.body) === 'Assistant'),
+  );
+  assert.ok(firstLive >= 0 && reply > firstLive, 'Live came before the Appended reply');
+  const view = model.views.get(cursor);
+  assert.equal(view.ending, 'Done');
+  assert.equal(model.layers.has(cursor), false, 'at rest: no live layer');
+  console.log(`ok: Live "${text}", then Appended, then at rest (ending Done, at ${view.at})`);
 
-  const after = await client.request('list_sessions', {});
-  check('the new session is listed', after.sessions.some((row) => row.session_id === session_id));
+  const walk = await a.call('walk', { id: view.at });
+  const last = walk.at(-1);
+  assert.equal(bodyKind(last.body), 'Assistant');
+  assert.equal(proseText(last.body.Assistant.parts[0].Text), 'mock: hello from the smoke');
+  assert.ok(walk.some((n) => n.body.User === 'hello from the smoke'));
+  console.log(`ok: walk(${view.at}) holds the input and the reply (${walk.length} nodes)`);
 
-  client.close();
-  console.log(process.exitCode ? '\nFAILED' : '\nOK');
+  // Client B, through the link: the same session.
+  const b = new SessionLink({ open: () => HttpTransport.open({ url, token }), client: 'smoke@tau-code:b' });
+  b.start();
+  await until(() => b.state.phase === 'ready', 'client b to be ready');
+  assert.equal(b.state.welcome.session, session);
+  assert.deepEqual(b.state.model.views.get(cursor).at, view.at, 'b sees the same cursor');
+  await until(() => b.state.model.walk(view.at) !== null, 'b to read its walk');
+  await b.loadTree();
+  assert.equal(b.state.model.nodes.size, view.at + 1, 'the whole tree, read in pages');
+  console.log(`ok: a second client sees cursor ${cursor} at ${view.at} and reads ${b.state.model.nodes.size} nodes`);
+
+  // The server stops: a's stream ends with end {error: null}.
+  b.dispose();
+  await served.stop();
+  await until(() => closedA !== null, "a's stream to end");
+  assert.deepEqual(closedA.end, { error: null });
+  assert.equal(closedA.reason, 'the server stopped');
+  console.log('ok: tau serve --stop ends the stream with end {error: null}');
 } catch (error) {
-  console.error('\nFAILED:', error instanceof Error ? error.message : error);
-  console.error(daemon.output);
-  process.exitCode = 1;
+  failed = true;
+  console.error(error);
 } finally {
-  await daemon.stop();
+  await served.stop().catch((error) => {
+    failed = true;
+    console.error(error);
+  });
+}
+if (!failed) failed = !(await images());
+if (failed) process.exit(1);
+console.log('smoke: green');
+
+/** Protocol 2: a tool result with an image reaches the client whole. True when green. */
+async function images() {
+  const picture = png();
+  const sha256 = createHash('sha256').update(picture).digest('hex');
+  const model = await fakeModel('pixel.png');
+  let served = null;
+  try {
+    served = await serve({
+      config: { default_model: 'v', models: { v: { model: 'm', base_url: model.url, images: true } } },
+    });
+    writeFileSync(join(served.work, 'pixel.png'), picture);
+    const { url, token } = served.record;
+    const client = new ServeClient(await HttpTransport.open({ url, token }));
+    const sessionModel = new SessionModel();
+    const appended = [];
+    client.on('event', (event) => {
+      sessionModel.hear(event);
+      if (event.kind === 'Appended') appended.push(...event.nodes);
+    });
+    sessionModel.welcome = await client.hello('smoke@tau-code:images');
+    const cursor = sessionModel.openCursors()[0].cursor;
+    await client.call('watch', { cursors: [cursor] });
+    await client.call('send', { cursor, text: 'look at pixel.png' });
+    await until(() => appended.some((n) => bodyKind(n.body) === 'Assistant' && n.body.Assistant.stop === 'End'), 'the reply after the read', 20_000);
+
+    const results = appended.find((n) => bodyKind(n.body) === 'Results');
+    assert.ok(results, 'a Results node was appended');
+    const [callId, outcome] = results.body.Results[0];
+    assert.equal(callId, 'c0');
+    assert.equal(typeof outcome.Ok, 'object', `Ok carries images: ${JSON.stringify(outcome)}`);
+    const { ok, text, images: got } = outcomeOf(outcome);
+    assert.equal(ok, true);
+    assert.match(text, /^\[image .*pixel\.png: image\/png 1x1, \d+ bytes\]$/);
+    assert.deepEqual(got, [{ mime: 'image/png', sha256, width: 1, height: 1 }]);
+    assert.equal(imageLabel(got[0]), '[image 1x1 image/png]');
+    const sent = JSON.stringify(model.bodies[1]);
+    assert.ok(sent.includes('image_url'), 'τ sent the image on to the model');
+    const walk = await client.call('walk', { id: sessionModel.views.get(cursor).at });
+    assert.deepEqual(outcomeOf(walk.find((n) => bodyKind(n.body) === 'Results').body.Results[0][1]).images, got, 'walk agrees');
+    console.log(`ok: protocol 2 image in a tool result: "${text}" + ${imageLabel(got[0])} sha256 ${sha256.slice(0, 12)}…`);
+    client.close();
+    return true;
+  } catch (error) {
+    console.error(error);
+    return false;
+  } finally {
+    model.close();
+    if (served) await served.stop().catch((error) => console.error(error));
+  }
 }

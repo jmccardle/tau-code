@@ -1,5 +1,13 @@
 # Architecture
 
+> **Out of date since τ 0.16 (2026-11-24).** This document describes tau-code 0.8.1 against τ 0.14's
+> serve protocol 0.11: a WebSocket daemon of many sessions, the epoch/seq replica, panels and
+> requests. τ 0.16 replaced that wire. The port (built against protocol 1, now protocol 2 for
+> τ 0.17, over `tau serve`'s HTTP edge) is on `master`, merged from `feat/http-edge-client`: see
+> README.md ("The wire") and ROADMAP.md. Sections 1–8 and 15 no longer describe the code; the UI
+> and packaging decisions (§9 onward) are kept for
+> their reasoning until Phase R rewrites them.
+
 **Status: both hosts speak `tau serve` (0.8.1, alongside τ 0.14.1).** The web
 client and the VS Code extension are clients of τ's daemon; the Node connection
 server and the stdio runner that stood between them and `tau --mode rpc` are

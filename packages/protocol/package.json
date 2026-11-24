@@ -1,7 +1,7 @@
 {
   "name": "@ffwf/tau-code-protocol",
   "version": "0.8.1",
-  "description": "Types and a JSON-RPC 2.0 client for the tau RPC protocol. Isomorphic: no Node and no DOM.",
+  "description": "τ's wire (protocol 2): generated types, the HTTP edge transport, a JSON-RPC client and a session model. Isomorphic: runs in a browser and in Node >= 20, with no DOM or Node imports.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,8 +12,11 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc --build"
+    "build": "tsc --build",
+    "test": "node --test test/"
   }
 }

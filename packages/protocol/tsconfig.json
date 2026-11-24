@@ -3,7 +3,10 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "lib": ["ES2022"]
+    // DOM for the types of `fetch`, streams, `TextDecoder` and `AbortController` only: Node >= 20
+    // has every one of them as a global, so the same code runs in a browser and in Node. Nothing
+    // here touches `document` or `window`.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*"]
 }
