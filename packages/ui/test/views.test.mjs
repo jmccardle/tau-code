@@ -80,13 +80,16 @@ function fake(answers) {
 
 const form = (name, extension = null) => ({ name, description: 'd', schema: { type: 'object', properties: {} }, extension });
 
-test('plain text is sent; a line naming no command is sent too, as τ says', async () => {
+test('plain text is sent; a line naming no command is sent with a warning, as τ says', async () => {
   assert.deepEqual(await planLine(fake({}).call, 0, 'hello'), { kind: 'send', text: 'hello' });
-  const unknown = new ServeError('parse_line', { code: -32008, message: 'no command /etc', data: { name: 'etc' } });
+  const unknown = new ServeError('parse_line', { code: -32008, message: "no command 'etc'", data: { name: 'etc/hosts?' } });
   assert.deepEqual(await planLine(fake({ parse_line: unknown }).call, 0, '/etc/hosts?'), {
     kind: 'send',
     text: '/etc/hosts?',
+    warning: 'no command /etc/hosts?: sent as text',
   });
+  const qualifiedUnknown = new ServeError('parse_line', { code: -32008, message: "no command 'a:nope'", data: { name: 'a:nope' } });
+  await assert.rejects(planLine(fake({ parse_line: qualifiedUnknown }).call, 0, '/a:nope'), /no command \/a:nope/);
 });
 
 test('a whole command runs by its qualified name; a short one asks; a refusal is thrown', async () => {

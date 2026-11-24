@@ -24,25 +24,32 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
   const [choices, setChoices] = useState<string[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState(false);
+  /** The line that was carried out, to clear from the box once it has gone (not if it was edited). */
+  const [sent, setSent] = useState<string | null>(null);
+  const clear = (line: string | null): void => {
+    if (line !== null) setText((now) => (now.trim() === line ? '' : now));
+  };
 
-  const carryOut = async (plan: LinePlan): Promise<void> => {
+  /** Do what the plan says; true once it is done, false while a form is waiting for it. */
+  const carryOut = async (plan: LinePlan): Promise<boolean> => {
     switch (plan.kind) {
       case 'send':
         await call('send', { cursor, text: plan.text });
-        return;
+        if (plan.warning) note(plan.warning);
+        return true;
       case 'run': {
         const result = await call('run', { cursor, command: plan.command, args: plan.args });
         note(result === null ? `/${plan.command} done` : `/${plan.command}: ${result}`);
-        return;
+        return true;
       }
       case 'configure':
         await call('configure', { cursor, extension: plan.extension, values: plan.values, save: plan.save });
         note(`/config ${plan.extension}: set${plan.save ? ' and saved' : ''}`);
-        return;
+        return true;
       case 'ask':
       case 'options':
         setPending(plan);
-        return;
+        return false;
     }
   };
 
@@ -53,9 +60,10 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
     setError(null);
     setChoices([]);
     try {
-      const plan = await planLine(call, cursor, line);
-      setText('');
-      await carryOut(plan);
+      // The line stays in the box until it has gone: a refused or failed send keeps what was
+      // typed, and so does a form that is cancelled.
+      setSent(line);
+      if (await carryOut(await planLine(call, cursor, line))) clear(line);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -83,7 +91,10 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
           cursor={cursor}
           call={call}
           note={note}
-          onDone={() => setPending(null)}
+          onDone={(done) => {
+            setPending(null);
+            if (done) clear(sent);
+          }}
           carryOut={carryOut}
         />
       )}
@@ -152,8 +163,9 @@ function PendingForm(props: {
   cursor: number;
   call: Call;
   note: (text: string) => void;
-  onDone: () => void;
-  carryOut: (plan: LinePlan) => Promise<void>;
+  /** The form closed: `done` once its action succeeded, false when cancelled. */
+  onDone: (done: boolean) => void;
+  carryOut: (plan: LinePlan) => Promise<boolean>;
 }): JSX.Element {
   const { pending, cursor, call, onDone, carryOut } = props;
   const [save, setSave] = useState(pending.kind === 'options' ? pending.save : false);
@@ -174,9 +186,9 @@ function PendingForm(props: {
           }
           onSubmit={async (values) => {
             await carryOut({ kind: 'configure', extension: pending.extension, values: values as Record<string, unknown>, save });
-            onDone();
+            onDone(true);
           }}
-          secondary={{ label: 'Cancel', onClick: onDone }}
+          secondary={{ label: 'Cancel', onClick: () => onDone(false) }}
         />
       </div>
     );
@@ -194,14 +206,15 @@ function PendingForm(props: {
           const values = args as Record<string, unknown>;
           // `/config` with no extension: once one is chosen, it is that extension's options form.
           if (pending.form.name === 'config' && !pending.form.extension && typeof values['extension'] === 'string') {
-            onDone();
+            // The line is not done yet: it is waiting on the options form now.
+            onDone(false);
             await carryOut(await planLine(call, cursor, `/config ${values['extension']}`));
             return;
           }
           await carryOut({ kind: 'run', command: pending.command, args: values });
-          onDone();
+          onDone(true);
         }}
-        secondary={{ label: 'Cancel', onClick: onDone }}
+        secondary={{ label: 'Cancel', onClick: () => onDone(false) }}
       />
     </div>
   );

@@ -177,7 +177,7 @@ try {
   await question(a).waitFor();
   const b = await tab(context, url, { refused: true }); // no fragment, and a new tab's storage is empty
   await b.locator('[data-testid="connection"]').waitFor();
-  assert.match(await b.innerText('body'), /This page has no token/);
+  assert.match(await b.innerText('body'), /This tab has no token for this server/);
   await b.close();
   const context2 = await browser.newContext();
   const late = await tab(context2, `${url}#token=${token}`);

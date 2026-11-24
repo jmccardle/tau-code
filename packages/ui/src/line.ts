@@ -9,8 +9,11 @@ export type Call = <M extends Method>(method: M, params: Requests[M]) => Promise
  * `complete_line`); the client only decides between the calls that follow.
  */
 export type LinePlan =
-  /** Not a command: `send` it as input. */
-  | { kind: 'send'; text: string }
+  /**
+   * Not a command: `send` it as input. `warning` when the line looked like a command and named
+   * none (`/etc/hosts?`): say so, then send, as τ's own frontends do.
+   */
+  | { kind: 'send'; text: string; warning?: string }
   /** A command with every required argument: `run` it. */
   | { kind: 'run'; command: string; args: Record<string, unknown> }
   /** A command missing arguments: show its form, then `run`. */
@@ -27,9 +30,10 @@ export function qualified(form: Form): string {
 
 /**
  * Read `line` with the server and say what it does. A line not starting with `/` is input. A line
- * naming no command (`UnknownCommand`) is input too, as τ's protocol says: `/etc/hosts?` is a
- * question for the model. Other refusals (`Refused`, an ambiguous `NotFound`) are thrown, with
- * τ's sentence, for the composer to show.
+ * naming no command (`UnknownCommand`) is input too, with a warning, as τ says a frontend does
+ * (`commandline.UnknownCommand`; the TUI's "no command /x: sent as text"): `/etc/hosts?` is a
+ * question for the model. A name with a `:` names an extension, so it cannot be text: that is
+ * thrown, as are other refusals (`Refused`, an ambiguous `NotFound`), with τ's sentence.
  */
 export async function planLine(call: Call, cursor: number, line: string): Promise<LinePlan> {
   if (!line.startsWith('/')) return { kind: 'send', text: line };
@@ -37,7 +41,11 @@ export async function planLine(call: Call, cursor: number, line: string): Promis
   try {
     parsed = await call('parse_line', { cursor, line });
   } catch (error) {
-    if (error instanceof ServeError && error.is('UnknownCommand')) return { kind: 'send', text: line };
+    if (error instanceof ServeError && error.is('UnknownCommand')) {
+      const name = typeof error.data?.['name'] === 'string' ? (error.data['name'] as string) : line.slice(1).split(/\s/)[0];
+      if (name?.includes(':')) throw new Error(`no command /${name}`);
+      return { kind: 'send', text: line, warning: `no command /${name}: sent as text` };
+    }
     throw error;
   }
   const save = parsed.save ?? false;

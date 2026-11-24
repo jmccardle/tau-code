@@ -99,7 +99,14 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
         {(problem ?? state.problem) && (
           <div className="tau-error" role="alert">
             {problem ?? state.problem}{' '}
-            <button type="button" className="tau-link" onClick={() => setProblem(null)}>
+            <button
+              type="button"
+              className="tau-link"
+              onClick={() => {
+                setProblem(null);
+                link.clearProblem();
+              }}
+            >
               ×
             </button>
           </div>

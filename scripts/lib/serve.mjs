@@ -70,7 +70,10 @@ export async function serve({ extensions = {}, webRoot = null, config = mockConf
     rmSync(root, { recursive: true, force: true });
     throw error;
   }
-  if (!record.url || !record.token) throw new Error(`the serve record has no url or token: ${JSON.stringify(record)}`);
+  if (!record.url || !record.token) {
+    const shown = { ...record, ...(record.token ? { token: '<redacted>' } : {}) };
+    throw new Error(`the serve record has no url or token: ${JSON.stringify(shown)}`);
+  }
 
   let stopped = false;
   return {

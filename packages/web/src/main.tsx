@@ -10,19 +10,22 @@ import { clientId, takeToken } from './token.js';
 // on the page's own origin (`/stream`, where `tau serve` serves this page). The views are handed
 // a SessionLink and know none of it.
 const place = { location: window.location, history: window.history, storage: window.sessionStorage };
-const token = takeToken(place);
 const origin = `${window.location.origin}/`;
 const link = new SessionLink({
-  open: () => HttpTransport.open({ url: origin, token }),
+  // The token is read again for every connection: after a 401, opening the new `open:` address in
+  // this tab (only its fragment changes, so the page does not reload) brings the new one.
+  open: () => HttpTransport.open({ url: origin, token: takeToken(place) }),
   client: clientId(window.location.host, window.sessionStorage, () => crypto.randomUUID().slice(0, 8)),
+});
+window.addEventListener('hashchange', () => {
+  if (new URLSearchParams(window.location.hash.slice(1)).has('token')) link.retry();
 });
 link.start();
 
 const hints = {
   unauthorized:
-    token === null
-      ? 'This page has no token. Open the address `tau serve` printed after "open:" (it ends in #token=…).'
-      : 'The token this tab has is not this server\'s: a restarted `tau serve` has a new one. Open the address it printed after "open:".',
+    'This tab has no token for this server, or an old one (a restarted `tau serve` has a new one). ' +
+    'Open the address `tau serve` printed after "open:" (it ends in #token=…), here or in a new tab.',
   forbidden: 'This page\'s origin is not allowed to call this server: open it from the address `tau serve` printed.',
 };
 
