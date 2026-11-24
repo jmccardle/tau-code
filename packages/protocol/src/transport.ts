@@ -1,47 +1,21 @@
 /**
  * The transport seam.
  *
- * Everything above this file speaks whole protocol frames -- one JSON object
- * each -- and knows nothing about sockets or `postMessage`. It is what lets one
- * client serve both hosts:
+ * Everything above this file speaks whole JSON-RPC messages, one object each, and knows nothing
+ * about HTTP. Protocol 1 has two transports (D29): a WebSocket on a Unix socket, which a browser
+ * cannot dial, and the HTTP edge, which `HttpTransport` speaks. A host that relays messages (an
+ * editor's extension host, later) implements this interface too.
  *
- *   - a WebSocket to `tau serve`       (the browser, the VS Code extension host)
- *   - `postMessage` through a relay    (the VS Code webview)
- *
- * The serve protocol frames by WebSocket message: one JSON object per text
- * frame. There is no line framing to reassemble, so a transport hands up whole
- * objects and nothing else.
+ * A transport is one connection's lifetime. It does not reconnect: there is no resume in protocol
+ * 1, so a new connection is a new transport, a new `hello` and a fresh snapshot (`SessionLink`).
  */
 export interface Transport {
-  /** Send one frame. */
-  send(frame: unknown): void;
-  /** Register the sink for inbound frames. Called once. */
-  onMessage(handler: (frame: unknown) => void): void;
-  /**
-   * Register the "the peer is gone" sink. `reason` is a sentence a person can
-   * act on; `code` is the WebSocket close code when there was one, because the
-   * daemon's 4000 ("you fell too far behind") means something a reconnect can
-   * fix and an auth refusal does not.
-   */
-  onClose(handler: (reason: string, code: number | null) => void): void;
+  /** Send one message. Messages arrive at the server in the order they were sent. */
+  send(message: object): void;
+  /** Register the sink for inbound messages, parsed. Called once. */
+  onMessage(handler: (message: unknown) => void): void;
+  /** Register the sink for "the connection is gone", with why, as a sentence. Called once. */
+  onClose(handler: (reason: string) => void): void;
+  /** Close the connection. Idempotent; the close handler runs once. */
   close(): void;
 }
-
-/**
- * The daemon closed this connection because it fell too far behind.
- *
- * Not an error to report: the client resumes by `since`, and the replay or
- * snapshot the next `attach` answers brings it current.
- */
-export const CLOSE_TOO_FAR_BEHIND = 4000;
-
-/**
- * A relay's own close: there is nothing to dial, and dialling again will not
- * change that until the user does something (open a folder, install τ).
- *
- * Not a daemon code -- the daemon never sends it. A host that relays the
- * protocol (the VS Code extension host) closes with this so the client stops
- * retrying and shows the sentence instead. In the 4xxx private range, clear of
- * the daemon's 4000.
- */
-export const CLOSE_NOTHING_TO_DIAL = 4900;

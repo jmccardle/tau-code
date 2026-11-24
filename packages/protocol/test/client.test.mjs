@@ -1,97 +1,88 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ERROR_CODES, ServeClient, ServeError, ProtocolVersionError, PROTOCOL_VERSION } from '../dist/index.js';
+import { ConnectionClosed, PROTOCOL, ServeClient, ServeError } from '../dist/index.js';
+import { pair } from './helpers.mjs';
 
-/** A transport whose far end is this test. */
-function pair() {
-  const sent = [];
-  let deliver = () => {};
-  let close = () => {};
-  const transport = {
-    send: (frame) => sent.push(frame),
-    onMessage: (handler) => (deliver = handler),
-    onClose: (handler) => (close = handler),
-    close: () => {},
-  };
-  return { transport, sent, deliver: (frame) => deliver(frame), close: (...args) => close(...args) };
-}
-
-test('a request is a JSON-RPC 2.0 frame, and resolves with the result', async () => {
+test('hello names PROTOCOL and the client id, and resolves with the Welcome', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
-  const answer = client.request('list_sessions', {});
-  assert.deepEqual(peer.sent, [{ jsonrpc: '2.0', id: 1, method: 'list_sessions', params: {} }]);
-  peer.deliver({ jsonrpc: '2.0', id: 1, result: [] });
-  assert.deepEqual(await answer, []);
+  const welcome = client.hello('me@host:test');
+  assert.deepEqual(peer.sent, [
+    { jsonrpc: '2.0', id: 0, method: 'hello', params: { protocol: PROTOCOL, client: 'me@host:test' } },
+  ]);
+  const answer = { protocol: 1, version: '0.16.1', session: 's', cwd: '/w', pid: 1 };
+  peer.deliver({ jsonrpc: '2.0', id: 0, result: answer });
+  assert.deepEqual(await welcome, answer);
 });
 
-test('hello names the generated protocol version', async () => {
+test('events go to the handler; answers match by id in any order', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
-  const answer = client.hello('tau-code-test', null);
-  assert.equal(peer.sent[0].method, 'hello');
-  assert.equal(peer.sent[0].params.protocol, PROTOCOL_VERSION);
-  assert.equal(peer.sent[0].params.token, null);
-  peer.deliver({ jsonrpc: '2.0', id: 1, result: null });
-  await answer;
+  const events = [];
+  client.on('event', (event) => events.push(event.kind));
+  const a = client.call('open', { at: 0 });
+  const b = client.call('node', { id: 0 });
+  peer.deliver({ jsonrpc: '2.0', method: 'event', params: { kind: 'Labels', labels: [] } });
+  peer.deliver({ jsonrpc: '2.0', id: 1, result: { id: 0 } });
+  peer.deliver({ jsonrpc: '2.0', id: 0, result: 3 });
+  assert.equal(await a, 3);
+  assert.deepEqual(await b, { id: 0 });
+  assert.deepEqual(events, ['Labels']);
 });
 
-test('a PROTOCOL_MISMATCH refusal is a ProtocolVersionError and closes the client', async () => {
+test('an error answer is a ServeError named from the schema, with τ\'s sentence', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
-  const answer = client.hello('tau-code-test', null);
-  peer.deliver({
-    jsonrpc: '2.0',
-    id: 1,
-    error: { code: ERROR_CODES.PROTOCOL_MISMATCH, message: 'this daemon speaks 9.9', data: null },
-  });
-  await assert.rejects(answer, ProtocolVersionError);
-  assert.equal(client.closed, true);
-});
-
-test("an error keeps τ's sentence verbatim as detail, and its data", async () => {
-  const peer = pair();
-  const client = new ServeClient(peer.transport);
-  const answer = client.request('detach', { session_id: 's' });
-  peer.deliver({ jsonrpc: '2.0', id: 1, error: { code: ERROR_CODES.NOT_FOUND, message: 'no session s', data: { name: 's' } } });
-  await assert.rejects(answer, (error) => {
+  const call = client.call('step', { cursor: 0 });
+  peer.deliver({ jsonrpc: '2.0', id: 0, error: { code: -32001, message: 'cursor 0 is busy' } });
+  await assert.rejects(call, (error) => {
     assert.ok(error instanceof ServeError);
-    assert.equal(error.code, -32007);
-    assert.equal(error.detail, 'no session s');
-    assert.deepEqual(error.data, { name: 's' });
+    assert.equal(error.errorName, 'Busy');
+    assert.ok(error.is('Busy'));
+    assert.equal(error.detail, 'cursor 0 is busy');
     return true;
   });
 });
 
-test('an answer with neither result nor error rejects rather than resolving undefined', async () => {
+test('end, then the close, rejects what is pending with the end\'s reason', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
-  const answer = client.request('list_sessions', {});
-  peer.deliver({ jsonrpc: '2.0', id: 1 });
-  await assert.rejects(answer, /neither a result nor an error/);
+  const closes = [];
+  client.on('closed', (reason, end) => closes.push([reason, end]));
+  const call = client.call('run', { cursor: 0, command: 'x', args: {} });
+  const cut = { code: -32014, message: 'this client fell behind' };
+  peer.deliver({ jsonrpc: '2.0', method: 'end', params: { error: cut } });
+  peer.drop('the server ended the stream');
+  await assert.rejects(call, (error) => error instanceof ConnectionClosed && /fell behind/.test(error.reason));
+  assert.deepEqual(closes, [['this client fell behind (-32014)', { error: cut }]]);
+  await assert.rejects(client.call('step', { cursor: 0 }), ConnectionClosed);
 });
 
-test('a close rejects every pending request with its reason, and later sends say why', async () => {
+test('an end with no error reads as the server stopping', async () => {
   const peer = pair();
   const client = new ServeClient(peer.transport);
-  const answer = client.request('list_sessions', {});
-  peer.close('no daemon is listening on 127.0.0.1:8256.', null);
-  await assert.rejects(answer, /no daemon is listening/);
-  await assert.rejects(client.request('list_sessions', {}), /Cannot send list_sessions: no daemon is listening/);
+  const closes = [];
+  client.on('closed', (reason) => closes.push(reason));
+  peer.deliver({ jsonrpc: '2.0', method: 'end', params: { error: null } });
+  peer.drop('the server ended the stream');
+  assert.deepEqual(closes, ['the server stopped']);
 });
 
-test('events are routed by method, and an answer for no request is a protocol violation', () => {
-  const peer = pair();
-  const client = new ServeClient(peer.transport);
-  const events = [];
-  const violations = [];
-  client.on('event', (event) => events.push(event));
-  client.on('protocolViolation', (detail) => violations.push(detail));
-  peer.deliver({ jsonrpc: '2.0', method: 'event', params: { session_id: 's', epoch: 'e', seq: 1, kind: 'ui', data: {} } });
-  peer.deliver({ jsonrpc: '2.0', id: 99, result: null });
-  peer.deliver({ jsonrpc: '2.0', id: null, error: { code: ERROR_CODES.PARSE_ERROR, message: 'not JSON' } });
-  peer.deliver({ jsonrpc: '2.0', method: 'mystery' });
-  assert.deepEqual(events, [{ session_id: 's', epoch: 'e', seq: 1, kind: 'ui', data: {} }]);
-  assert.equal(violations.length, 3);
-  assert.match(violations[1], /unknown id null: -32700 not JSON/);
-});
+for (const [name, message] of [
+  ['an answer to no call', { jsonrpc: '2.0', id: 9, result: null }],
+  ['an unknown notification', { jsonrpc: '2.0', method: 'panel', params: {} }],
+  ['not JSON-RPC 2.0', { id: 0, result: null }],
+  ['an unknown error code', { jsonrpc: '2.0', id: 0, error: { code: -1, message: 'x' } }],
+]) {
+  test(`${name} closes the connection as a protocol violation`, async () => {
+    const peer = pair();
+    const client = new ServeClient(peer.transport);
+    const closes = [];
+    client.on('closed', (reason) => closes.push(reason));
+    const call = client.call('step', { cursor: 0 });
+    peer.deliver(message);
+    await assert.rejects(call);
+    assert.equal(closes.length, 1);
+    assert.match(closes[0], /protocol violation/);
+  });
+}
