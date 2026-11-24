@@ -17,6 +17,17 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
   `npm run smoke:browser` in headless Chrome (TC-09); `npm run dev` with a dev-only proxy that
   adds the serve record's token.
 - **Needs τ ≥ `ea0a3dcd`** (master; 0.16.1 is not released). Nothing here works against 0.16.0.
+- **What the old (0.8.1) UI had that the port does not**, one per line:
+  - the completion popup with each command's description, and `@file` completion: the composer
+    completes through `complete_line` only, and never calls `commands` (which has the descriptions);
+  - the model picker (in 0.16 the model is `CursorView.model`, shown in the status bar; changing it
+    is the `/model` command, with no picker);
+  - the extension-warnings panel (τ 0.16 has no such list on the wire; `Notice` and
+    `CursorView.shown` are what an extension says);
+  - the extension panels and flows of protocol 0.11 (gone from τ; commands and their forms replace
+    them);
+  - the session picker (one `tau serve` is one session: Q-G (a));
+  - the tree's elide, commit-branch and paste-subtree (no wire counterpart in protocol 1).
 - **Not built:** the `tau_web` Python package (`ffwf-tau-web`?) that `tau serve` would find without
   `--web-root`, and τ's `ffwf-tau[web]` extra that would name it: Q-H is open.
 

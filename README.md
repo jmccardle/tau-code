@@ -116,15 +116,19 @@ What it does:
 ### Develop it
 
 ```bash
-tau serve                      # in the project you want, in one terminal
-npm run dev                    # in another: http://localhost:5173/
+tau serve --allow-origin http://localhost:5173   # in the project you want, in one terminal
+npm run dev                                      # in another: open http://localhost:5173/
 ```
 
 `npm run dev` serves the page with live reload and proxies `/stream` to the `tau serve` it finds
-in `$TAU_HOME/serve/` (or `~/.tau/serve/`), adding that server's token and dropping the `Origin`
-it would refuse (`packages/web/dev/serve-record.mjs`). With several servers running, set
-`TAU_SERVE` to a session id, a prefix or a name. With none, `/stream` answers 502 saying so, and
-the page shows it.
+in `$TAU_HOME/serve/` (or `~/.tau/serve/`), adding that server's token
+(`packages/web/dev/serve-record.mjs`). With several servers running, set `TAU_SERVE` to a session
+id, a prefix or a name. With none, `/stream` answers 502 saying so, and the page shows it.
+
+The proxy holds a token that can run commands, so it refuses (403) a request whose `Host` is not
+its own loopback address (a DNS-rebinding page) or whose `Origin` is not its own page, and passes
+`Origin` on for τ to check as well: hence `--allow-origin` with the page's origin. Open the page
+as `localhost:5173`, the address that origin names.
 
 ## Verify
 
