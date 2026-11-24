@@ -116,7 +116,7 @@ What it does:
 ### Develop it
 
 ```bash
-tau serve --allow-origin http://localhost:5173   # in the project you want, in one terminal
+tau serve --allow-origin http://localhost:5173   # in the project you want, in one terminal (see below)
 npm run dev                                      # in another: open http://localhost:5173/
 ```
 
@@ -125,10 +125,26 @@ in `$TAU_HOME/serve/` (or `~/.tau/serve/`), adding that server's token
 (`packages/web/dev/serve-record.mjs`). With several servers running, set `TAU_SERVE` to a session
 id, a prefix or a name. With none, `/stream` answers 502 saying so, and the page shows it.
 
-The proxy holds a token that can run commands, so it refuses (403) a request whose `Host` is not
-its own loopback address (a DNS-rebinding page) or whose `Origin` is not its own page, and passes
-`Origin` on for τ to check as well: hence `--allow-origin` with the page's origin. Open the page
-as `localhost:5173`, the address that origin names.
+The proxy holds a token that can run commands, so it serves only this machine, and says why
+when it refuses (403, with a sentence the page shows):
+
+- **It runs on loopback only.** `npm run dev -- --host` (or any `server.host` that is not
+  loopback) stops at startup with a message. From another machine, forward the port instead.
+- **A peer that is not loopback is refused**, whatever `Host` it sends.
+- **`Host` must be `localhost`, `127.0.0.1` or `[::1]` on the dev server's own port.** A
+  DNS-rebinding page is refused. So is a port forward that changes the port
+  (`ssh -L 8080:localhost:5173` sends `Host: localhost:8080`): keep the number,
+  `ssh -L 5173:localhost:5173`, and open `http://localhost:5173/`.
+- **`Origin`, when the browser sends one, must be that same address**, and it is passed on, so τ
+  checks it as well. τ allows only the origins `--allow-origin` names (it is repeatable), so
+  allow each address you open the page by:
+
+  ```bash
+  tau serve --allow-origin http://localhost:5173 --allow-origin http://127.0.0.1:5173
+  ```
+
+  Opening `http://127.0.0.1:5173/` when only `localhost` was allowed gets τ's 403, which the
+  proxy explains by naming the `--allow-origin` to add.
 
 ## Verify
 

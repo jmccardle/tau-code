@@ -67,22 +67,59 @@ export function findRecord({ home = process.env.TAU_HOME ?? join(homedir(), '.ta
 /** The names this dev server answers to on loopback: `localhost`, `127.0.0.1`, `[::1]`. */
 const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
 
+/** Whether a peer address is this machine: 127.0.0.0/8, ::1, or 127.x mapped into IPv6. */
+export function isLoopbackAddress(address) {
+  if (typeof address !== 'string') return false;
+  const v4 = address.startsWith('::ffff:') ? address.slice(7) : address;
+  return v4.startsWith('127.') || address === '::1';
+}
+
+/** Whether a Vite `server.host` binds loopback only: unset (Vite's default, localhost) or a loopback name. */
+export function hostIsLoopback(host) {
+  if (host === undefined || host === false) return true;
+  if (typeof host !== 'string') return false; // true: every address
+  return host === 'localhost' || host === '::1' || host === '[::1]' || host.startsWith('127.');
+}
+
 /**
- * Why a request may not use the proxy, or null if it may: its `Host` must be this server's own
- * loopback address on the port it arrived on, and an `Origin`, if any, that address over http.
+ * Why a request may not use the proxy, as a sentence, or null if it may. Three things must hold,
+ * since the proxy adds a token that can run commands:
+ * - the peer is this machine (its address, not anything it says): a LAN client of a dev server
+ *   bound wider than loopback is refused;
+ * - its `Host` is this server's loopback name on the port the request arrived on (not a
+ *   DNS-rebinding name; a port forward must keep the port number);
+ * - its `Origin`, if any, is that address over http.
  */
 export function refusal(req) {
+  const peer = req.socket?.remoteAddress;
+  if (!isLoopbackAddress(peer)) {
+    return `the dev proxy serves only this machine, and ${peer ?? 'an unknown address'} is not loopback`;
+  }
   const port = req.socket?.localPort;
-  const own = LOOPBACK.map((host) => `${host}:${port}`);
-  const host = req.headers.host;
-  if (!port || !host || !own.includes(host.toLowerCase())) {
-    return `the dev proxy answers only to ${own.join(', ')}, not Host ${JSON.stringify(host ?? null)}`;
+  const own = LOOPBACK.map((name) => `${name}:${port}`);
+  const host = (req.headers.host ?? '').toLowerCase();
+  if (!port || !own.includes(host)) {
+    const [name, given] = splitHost(host);
+    if (port && LOOPBACK.includes(name) && given !== String(port)) {
+      return (
+        `Host ${host} names port ${given || '80'}, but this dev server listens on ${port}: a port forward ` +
+        `must keep the port number (ssh -L ${port}:localhost:${port}, then open http://localhost:${port}/)`
+      );
+    }
+    return `the dev proxy answers only to ${own.join(', ')}, not Host ${JSON.stringify(req.headers.host ?? null)}`;
   }
   const origin = req.headers.origin;
   if (origin !== undefined && !own.map((name) => `http://${name}`).includes(origin.toLowerCase())) {
-    return `the dev proxy refuses Origin ${origin}`;
+    return `the dev proxy refuses Origin ${origin}: open the page at http://localhost:${port}/`;
   }
   return null;
+}
+
+/** `name:port` (or `[v6]:port`) as [name, port]. */
+function splitHost(host) {
+  const at = host.lastIndexOf(':');
+  if (at === -1 || host.endsWith(']')) return [host, ''];
+  return [host.slice(0, at), host.slice(at + 1)];
 }
 
 /** Connect middleware: `/stream` and `/stream/<id>` go to the record's URL with its token. */
@@ -112,6 +149,17 @@ export function streamProxy(options = {}) {
     delete headers.referer;
     delete headers.host;
     const upstream = request(new URL(req.url.slice(1), record.url), { method: req.method, headers }, (answer) => {
+      if (answer.statusCode === 403 && req.headers.origin) {
+        // τ refused the page's origin. It cannot be changed from here; say what usually causes it.
+        answer.resume();
+        res.statusCode = 403;
+        res.setHeader('content-type', 'text/plain; charset=utf-8');
+        res.end(
+          `tau serve refused Origin ${req.headers.origin}: start it with --allow-origin ${req.headers.origin} ` +
+            `(repeatable: one for each address you open this page by), or open the page by an origin it allows`,
+        );
+        return;
+      }
       res.writeHead(answer.statusCode ?? 502, answer.headers);
       answer.pipe(res);
     });
@@ -131,6 +179,14 @@ export function tauServeDev(options = {}) {
     name: 'tau-serve-dev',
     apply: 'serve',
     configureServer(server) {
+      const host = server.config.server.host;
+      if (!hostIsLoopback(host)) {
+        throw new Error(
+          `tau-serve-dev: the dev proxy adds tau serve's token to what it forwards, so it runs only on ` +
+            `loopback, and server.host is ${JSON.stringify(host)}. Run \`npm run dev\` without --host; ` +
+            `to reach it from elsewhere, forward the same port (ssh -L 5173:localhost:5173).`,
+        );
+      }
       server.middlewares.use(streamProxy(options));
     },
   };

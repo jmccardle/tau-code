@@ -9,20 +9,20 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { streamProxy } from '../dev/serve-record.mjs';
+import { hostIsLoopback, isLoopbackAddress, refusal, streamProxy, tauServeDev } from '../dev/serve-record.mjs';
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
 /** A fake τ that records each request; a dev server with the proxy in front of it. */
-async function setup() {
+async function setup({ status = 202 } = {}) {
   const seen = [];
   const tau = createServer((req, res) => {
     seen.push({ method: req.method, url: req.url, headers: req.headers });
     req.resume();
-    res.writeHead(202);
-    res.end();
+    res.writeHead(status);
+    res.end(status === 403 ? 'origin not allowed' : undefined);
   });
   const tauPort = await listen(tau);
   const home = mkdtempSync(join(tmpdir(), 'tau-code-proxy-'));
@@ -91,6 +91,61 @@ test('a foreign Origin is refused, even with the right Host', async () => {
     assert.match(answer.body, /refuses Origin http:\/\/evil.example/);
     assert.equal((await send({ Host: `localhost:${port}`, Origin: `https://localhost:${port}` })).status, 403);
     assert.equal(seen.length, 0);
+  } finally {
+    close();
+  }
+});
+
+/** A request as `refusal` sees it. */
+const req = (remoteAddress, host, origin) => ({
+  socket: { remoteAddress, localPort: 5173 },
+  headers: { host, ...(origin ? { origin } : {}) },
+});
+
+test('a peer that is not this machine is refused, whatever Host it claims', () => {
+  assert.match(refusal(req('192.168.1.5', 'localhost:5173')), /serves only this machine, and 192.168.1.5 is not loopback/);
+  assert.match(refusal(req('::ffff:10.0.0.2', 'localhost:5173')), /not loopback/);
+  assert.equal(refusal(req('127.0.0.1', 'localhost:5173')), null);
+  assert.equal(refusal(req('::ffff:127.0.0.1', '127.0.0.1:5173')), null);
+  assert.equal(refusal(req('::1', '[::1]:5173', 'http://[::1]:5173')), null);
+  assert.deepEqual(['127.8.0.1', '::1', '::ffff:127.0.0.1', '10.0.0.1', '::ffff:192.168.0.1', undefined].map(isLoopbackAddress), [
+    true,
+    true,
+    true,
+    false,
+    false,
+    false,
+  ]);
+});
+
+test('a port forward that changes the port is told to keep it', () => {
+  const said = refusal(req('127.0.0.1', 'localhost:8080'));
+  assert.match(said, /names port 8080, but this dev server listens on 5173/);
+  assert.match(said, /ssh -L 5173:localhost:5173/);
+});
+
+test('the proxy is not installed unless Vite binds loopback only, and says why', () => {
+  const install = (host) => {
+    const used = [];
+    tauServeDev().configureServer({ config: { server: { host } }, middlewares: { use: (m) => used.push(m) } });
+    return used.length;
+  };
+  assert.equal(install(undefined), 1);
+  assert.equal(install('127.0.0.1'), 1);
+  assert.equal(install('localhost'), 1);
+  for (const host of [true, '0.0.0.0', '192.168.1.5', '::']) {
+    assert.throws(() => install(host), /runs only on loopback.*without --host/s, String(host));
+  }
+  assert.equal(hostIsLoopback(false), true);
+});
+
+test("τ refusing the page's origin is explained: --allow-origin, once per address", async () => {
+  const { port, send, close } = await setup({ status: 403 });
+  try {
+    const answer = await send({ Host: `127.0.0.1:${port}`, Origin: `http://127.0.0.1:${port}` });
+    assert.equal(answer.status, 403);
+    assert.match(answer.body, new RegExp(`tau serve refused Origin http://127.0.0.1:${port}: start it with --allow-origin`));
+    assert.match(answer.body, /repeatable/);
   } finally {
     close();
   }
