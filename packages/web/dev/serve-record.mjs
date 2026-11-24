@@ -2,7 +2,13 @@
  * Development only: find a running `tau serve` from its serve record, and proxy `/stream` to it
  * with its token. `npm run dev` uses this so the page Vite serves with live reload reaches τ on
  * the page's own origin, as it does when τ serves the page itself; the token never reaches the
- * browser, and τ sees no `Origin` to refuse.
+ * browser.
+ *
+ * The proxy holds a token that can run commands, so it is the one thing standing where τ's own
+ * Origin check (D29 §3) would: a request whose `Host` is not this dev server's loopback address
+ * (a DNS-rebinding page), or that carries an `Origin` other than this dev server's own, is refused
+ * with 403 before anything is read or forwarded. `Origin` is passed on to τ as it came, so τ checks
+ * it too: run τ with `tau serve --allow-origin http://localhost:5173` (the page's origin).
  *
  * Which server: `$TAU_SERVE` (a session id, an id prefix, a name, or a record file's path), else
  * the only live one in `$TAU_HOME/serve/` (`~/.tau/serve/`). None, or several without
@@ -58,11 +64,40 @@ export function findRecord({ home = process.env.TAU_HOME ?? join(homedir(), '.ta
   throw new Error(`several tau serve are running; set TAU_SERVE to one of: ${list}`);
 }
 
+/** The names this dev server answers to on loopback: `localhost`, `127.0.0.1`, `[::1]`. */
+const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * Why a request may not use the proxy, or null if it may: its `Host` must be this server's own
+ * loopback address on the port it arrived on, and an `Origin`, if any, that address over http.
+ */
+export function refusal(req) {
+  const port = req.socket?.localPort;
+  const own = LOOPBACK.map((host) => `${host}:${port}`);
+  const host = req.headers.host;
+  if (!port || !host || !own.includes(host.toLowerCase())) {
+    return `the dev proxy answers only to ${own.join(', ')}, not Host ${JSON.stringify(host ?? null)}`;
+  }
+  const origin = req.headers.origin;
+  if (origin !== undefined && !own.map((name) => `http://${name}`).includes(origin.toLowerCase())) {
+    return `the dev proxy refuses Origin ${origin}`;
+  }
+  return null;
+}
+
 /** Connect middleware: `/stream` and `/stream/<id>` go to the record's URL with its token. */
 export function streamProxy(options = {}) {
   return (req, res, next) => {
     const path = (req.url ?? '').split('?')[0];
     if (path !== '/stream' && !path.startsWith('/stream/')) return next();
+    const refused = refusal(req);
+    if (refused) {
+      res.statusCode = 403;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end(refused);
+      req.resume();
+      return;
+    }
     let record;
     try {
       record = findRecord(options);
@@ -72,8 +107,8 @@ export function streamProxy(options = {}) {
       res.end(error.message);
       return;
     }
+    // `Origin` goes on as it came: τ checks it too (`--allow-origin` the dev page's origin).
     const headers = { ...req.headers, authorization: `Bearer ${record.token}` };
-    delete headers.origin;
     delete headers.referer;
     delete headers.host;
     const upstream = request(new URL(req.url.slice(1), record.url), { method: req.method, headers }, (answer) => {
