@@ -46,8 +46,12 @@ function versionOf(manifest) {
 
 const root = versionOf(join(ROOT, 'package.json'));
 
+// packages/web-py is the one exception, by name: it is ffwf-tau-web, a Python package whose
+// version is τ's (0.17.x pairs with ffwf-tau 0.17.x), not this repository's. Any other directory
+// without a package.json is still an error.
+const PYTHON = new Set(['web-py']);
 const packages = readdirSync(join(ROOT, 'packages'), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
+  .filter((entry) => entry.isDirectory() && !PYTHON.has(entry.name))
   .map((entry) => entry.name)
   .sort();
 
