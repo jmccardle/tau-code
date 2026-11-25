@@ -13,7 +13,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PACKAGES = ['protocol', 'ui', 'web'];
+const PACKAGES = ['protocol', 'ui', 'web', 'vscode'];
 
 const files = [];
 for (const name of PACKAGES) {

@@ -1,44 +1,53 @@
 import * as vscode from 'vscode';
-import { DaemonRelay } from './session.js';
+import { ServeRelay } from './relay.js';
+import type { PageState } from './webview/messages.js';
 
 /**
  * The agent in the sidebar.
  *
- * Same UI as the editor tab, in a narrower place. VS Code creates the webview
- * lazily -- `resolveWebviewView` runs the first time the view is actually
- * shown -- so a sidebar the user never opens never dials the daemon.
+ * Same UI as the editor tab, in a narrower place. VS Code creates the webview lazily --
+ * `resolveWebviewView` runs the first time the view is actually shown -- so a sidebar the user
+ * never opens never starts a server. It opens the folder's newest session, or the one it showed
+ * before a reload.
  */
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'tau-code.chat';
 
-  #session: DaemonRelay | null = null;
+  #relay: ServeRelay | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly output: vscode.LogOutputChannel,
   ) {}
 
-  resolveWebviewView(view: vscode.WebviewView): void {
-    const session = new DaemonRelay(this.context, this.output, view.webview, 'sidebar');
-    this.#session = session;
+  resolveWebviewView(view: vscode.WebviewView, context: vscode.WebviewViewResolveContext<unknown>): void {
+    const state = context.state as PageState | undefined;
+    const relay = new ServeRelay(
+      this.context,
+      this.output,
+      view.webview,
+      'sidebar',
+      state?.session ? { session: state.session } : 'continue',
+    );
+    this.#relay = relay;
 
     view.onDidDispose(() => {
-      if (this.#session === session) this.#session = null;
-      session.dispose();
+      if (this.#relay === relay) this.#relay = null;
+      relay.dispose();
     });
   }
 
-  /** True once the user has actually opened the sidebar view. */
-  get isLive(): boolean {
-    return this.#session !== null;
+  /** The sidebar's relay, once the user has opened the view. */
+  get relay(): ServeRelay | null {
+    return this.#relay;
   }
 
   restart(): void {
-    this.#session?.restart();
+    this.#relay?.restart();
   }
 
   dispose(): void {
-    this.#session?.dispose();
-    this.#session = null;
+    this.#relay?.dispose();
+    this.#relay = null;
   }
 }

@@ -3,10 +3,11 @@
 Clients for [τ](https://github.com/jmccardle/tau), the agent harness: a web client, and a VS Code /
 VSCodium extension, both speaking τ's wire to `tau serve`.
 
-**Status: being ported to τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge.** The protocol
-package, the session model and the web client are ported and tested against a real `tau serve`.
-The VS Code extension and its runtime bundle are not yet (Phase R, [ROADMAP.md](ROADMAP.md)): they
-are written against τ 0.14's serve protocol 0.11 and are left out of the default build.
+**Status: ported to τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge; unreleased (0.9.0
+will carry it).** The protocol package, the session model, the web client and the VS Code /
+VSCodium extension are ported and tested against a real `tau serve`, the extension in a real
+VSCodium. The runtime companion's payload is ported but its build stops at its own check until τ
+fixes a regression (ROADMAP.md, Phase R).
 
 **Requires τ 0.17.0 or later** (`pip install 'ffwf-tau>=0.17'`): the HTTP edge, and protocol 2.
 τ 0.16 serves only a Unix socket, which a browser cannot reach, and speaks protocol 1, which this
@@ -19,15 +20,15 @@ client does not.
 | `@ffwf/tau-code-protocol` | Generated wire types, the HTTP edge transport, a JSON-RPC client, `SessionModel` and `SessionLink` | browser and Node ≥ 20 | yes |
 | `@ffwf/tau-code-ui` | React views of a session, handed a `SessionLink` | anywhere React runs | yes |
 | `@ffwf/tau-code-web` | The browser client: a static `dist/` that `tau serve --web-root` serves | browser | yes |
-| `tau-runtime` (publisher `ffwf`) | An optional CPython with τ in it, for the extension | VS Code | yes (its shell; its payload is Phase R) |
-| `tau-code` (publisher `ffwf`) | The editor extension | VS Code | **no**: Phase R |
+| `tau-runtime` (publisher `ffwf`) | An optional CPython with τ in it, for the extension | VS Code | its shell; the payload is `npm run payload --workspace packages/runtime` |
+| `tau-code` (publisher `ffwf`) | The editor extension: the web client's views in a webview, the HTTP edge relayed by the extension host | VS Code, VSCodium | yes; `.vsix` by `npm run package --workspace packages/vscode` |
 
 None of these is published to npm. They are workspace packages, and the names exist so the
 imports read the same as they would if they were.
 
 The dependency direction is one way: `ui` imports no host. It is handed a `SessionLink`, which is
-handed a way to open a `Transport`, so the same views can run in a browser tab and, later, in an
-editor's webview.
+handed a way to open a `Transport`, so the same views run in a browser tab and in an editor's
+webview.
 
 ## The wire
 
@@ -61,6 +62,8 @@ The token is in the serve record (`$TAU_HOME/serve/<session>.json`, mode 600), w
   ```
 
 - For `npm run smoke:browser`: Chrome or Chromium (`CHROME`, default `/usr/bin/google-chrome`).
+- For `npm run smoke:vscode`: VSCodium (`CODIUM_CLI`, default `/usr/bin/codium`; `CODIUM`, its
+  Electron binary, default `/usr/share/codium/codium`) and `xvfb-run` (`XVFB=0` uses `$DISPLAY`).
 
 ## Setup
 
@@ -128,6 +131,22 @@ What it does:
   cursor at one, set and remove labels.
 - **Notices** (`cursor.tell`, a refused input) and what extensions show on the cursor.
 
+## Run the VS Code / VSCodium extension
+
+```bash
+npm run build
+npm run package --workspace packages/vscode      # ffwf-tau-code-<version>.vsix at the root
+codium --install-extension ffwf-tau-code-*.vsix  # or: code --install-extension …
+```
+
+Open a folder, then **tau: Open Agent** (Ctrl+Alt+T): a tab on the folder's newest τ session, or
+a new one; **tau: New Session** for a new one; or the τ icon in the activity bar. Each tab is one
+session. The extension runs `tau serve -d --json` in the folder (τ from `tau-code.binary`,
+`TAU_BIN`, the `ffwf.tau-runtime` companion, or `PATH`; `tau-code.runtime` chooses) and relays its
+HTTP edge to the page, so the token stays in the extension host and the page opens no connection.
+A window reload brings each tab back on its session. **tau: Show Agent Log** shows every command
+it ran.
+
 ### Develop it
 
 ```bash
@@ -171,17 +190,18 @@ npm test                 # unit tests: transport, client, model, link, views, to
 npm run smoke            # the protocol package against a real tau serve --no-unix
 npm run smoke:browser    # the web client in headless Chrome, served by tau serve --web-root
 npm run check            # all of the above, in that order
+npm run smoke:vscode     # the packaged extension in VSCodium under Xvfb, driven by Playwright
+npm run smoke:runtime    # the bundled runtime's tau serve, hello and a reply (after building it)
 ```
 
 The smokes start their own `tau serve` in a throwaway `TAU_HOME` with τ's mock model (no
 network, no key) and stop it after (`scripts/lib/serve.mjs`); nothing touches `~/.tau`.
 
-## Not yet (Phase R)
+## Not yet
 
-- **The VS Code extension** (`packages/vscode`) and the **runtime bundle** (`packages/runtime`'s
-  payload, `scripts/smoke-runtime.mjs`): written for τ 0.14. The extension is out of the
-  workspaces and the TypeScript build until it is ported; its webview will load this same
-  `dist/` (ROADMAP.md).
+- **The runtime companion's release build** (`packages/runtime`): the payload is ported to τ 0.17
+  and works in the extension, but its build's own check stops it (τ 0.17.0's `serve -d` re-launches
+  without `-I`), and five of the nine targets have no τ 0.17 wheel. ROADMAP.md, Phase R.
 - **The container** (`Dockerfile`, `docker/`): its entrypoint runs τ 0.14's `tau serve --listen`,
   which τ 0.16 does not have.
 - **A Python package of the web client** (`tau_web`, which `tau serve` would find without
@@ -189,8 +209,9 @@ network, no key) and stop it after (`scripts/lib/serve.mjs`); nothing touches `~
 
 ## Publishing
 
-**As of 0.8.1, and on hold:** a release builds the extension and the runtime, which wait on
-Phase R, so there is no release of the port until then. What follows describes the 0.8.x process.
+**As of 0.8.1, and on hold:** a release builds the extension and the runtime payloads; the
+extension builds, the payloads do not yet (ROADMAP.md, Phase R), so there is no release of the
+port until then. What follows describes the 0.8.x process.
 
 Two scripts, each publishing one kind of thing. Neither runs as part of a
 build, and both read their credentials from the environment.

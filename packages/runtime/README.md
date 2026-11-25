@@ -51,7 +51,7 @@ project would be imported instead of the real one:
 
 ```console
 $ cd a-project-with-a-pydantic.py
-$ .../python/bin/python3.14 -m tau_coding_agent.cli --version
+$ .../python/bin/python3.14 -m tau --version
 SHADOWED: the workspace pydantic.py was imported
 
 $ .../bin/tau --version          # the shim, which passes -I

@@ -5,8 +5,8 @@
 > requests. τ 0.16 replaced that wire. The port (built against protocol 1, now protocol 2 for
 > τ 0.17, over `tau serve`'s HTTP edge) is on `master`, merged from `feat/http-edge-client`: see
 > README.md ("The wire") and ROADMAP.md. Sections 1–8 and 15 no longer describe the code; the UI
-> and packaging decisions (§9 onward) are kept for
-> their reasoning until Phase R rewrites them.
+> and packaging decisions (§9 onward) are kept for their reasoning. The extension's port (Phase R)
+> is §16.
 
 **Status: both hosts speak `tau serve` (0.8.1, alongside τ 0.14.1).** The web
 client and the VS Code extension are clients of τ's daemon; the Node connection
@@ -1409,3 +1409,57 @@ The hub and the runner are deleted; both hosts are clients of τ's daemon
 - **The smoke scripts start a throwaway daemon** (`scripts/lib/daemon.mjs`):
   a temp HOME, a free port, and nothing of `~/.tau` opened.
 
+
+---
+
+## 16. Phase R: the extension on protocol 2 (2026-11-24)
+
+The extension is ported to τ ≥ 0.17.0 (protocol 2, the HTTP edge of D29). It mounts the web
+client's `TauApp` (`@ffwf/tau-code-ui`) in its webview; what is editor-specific is the host.
+§2.0–§2.3 above describe the 0.11 daemon and are superseded by this section for the extension.
+
+- **One tab, one session, one server.** τ serves one session per `tau serve` process, so a panel
+  is a session. `tau: Open Agent` opens the workspace folder's newest session (`-c`), or a new one
+  in a folder that has none; `tau: New Session` opens a new one. Both run `tau serve -d --json
+  <flags>` in the folder (`packages/vscode/src/serve.ts`). `-d` is idempotent per session: a
+  session already served (another tab, another window, a terminal) is reused, not served twice.
+  The serve record gives the edge's `url` and bearer `token`. The extension reads no τ config and
+  knows no port.
+- **The host relays; the page never dials** (`relay.ts`, HE-14's preferred design). The extension
+  host opens the edge with the same `HttpTransport` the browser uses (Node's `fetch`, which sends
+  no `Origin`), and moves whole JSON-RPC messages to and from the page by `postMessage`, one
+  numbered connection per `SessionLink` connection. So the token never enters the page, τ needs no
+  `--allow-origin vscode-webview://…`, and under Remote SSH, WSL or a devcontainer the server and
+  its loopback edge stay on the remote, next to the files, with the panel local. The page's CSP
+  has no `connect-src`.
+- **Refusals keep their meaning across the relay.** The page's `Relay.open()` resolves when the
+  host has the stream open, and rejects with the host's `EdgeError` kind otherwise. A new kind,
+  `unavailable` (final), is a host with nothing to dial: no τ found, `tau serve` refusing to start,
+  a τ that speaks another protocol, or a server running `--no-http`. `SessionLink` stays failed on
+  it with the host's sentence until "Reconnect", as it does on a 401 in the browser.
+- **A server that went away is started again.** A detached server exits after ten idle minutes,
+  and a restarted one has a new token. When the record's edge is unreachable or refuses the token,
+  the host runs `tau serve -d --session <id>` once more and opens the new edge. A session that was
+  never written (τ saves a session at its first node) cannot be reopened by id; the host then
+  starts a new session and says so.
+- **A reload keeps the session.** The page keeps `{session, client}` in webview state; the panel
+  serializer and the sidebar read it back and reopen that session. The client id
+  (`vscode@user@host:<random>`) is stable per tab, so a question addressed to it still reaches it.
+- **Which τ** is still `runtime.ts` (§14.3): `tau-code.binary`, `TAU_BIN`, the runtime companion,
+  then PATH. The serve record names the serving τ's version, so the "this tab is served by another
+  τ" notice compares against the server, not the τ that would have started it. Notices are editor
+  notifications now, with their action as a button, since `TauApp` has no host-notice slot.
+- **Gone:** `tau-code.token` (the record carries the token) and `tau-code.model` (`tau serve` takes
+  no model; a cursor's model is changed with `/model`). "Restart the tau Daemon" is "Restart This
+  Session's tau Server": `tau serve --stop --session <id>`, then a reconnect, which starts it again.
+- **The runtime payload is one wheel.** `tauSpec` is `ffwf-tau==0.17.0` (a cp312-abi3 wheel with
+  τ's native `tau._core`, plus pure-Python httpx, websockets, h11, textual). The provider SDKs and
+  Pillow are gone from τ's closure, and with them §15's lazy-import list; the build imports
+  `tau._core`, httpx, websockets and h11, starts `tau serve -d --json` in a folder and says `hello`
+  over the HTTP edge with the payload's own standard library. The shim and the manifest run
+  `python -I -m tau`.
+- **Tested in a real VSCodium** (`npm run smoke:vscode`): the packaged `.vsix` is installed with
+  `codium --install-extension` into throwaway dirs, VSCodium runs under Xvfb with a debugging port,
+  and Playwright drives the command palette and the webview: a chat round trip, `/model` and an
+  image result labelled `[image 1x1 image/png]`, a window reload restoring the tab's session, and
+  a server restart; the token is checked absent from every webview document.

@@ -4,7 +4,7 @@
   "//displayName": "A FOURTH namespace, and the only global one: `name` is scoped by publisher, so `ffwf.tau-code` is ours as soon as we own `ffwf`, but a display name is unique across the entire Marketplace and no publisher prefix applies. `tau` was refused as taken. This one matches every other identifier here -- the repository, the extension name, the .vsix. Open VSX enforces no such rule.",
   "displayName": "tau code",
   "version": "0.8.1",
-  "description": "Run a tau agent inside VS Code or VSCodium.",
+  "description": "Run a tau agent inside VS Code or VSCodium (tau >= 0.17.0).",
   "license": "MIT",
   "publisher": "ffwf",
   "//private": "`private` stops an accidental `npm publish`. It does not stop a marketplace publish: scripts/publish-extension.sh publishes the built .vsix by path, and vsce reads the manifest out of the archive rather than off disk.",
@@ -62,6 +62,12 @@
         "icon": "$(comment-discussion)"
       },
       {
+        "command": "tau-code.newSession",
+        "title": "New Session",
+        "category": "tau",
+        "icon": "$(add)"
+      },
+      {
         "command": "tau-code.restart",
         "title": "Reconnect to tau serve",
         "category": "tau",
@@ -74,12 +80,12 @@
       },
       {
         "command": "tau-code.restartDaemon",
-        "title": "Restart the tau Daemon",
+        "title": "Restart This Session's tau Server",
         "category": "tau"
       },
       {
         "command": "tau-code.chooseRuntime",
-        "title": "Choose Which tau Starts the Daemon",
+        "title": "Choose Which tau Starts the Server",
         "category": "tau"
       },
       {
@@ -96,9 +102,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "tau-code.restart",
+          "command": "tau-code.newSession",
           "when": "view == tau-code.chat",
           "group": "navigation@2"
+        },
+        {
+          "command": "tau-code.restart",
+          "when": "view == tau-code.chat",
+          "group": "navigation@3"
         }
       ],
       "editor/title": [
@@ -128,22 +139,12 @@
             "Only the bundled runtime extension. Refuses to start when it is absent, rather than running a different tau.",
             "Only tau on PATH, or whatever tau-code.binary names. The runtime extension is ignored even if installed."
           ],
-          "markdownDescription": "Which tau starts the daemon (`tau serve -d`) when more than one is available. A daemon that is already running is used whichever tau started it.\n\n`ffwf.tau-runtime` is a separate, optional extension that ships its own CPython with tau installed into it. When it and a system tau are both present, this decides — and if the two are different versions, the panel says so rather than picking quietly.\n\nA `tau-code.binary` you have set explicitly, or `TAU_BIN`, wins over all three: naming a path is an instruction, and a path that does not work is an error rather than a reason to run something else."
+          "markdownDescription": "Which tau starts a session's server (`tau serve -d`) when more than one is available. A server that is already running is used whichever tau started it.\n\n`ffwf.tau-runtime` is a separate, optional extension that ships its own CPython with tau installed into it. When it and a system tau are both present, this decides — and if the two are different versions, the panel says so rather than picking quietly.\n\nA `tau-code.binary` you have set explicitly, or `TAU_BIN`, wins over all three: naming a path is an instruction, and a path that does not work is an error rather than a reason to run something else."
         },
         "tau-code.binary": {
           "type": "string",
           "default": "tau",
           "markdownDescription": "Path to tau's console script. A bare name is looked up on PATH.\n\nLeave it at `tau` to let `tau-code.runtime` decide. Setting it to anything else overrides that setting entirely, including the bundled runtime."
-        },
-        "tau-code.model": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "The model a session this extension creates starts on: a name from the daemon's `~/.tau/config.json`. Empty uses the daemon's default. Switch an existing session's model from the panel."
-        },
-        "tau-code.token": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "The token to send when the daemon has `serve.token` set. Empty sends none, which is right for a daemon without one (the default)."
         }
       }
     }
@@ -159,15 +160,13 @@
     "@ffwf/tau-code-protocol": "*",
     "@ffwf/tau-code-ui": "*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "ws": "^8.18.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",
-    "@types/ws": "^8.5.12",
     "@vitejs/plugin-react": "^4.3.0",
     "esbuild": "^0.24.0",
     "vite": "^5.4.0"
