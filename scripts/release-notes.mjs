@@ -100,6 +100,13 @@ if (taus.length > 1) {
       `on one machine and wrong on the next.`,
   );
 }
+// The web client `tau serve` answers `GET /` with (ffwf-tau-web) is held to the same rule: one per
+// release, and stated. A manifest without it predates the pin and is refused rather than guessed.
+const webs = [...new Set(rows.map((row) => row.manifest.tauWebVersion))];
+if (webs.some((web) => typeof web !== 'string' || web === '')) {
+  die('a manifest has no tauWebVersion: rebuild its payload with this build-payload.mjs.');
+}
+if (webs.length > 1) die(`these payloads carry ffwf-tau-web ${webs.join(' and ')}.`);
 const pythons = [...new Set(rows.map((row) => row.manifest.pythonVersion))];
 if (pythons.length > 1) die(`these payloads carry CPython ${pythons.join(' and ')}.`);
 
@@ -113,7 +120,8 @@ const lines = [];
 
 lines.push(
   `**τ ${taus[0]} on CPython ${pythons[0]}**` +
-    (protocol ? `, speaking protocol ${protocol}.` : '.'),
+    (protocol ? `, speaking protocol ${protocol}` : '') +
+    `, with ffwf-tau-web ${webs[0]}.`,
 );
 lines.push('');
 lines.push(changes);

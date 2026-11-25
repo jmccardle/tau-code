@@ -1510,10 +1510,13 @@ client's `TauApp` (`@ffwf/tau-code-ui`) in its webview; what is editor-specific 
 - **Gone:** `tau-code.token` (the record carries the token) and `tau-code.model` (`tau serve` takes
   no model; a cursor's model is changed with `/model`). "Restart the tau Daemon" is "Restart This
   Session's tau Server": `tau serve --stop --session <id>`, then a reconnect, which starts it again.
-- **The runtime payload is one wheel.** `tauSpec` is `ffwf-tau==0.17.0` (a cp312-abi3 wheel with
-  τ's native `tau._core`, plus pure-Python httpx, websockets, h11, textual). The provider SDKs and
-  Pillow are gone from τ's closure, and with them §15's lazy-import list; the build imports
-  `tau._core`, httpx, websockets and h11, starts `tau serve -d --json` in a folder and says `hello`
+- **The runtime payload is one wheel.** `tauSpec` is `ffwf-tau==0.17.1` (a cp312-abi3 wheel with
+  τ's native `tau._core`, plus pure-Python httpx, websockets, h11, textual) and, since 0.9.1,
+  `ffwf-tau-web==0.17.1`: τ asks for the web client by range, so without the pin the payload would
+  carry whichever one was newest on PyPI at build time. The build fails if any `==` pin installs
+  at another version, and the manifest records `tauWebVersion` beside `tauVersion`. The provider
+  SDKs and Pillow are gone from τ's closure, and with them §15's lazy-import list; the build imports
+  `tau._core`, httpx, websockets, h11 and `tau_web`, starts `tau serve -d --json` in a folder and says `hello`
   over the HTTP edge with the payload's own standard library. The shim and the manifest run
   `python -I -m tau`.
 - **Tested in a real VSCodium** (`npm run smoke:vscode`): the packaged `.vsix` is installed with

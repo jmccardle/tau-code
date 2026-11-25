@@ -41,7 +41,7 @@ if (!existsSync(MANIFEST)) {
 const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8'));
 const interpreter = join(PAYLOAD, manifest.interpreter);
 const shim = join(PAYLOAD, manifest.shim);
-console.log(`payload ${manifest.target}: tau ${manifest.tauVersion} on Python ${manifest.pythonVersion}`);
+console.log(`payload ${manifest.target}: tau ${manifest.tauVersion} on Python ${manifest.pythonVersion}, ffwf-tau-web ${manifest.tauWebVersion}`);
 console.log(`  ${interpreter} ${[...manifest.args, 'serve', '-d', '--json'].join(' ')}`);
 
 // The manifest's paths are relative BY DESIGN -- the tree is built here and unpacked somewhere
@@ -76,6 +76,24 @@ try {
   assert.ok(typeof record.url === 'string' && typeof record.token === 'string', 'the record names the HTTP edge and its token');
   console.log(`ok: serve -d started ${record.session} (pid ${record.pid}) at ${record.url}, protocol ${record.protocol}`);
   if (manifest.protocolVersion !== undefined) assert.equal(manifest.protocolVersion, record.protocol, "it agrees with the payload's manifest");
+
+  // The web client the payload's server answers `GET /` with is the payload's own ffwf-tau-web
+  // (manifest.tauWebVersion), byte for byte, and it speaks this τ's protocol. -B so asking leaves
+  // no bytecode in the payload.
+  const web = JSON.parse(
+    execFileSync(
+      interpreter,
+      ['-I', '-B', '-c', 'import json, tau_web; print(json.dumps({"dist": str(tau_web.DIST), "client": tau_web.CLIENT_VERSION}))'],
+      { env, encoding: 'utf8' },
+    ),
+  );
+  execFileSync(interpreter, ['-I', '-B', '-m', 'tau_web', shim], { env, encoding: 'utf8' });
+  const page = await fetch(new URL('/', record.url));
+  assert.equal(page.status, 200, 'GET /');
+  const body = await page.text();
+  assert.ok(!body.includes('<title>tau serve</title>'), "GET / is τ's help page: the payload's tau_web was not found");
+  assert.equal(body, readFileSync(join(web.dist, 'index.html'), 'utf8'), "GET / is not the payload's tau_web/dist/index.html");
+  console.log(`ok: GET / serves the payload's ffwf-tau-web ${manifest.tauWebVersion} (built from tau-code ${web.client})`);
 
   const again = serve('-d', '--json', '--session', record.session);
   assert.equal(again.started, false);

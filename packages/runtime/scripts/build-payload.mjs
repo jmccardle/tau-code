@@ -638,9 +638,10 @@ function writeShim(payload, layout) {
 /**
  * Modules the payload must import, from the tau the extension runs: tau's native module (the one
  * wheel-tag-specific thing tau ships), and the HTTP and WebSocket stacks `tau serve` and the
- * model calls use. Missing one passes a `--version` and fails at the first prompt.
+ * model calls use. Missing one passes a `--version` and fails at the first prompt. `tau_web` is
+ * ffwf-tau-web, the web client `tau serve` answers `GET /` with.
  */
-const MODULES = ['tau._core', 'httpx', 'websockets', 'h11'];
+const MODULES = ['tau._core', 'httpx', 'websockets', 'h11', 'tau_web'];
 
 async function verify(interpreter, args, modules) {
   const version = capture(interpreter, [...args, '--version']);
@@ -871,6 +872,20 @@ async function build(target, options) {
   }
 
   const tauVersion = installedVersion(sitePackages, 'ffwf_tau');
+  const tauWebVersion = installedVersion(sitePackages, 'ffwf_tau_web');
+
+  // Every exact pin in the spec is checked against what pip actually installed. ffwf-tau asks for
+  // ffwf-tau-web by range (>=0.17,<0.18), which resolves to whatever is newest on the index at
+  // build time; the pin in tauSpec is what makes the web client a decision, and this is what
+  // makes the pin true of the payload rather than of the request. A pin pip could not honour
+  // fails pip; this catches one it satisfied from somewhere unexpected.
+  for (const requirement of tauSpec()) {
+    const pinned = /^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)$/.exec(requirement);
+    if (!pinned) continue;
+    const [, distribution, wanted] = pinned;
+    const got = installedVersion(sitePackages, distribution.toLowerCase().replace(/[-.]/g, '_'));
+    if (got !== wanted) die(`${requirement} was asked for and ${distribution} ${got} was installed.`);
+  }
 
   // --- the shim -------------------------------------------------------------
   const shim = writeShim(out, spec.layout);
@@ -902,6 +917,7 @@ async function build(target, options) {
     args,
     pythonVersion: PY_VERSION,
     tauVersion,
+    tauWebVersion,
     tauSpec: tauSpec(),
     pbsRelease: PBS_RELEASE,
     builtAt: new Date().toISOString(),
@@ -986,7 +1002,7 @@ async function build(target, options) {
   say(
     `  size    ${mb(final)} on disk  (interpreter ${mb(raw)}, pruned ${mb(removed)}, tau ${mb(treeSize(sitePackages))})`,
   );
-  say(`  tau     ${tauVersion} on Python ${PY_VERSION}`);
+  say(`  tau     ${tauVersion} on Python ${PY_VERSION}, ffwf-tau-web ${tauWebVersion}`);
   return { target, tauVersion, bytes: final };
 }
 
