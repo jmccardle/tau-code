@@ -6,16 +6,15 @@
  *   node scripts/build-payload.mjs --all
  *
  *   # an unpublished tau, from local wheels:
- *   TAU_WHEELS=dir/ TAU_SPEC='ffwf-tau-coding-agent[serve]==0.12.0rc1 ffwf-tau-llm[anthropic,google]==0.12.0rc1' \\
- *     node scripts/build-payload.mjs
+ *   TAU_WHEELS=dir/ TAU_SPEC='ffwf-tau==0.18.0rc1' node scripts/build-payload.mjs
  *
  * Every target is built from ONE machine, and that is not a convenience: the
- * whole payload is a prebuilt interpreter plus wheels, and the only compiled
- * things in tau's serve closure are pydantic-core and websockets' C speedups,
- * both of which publish a wheel for all nine of VS Code's desktop targets. Nothing here compiles, so nothing here
- * needs a machine of the target's architecture. If that ever stops being true
- * -- a dependency with no wheel for some target -- this script fails on that
- * target rather than quietly shipping a payload missing a module.
+ * whole payload is a prebuilt interpreter plus wheels. The compiled things in
+ * tau's closure are tau's own native module (`tau._core`, a cp312-abi3 wheel)
+ * and websockets' C speedups. Nothing here compiles, so nothing here needs a
+ * machine of the target's architecture. A target tau publishes no wheel for
+ * (as of 0.17.0: linux-armhf, alpine-*, win32-arm64) fails here, at pip,
+ * rather than quietly shipping a payload missing a module.
  *
  * What it does NOT do is decide the tau version. That is `tauSpec` in
  * package.json, one copy, and the manifest this writes records what pip
@@ -34,7 +33,6 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,9 +84,6 @@ const TARGETS = {
     triple: 'armv7-unknown-linux-gnueabihf',
     layout: 'posix',
     pip: ['manylinux_2_17_armv7l', 'manylinux2014_armv7l'],
-    // Pillow publishes no armv7l wheel. Reading an image on this target is
-    // τ's own ImageSupportUnavailable, which names the missing extra.
-    without: ['images'],
   },
   'alpine-x64': {
     triple: 'x86_64-unknown-linux-musl',
@@ -241,7 +236,7 @@ function isBinary(name) {
  *
  * The set is the interpreter's executables, its extension modules, its library
  * directory, and any compiled module a wheel installed. A wheel's `.so` is in
- * there because the payload is not just CPython: `pydantic_core` is the one
+ * there because the payload is not just CPython: `tau._core` is the one
  * today, and the next dependency to arrive with a native module gets the same
  * protection without anyone remembering to add it.
  */
@@ -520,10 +515,9 @@ function installedVersion(sitePackages, distribution) {
   return found[0].slice(prefix.length, -'.dist-info'.length);
 }
 
-/** What pip installs for `target`: the requirements, less the extras that target goes `without`. */
-function tauSpec(target) {
-  const without = TARGETS[target].without ?? [];
-  return requirements().map((requirement) => withoutExtras(requirement, without));
+/** What pip installs (the same for every target). */
+function tauSpec() {
+  return requirements();
 }
 
 /**
@@ -562,7 +556,7 @@ function writeShim(payload, layout) {
         'rem The bundled tau. %~dp0 is this file\'s own directory, so the tree relocates.',
         'rem -I is isolated mode: no PYTHONPATH, no PYTHONHOME, no user site, and no',
         'rem working directory on sys.path. See ARCHITECTURE 14.4.',
-        '"%~dp0..\\python\\python.exe" -I -m tau_coding_agent.cli %*',
+        '"%~dp0..\\python\\python.exe" -I -m tau %*',
         '',
       ].join('\r\n'),
     );
@@ -593,7 +587,7 @@ function writeShim(payload, layout) {
       'here=$(cd "$(dirname "$self")" && pwd)',
       // python3.14 and not python3: the aliases are deleted, because a .vsix is
       // a zip and vsce turns each symlink into a full copy of the interpreter.
-      `exec "$here/../python/bin/python${PY_SHORT}" -I -m tau_coding_agent.cli "$@"`,
+      `exec "$here/../python/bin/python${PY_SHORT}" -I -m tau "$@"`,
       '',
     ].join('\n'),
   );
@@ -602,66 +596,39 @@ function writeShim(payload, layout) {
 }
 
 /**
- * Prove the payload runs a daemon and speaks the serve protocol, the way
+ * Prove the payload runs a server and speaks the serve protocol, the way
  * docker/verify.py proves it for the image. Only possible for the host's own
  * target -- a win32-arm64 payload cannot be executed here -- so cross builds
  * get the structural checks and say so rather than reporting a pass they did
  * not do.
  *
  * Both ends are the payload: `tau serve` from it, and the hello sent by its own
- * interpreter through its own `websockets`. That is the closure the extension
+ * interpreter over the HTTP edge. That is the closure the extension
  * depends on now, and `websockets` is the second compiled package in it
  * (its C speedups), so importing it here is the check that its wheel matched.
  */
 /**
- * `name[a,b]==v` with the extras in `without` removed. Every requirement keeps
- * its name and version: dropping an extra must not drop the package.
+ * Modules the payload must import, from the tau the extension runs: tau's native module (the one
+ * wheel-tag-specific thing tau ships), and the HTTP and WebSocket stacks `tau serve` and the
+ * model calls use. Missing one passes a `--version` and fails at the first prompt.
  */
-function withoutExtras(requirement, without) {
-  const match = /^([^[]+)\[([^\]]*)\](.*)$/.exec(requirement);
-  if (!match || without.length === 0) return requirement;
-  const kept = match[2].split(',').map((e) => e.trim()).filter((e) => !without.includes(e));
-  return kept.length ? `${match[1]}[${kept.join(',')}]${match[3]}` : `${match[1]}${match[3]}`;
-}
-
-/**
- * Modules a model call imports lazily, by the extra that brings them: the
- * anthropic and google wire protocols, and image input.
- */
-const LAZY_MODULES = { anthropic: 'anthropic', google: 'google.genai', images: 'PIL' };
-
-/** The lazy modules `target` ships: all of them, less its `without`. */
-function lazyModules(target) {
-  const without = TARGETS[target].without ?? [];
-  return Object.entries(LAZY_MODULES)
-    .filter(([extra]) => !without.includes(extra))
-    .map(([, module]) => module);
-}
+const MODULES = ['tau._core', 'httpx', 'websockets', 'h11'];
 
 async function verify(interpreter, args, modules) {
   const version = capture(interpreter, [...args, '--version']);
   say(`  verify  ${version}`);
 
-  // τ refuses to start without a model configured, so this bakes an address
-  // nothing listens on into a throwaway HOME. Honest, because nothing calls it:
-  // hello contacts no model.
+  // A throwaway HOME whose τ home (`~/.tau`) configures τ's mock model: `hello` contacts no
+  // model, and nothing here sends a prompt.
   const home = mkdtempSync(join(tmpdir(), 'tau-runtime-verify-'));
-  mkdirSync(join(home, '.tau'), { recursive: true });
+  const tauHome = join(home, '.tau');
+  mkdirSync(tauHome, { recursive: true, mode: 0o700 });
   writeFileSync(
-    join(home, '.tau', 'config.json'),
-    JSON.stringify({
-      models: {
-        'verify-llm': {
-          backend: 'openai',
-          model: 'unused-by-verify',
-          base_url: 'http://127.0.0.1:1/v1',
-          api_key: 'not-needed',
-        },
-      },
-      default_model: 'verify-llm',
-      system_prompt: 'unused',
-    }),
+    join(tauHome, 'config.json'),
+    JSON.stringify({ default_model: 'mock', models: { mock: { model: 'mock', provider: 'mock' } } }),
   );
+  const work = join(home, 'work');
+  mkdirSync(work);
   // Isolated from this shell on purpose: the payload has to work with none of a
   // developer's Python environment reaching it -- a bundled runtime that
   // silently resolves against the host's is one that works on every machine
@@ -675,10 +642,10 @@ async function verify(interpreter, args, modules) {
 
   // A user site in that HOME, with a canary in it. Python imports
   // `usercustomize` at startup from the user site, so any interpreter in the
-  // daemon's chain that reaches it leaves the marker. That is the τ 0.14.0
+  // server's chain that reaches it leaves the marker. That is the τ 0.14.0
   // failure (τ #79): `serve -d` re-launched itself without `-I`, and on a host
   // whose ~/.local/lib/python3.x held an older typing_extensions every model
-  // call failed. Only a real user site in the HOME the daemon runs with shows it.
+  // call failed. Only a real user site in the HOME the server runs with shows it.
   const userSite = join(home, '.local', 'lib', `python${PY_SHORT}`, 'site-packages');
   const leaked = join(home, 'user-site-reached');
   mkdirSync(userSite, { recursive: true });
@@ -687,75 +654,95 @@ async function verify(interpreter, args, modules) {
     `import sys\nopen(${JSON.stringify(leaked)}, "a").write(" ".join(sys.orig_argv) + "\\n")\n`,
   );
 
-  // Every provider SDK τ imports lazily, on the first request to that wire
-  // protocol. Missing one passes every other check here and fails at the
-  // user's first prompt to that model, so each is imported now.
   for (const module of modules) {
     const imported = spawnSync(interpreter, ['-I', '-B', '-c', `import ${module}`], { encoding: 'utf8', env });
     if (imported.status !== 0) {
-      throw new Error(`the payload cannot import ${module}, which a model call needs: ${imported.stderr.trim()}`);
+      throw new Error(`the payload cannot import ${module}: ${imported.stderr.trim()}`);
     }
   }
   say(`  verify  imports ${modules.join(', ')}`);
 
-  // Started the way the extension starts it -- `serve -d --json` -- because the
-  // detached daemon is a second interpreter, and it is the one that serves.
-  const port = await freePort();
-  const started = spawnSync(interpreter, [...args, 'serve', '-d', '--json', '--listen', `127.0.0.1:${port}`], {
-    encoding: 'utf8',
-    env,
-  });
+  // Started the way the extension starts it -- `serve -d --json` in a folder --
+  // because the detached server is a second interpreter, and it is the one that
+  // serves.
+  const started = spawnSync(interpreter, [...args, 'serve', '-d', '--json'], { encoding: 'utf8', env, cwd: work });
   if (started.error || started.status !== 0) {
     rmSync(home, { recursive: true, force: true });
-    throw new Error(`\`tau serve -d\` from the payload failed: ${started.error?.message ?? started.stderr}`);
+    throw new Error(`\`tau serve -d\` from the payload failed: ${started.error?.message ?? (started.stdout + started.stderr)}`);
   }
-  const daemon = JSON.parse(started.stdout);
-  const daemonLog = () => (existsSync(daemon.log) ? readFileSync(daemon.log, 'utf8') : '(no log)');
+  const record = JSON.parse(started.stdout);
+  const serverLog = () => (existsSync(record.log) ? readFileSync(record.log, 'utf8') : '(no log)');
 
-  // The protocol version is whatever the daemon answers; hello names the one
-  // this client was generated against, so a payload pinned to a τ that speaks
-  // another refuses here, at build time.
+  // `hello` over the HTTP edge (D29), with the payload's own interpreter and only
+  // the standard library: GET /stream (server-sent events) gives the connection
+  // id, a POST to /stream/<id> sends `hello`, and its answer comes down the
+  // stream. `hello` names the protocol this client was generated against, so a
+  // payload pinned to a τ that speaks another refuses here, at build time.
   const hello = [
-    'import json, sys, time',
-    'from websockets.sync.client import connect',
-    `deadline = time.monotonic() + 30`,
-    'while True:',
-    '    try:',
-    `        with connect("ws://127.0.0.1:${port}/", open_timeout=2) as socket:`,
-    `            socket.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {"protocol": sys.argv[1], "client": "runtime-verify"}}))`,
-    '            answer = json.loads(socket.recv(timeout=10))',
-    '        break',
-    '    except OSError:',
-    '        if time.monotonic() > deadline: raise',
-    '        time.sleep(0.2)',
-    'print(json.dumps(answer))',
+    'import http.client, json, sys, urllib.parse',
+    'url = urllib.parse.urlsplit(sys.argv[1]); token = sys.argv[2]; protocol = int(sys.argv[3])',
+    'auth = {"Authorization": "Bearer " + token}',
+    'stream = http.client.HTTPConnection(url.hostname, url.port, timeout=30)',
+    'stream.request("GET", "/stream", headers={**auth, "Accept": "text/event-stream"})',
+    'response = stream.getresponse()',
+    'assert response.status == 200, f"GET /stream: HTTP {response.status}"',
+    'def events():',
+    '    kind, data = "message", []',
+    '    while True:',
+    '        line = response.readline().decode().rstrip("\\r\\n")',
+    '        if line == "":',
+    '            if data: yield kind, "\\n".join(data)',
+    '            kind, data = "message", []',
+    '        elif line.startswith(":"): pass',
+    '        elif line.startswith("event:"): kind = line[6:].strip()',
+    '        elif line.startswith("data:"): data.append(line[5:].lstrip(" "))',
+    'feed = events()',
+    'kind, connection = next(feed)',
+    'assert kind == "connection", f"the stream began with {kind!r}"',
+    'post = http.client.HTTPConnection(url.hostname, url.port, timeout=30)',
+    'body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {"protocol": protocol, "client": "runtime-verify"}})',
+    'post.request("POST", "/stream/" + connection, body=body, headers={**auth, "Content-Type": "application/json"})',
+    'posted = post.getresponse(); posted.read()',
+    'assert posted.status == 202, f"POST: HTTP {posted.status}"',
+    'for kind, data in feed:',
+    '    message = json.loads(data)',
+    '    if message.get("id") == 1:',
+    '        print(json.dumps(message)); break',
   ].join('\n');
 
   try {
-    const said = spawnSync(interpreter, ['-I', '-B', '-c', hello, generatedProtocol()], { encoding: 'utf8', env });
+    if (typeof record.url !== 'string' || typeof record.token !== 'string') {
+      throw new Error(`the serve record names no HTTP edge: ${started.stdout}`);
+    }
+    const said = spawnSync(interpreter, ['-I', '-B', '-c', hello, record.url, record.token, String(generatedProtocol())], {
+      encoding: 'utf8',
+      env,
+      timeout: 60_000,
+    });
     if (said.error || said.status !== 0) {
       throw new Error(`hello from the payload failed: ${said.error?.message ?? said.stderr}`);
     }
     const answer = JSON.parse(said.stdout);
     if ('error' in answer) {
-      throw new Error(`the payload's daemon refused hello: ${JSON.stringify(answer.error)}`);
+      throw new Error(`the payload's server refused hello: ${JSON.stringify(answer.error)}`);
     }
     if (existsSync(leaked)) {
       throw new Error(
-        `an interpreter in the daemon's chain read the user site, so a user's ~/.local packages ` +
+        `an interpreter in the server's chain read the user site, so a user's ~/.local packages ` +
           `would shadow the payload's. It ran:\n${readFileSync(leaked, 'utf8')}`,
       );
     }
     const protocol = answer.result.protocol;
-    say(`  verify  tau serve -d speaks protocol ${protocol}, and never reads a user site, PYTHONPATH or HOME of yours`);
+    say(`  verify  tau serve -d speaks protocol ${protocol} over HTTP, and never reads a user site, PYTHONPATH or HOME of yours`);
     return protocol;
   } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\ndaemon log:\n${daemonLog()}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nserver log:\n${serverLog()}`);
   } finally {
+    spawnSync(interpreter, [...args, 'serve', '--stop', '--session', record.session], { env, cwd: work });
     try {
-      process.kill(daemon.pid, 'SIGKILL');
+      process.kill(record.pid, 'SIGKILL');
     } catch {
-      // Already gone: the error above, if any, says why.
+      // Stopped, as it should be.
     }
     rmSync(home, { recursive: true, force: true });
   }
@@ -764,21 +751,9 @@ async function verify(interpreter, args, modules) {
 /** The serve protocol packages/protocol was generated against. */
 function generatedProtocol() {
   const generated = readFileSync(join(PKG_ROOT, '..', 'protocol', 'src', 'generated.ts'), 'utf8');
-  const match = /PROTOCOL_VERSION = "([^"]+)"/.exec(generated);
-  if (!match) throw new Error('packages/protocol/src/generated.ts names no PROTOCOL_VERSION.');
-  return match[1];
-}
-
-/** A port nothing is listening on right now. */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
+  const match = /export const PROTOCOL = (\d+)/.exec(generated);
+  if (!match) throw new Error('packages/protocol/src/generated.ts exports no PROTOCOL.');
+  return Number(match[1]);
 }
 
 function hostTarget() {
@@ -829,7 +804,7 @@ async function build(target, options) {
 
   const pip = process.env.PYTHON ?? 'python3';
   const platformArgs = spec.pip.flatMap((tag) => ['--platform', tag]);
-  say(`  pip     ${tauSpec(target).join(' ')} -> ${relative(out, sitePackages)}`);
+  say(`  pip     ${tauSpec().join(' ')} -> ${relative(out, sitePackages)}`);
   run(pip, [
     '-m',
     'pip',
@@ -853,7 +828,7 @@ async function build(target, options) {
     '--upgrade',
     // Wheels to prefer over the index, for a tau that is not published yet.
     ...(process.env.TAU_WHEELS ? ['--find-links', process.env.TAU_WHEELS] : []),
-    ...tauSpec(target),
+    ...tauSpec(),
   ]);
 
   // `--target` writes console scripts into <target>/bin. They carry an absolute
@@ -863,7 +838,7 @@ async function build(target, options) {
     rmSync(join(sitePackages, stray), { recursive: true, force: true });
   }
 
-  const tauVersion = installedVersion(sitePackages, 'ffwf_tau_coding_agent');
+  const tauVersion = installedVersion(sitePackages, 'ffwf_tau');
 
   // --- the shim -------------------------------------------------------------
   const shim = writeShim(out, spec.layout);
@@ -875,18 +850,18 @@ async function build(target, options) {
   if (!existsSync(interpreter)) die(`no interpreter at ${interpreter} after extraction.`);
   if (spec.layout !== 'windows') chmodSync(interpreter, 0o755);
 
-  // The one compiled thing in the closure. Checked by name, because a payload
-  // that is missing it or carries another platform's imports as an ImportError
-  // at the first model call -- long after the build that caused it.
-  const native = readdirSync(join(sitePackages, 'pydantic_core')).filter(
-    (name) => name.endsWith('.so') || name.endsWith('.pyd'),
+  // τ's native module. Checked by name, because a payload that is missing it,
+  // or carries another platform's, fails at `import tau` on the user's machine --
+  // long after the build that caused it.
+  const native = readdirSync(join(sitePackages, 'tau')).filter(
+    (name) => name.startsWith('_core.') && (name.endsWith('.so') || name.endsWith('.pyd')),
   );
   if (native.length === 0) {
-    die(`pydantic_core in this payload has no compiled module. pip resolved a pure-Python fallback, which does not exist -- so this is a wheel tag mismatch for ${target}.`);
+    die(`tau in this payload has no compiled _core module: a wheel tag mismatch for ${target}.`);
   }
   say(`  native  ${native.join(', ')}`);
 
-  const args = ['-I', '-m', 'tau_coding_agent.cli'];
+  const args = ['-I', '-m', 'tau'];
   const manifest = {
     apiVersion: 1,
     target,
@@ -895,7 +870,7 @@ async function build(target, options) {
     args,
     pythonVersion: PY_VERSION,
     tauVersion,
-    tauSpec: tauSpec(target),
+    tauSpec: tauSpec(),
     pbsRelease: PBS_RELEASE,
     builtAt: new Date().toISOString(),
   };
@@ -906,17 +881,16 @@ async function build(target, options) {
   // __pycache__, so a verify that ran last would leave 2.5 MB of this machine's
   // paths in a tree the prune step had already finished cleaning.
   if (target === hostTarget()) {
-    manifest.protocolVersion = await verify(interpreter, args, lazyModules(target));
+    manifest.protocolVersion = await verify(interpreter, args, MODULES);
   } else {
     say(`  verify  structural only -- ${target} cannot be executed on a ${hostTarget() ?? 'unknown'} host`);
     // Not an import, which needs the target's interpreter, but the next best
-    // thing: each lazy module's package directory is where pip would put it.
-    for (const module of lazyModules(target)) {
-      if (!existsSync(join(sitePackages, ...module.split('.')))) {
-        die(`${target}: no ${module} in the payload, which a model call needs.`);
-      }
+    // thing: each package's directory is where pip would put it.
+    for (const module of MODULES) {
+      const top = module.split('.')[0];
+      if (!existsSync(join(sitePackages, top))) die(`${target}: no ${top} in the payload.`);
     }
-    say(`  verify  ${lazyModules(target).join(', ')} present`);
+    say(`  verify  ${MODULES.map((module) => module.split('.')[0]).join(', ')} present`);
   }
 
   // --- prune ----------------------------------------------------------------
@@ -969,7 +943,7 @@ async function build(target, options) {
     // way to find out cheaply is to ask the interpreter again.
     if (target === hostTarget()) {
       say(`  verify  re-checking after prune`);
-      await verify(interpreter, args, lazyModules(target));
+      await verify(interpreter, args, MODULES);
       prune(python, []);
     }
   }
