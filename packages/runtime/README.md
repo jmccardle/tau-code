@@ -1,7 +1,8 @@
 # tau runtime
 
 A self-contained CPython with [τ](https://github.com/jmccardle/tau) installed
-into it, for the **tau code** extension (`ffwf.tau-code`).
+into it, for the **tau code** extension (`ffwf.tau-code`). 0.9.0 carries **τ 0.17.1**
+(protocol 2, the HTTP edge) on CPython 3.14.7.
 
 **This extension does nothing on its own.** It ships files and tells tau code
 where they are. Install it if you want tau code to work without installing
@@ -16,11 +17,11 @@ runtime/
   python/
     bin/python3.14                 the interpreter
     lib/python3.14/                the standard library
-      site-packages/               tau, pydantic, httpx, websockets, and pip
+      site-packages/               tau, httpx, websockets, textual, tau_web, and pip
 ```
 
 One interpreter, one copy of what `tau serve` imports, and `pip`. The extension
-starts the daemon from it (`tau serve -d`) when none is already running. No
+starts a server from it (`tau serve -d`, one per session) in the workspace folder. No
 Textual: τ's TUI is not what an editor extension runs, and leaving it out is 12
 packages and ~18 MB.
 
@@ -55,7 +56,7 @@ $ .../python/bin/python3.14 -m tau --version
 SHADOWED: the workspace pydantic.py was imported
 
 $ .../bin/tau --version          # the shim, which passes -I
-tau 0.10.3
+tau 0.17.1
 ```
 
 **This isolates τ's own imports, not its tools.** The process's working
@@ -110,9 +111,18 @@ that will run the agent. Over SSH, in WSL or in a devcontainer that is the
 **remote** machine, not your laptop — which is why this declares
 `extensionKind: ["workspace"]`, the same as tau code.
 
-Built from this repository: `npm run package:runtime`. Targets are `linux-x64`,
-`linux-arm64`, `linux-armhf`, `alpine-x64`, `alpine-arm64`, `darwin-x64`,
-`darwin-arm64`, `win32-x64`, `win32-arm64`.
+Built from this repository: `npm run package:runtime`. The released targets are
+`linux-x64`, `linux-arm64`, `darwin-x64` and `darwin-arm64`.
+
+Five targets are **held** and have no 0.9.0 runtime: `linux-armhf`, `alpine-x64`
+and `alpine-arm64` (τ publishes no armv7l or musllinux wheel yet), and `win32-x64`
+and `win32-arm64` (`tau serve` does not run on Windows yet; win32-arm64 also has
+no wheel). On those platforms the marketplaces may keep offering the **0.8.1**
+runtime, which carries τ 0.14.1 (protocol 1); tau code 0.9.0 refuses it and says
+how to fix that (install τ 0.17.1 yourself and set `tau-code.binary`). On Windows,
+Remote-WSL or Remote-SSH installs the Linux runtime on the remote. A target is
+held by a `held` field in `scripts/build-payload.mjs`; `--list` and `--all` skip
+it, `--held` prints them, and `--target <name>` still builds one.
 
 ## Licence
 

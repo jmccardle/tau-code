@@ -34,8 +34,8 @@ const version = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'))
 /**
  * vsce packages the directory it is run in, and reads `runtime/` from there.
  * With `--all` each target's tree lives under payloads/<target>/runtime, so the
- * tree is swapped into place one at a time rather than nine copies of the
- * extension existing on disk.
+ * tree is swapped into place one at a time rather than one copy of the
+ * extension per target existing on disk.
  */
 function packageOne(target) {
   const manifestPath = join(PKG_ROOT, 'runtime', 'manifest.json');

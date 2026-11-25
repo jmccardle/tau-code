@@ -1,17 +1,21 @@
 # tau-code as a container: `tau serve`, with the web client it hosts.
 #
-# The image is τ and a directory of static files. `tau serve` is the daemon
-# that owns the sessions, speaks the serve protocol on its port, and answers a
-# plain HTTP GET on the same port with the web client from --web-root -- so the
-# page and its socket are one origin and nothing else runs. Node builds the web
-# client and is not in the image.
+# The image is τ and a directory of static files. `tau serve` (τ ≥ 0.17) serves
+# one session, in /work, over its HTTP edge (D29): the serve protocol on
+# /stream behind a bearer token, and a plain HTTP GET on the same port answered
+# with the web client from --web-root -- so the page and its stream are one
+# origin and nothing else runs. Node builds the web client and is not in the
+# image.
 #
 #   docker build -t ffwf/tau-code .
-#   docker run --rm -p 127.0.0.1:8256:8256 -v "$PWD:/work" \
+#   docker run --rm -t -p 127.0.0.1:8256:8256 -v "$PWD:/work" \
 #     -e TAU_MODEL_BASE_URL=http://host.docker.internal:8000/v1 \
 #     ffwf/tau-code
 #
-# Then open http://127.0.0.1:8256/.
+# Then open the `open: http://0.0.0.0:8256/#token=…` address it prints (only
+# under -t: it holds the token), with 127.0.0.1 for the host. The token is new
+# on every start. A port other than 8256 on the host needs TAU_CODE_ORIGINS;
+# see docker/entrypoint.sh.
 
 # The Node that builds the web client. It is not shipped, so this is only a
 # build tool's version; it matches NODE_VERSION in the release workflow so the
@@ -52,13 +56,14 @@ RUN npx tsc --build packages/web \
 # -------------------------------------------------------------- runtime stage
 FROM python:3.12-slim-bookworm AS runtime
 
-# Which τ. `[serve]` brings the WebSocket daemon. 0.14.1 speaks serve protocol
-# 0.11, the one this client was generated against. A τ that is not on PyPI
+# Which τ. 0.17.x speaks protocol 2, the one this client was generated against,
+# over the HTTP edge; `serve` needs no extra since 0.16. A τ that is not on PyPI
 # yet builds with --build-context tau-wheels (above).
 #
-# packages/runtime pins the same release. Those two move together: two
-# artifacts shipping two τs is how a client ends up tested against neither.
-ARG TAU_SPEC=ffwf-tau[serve]==0.14.1
+# packages/runtime pins the same release (its `tauSpec`). Those two move
+# together: two artifacts shipping two τs is how a client ends up tested
+# against neither.
+ARG TAU_SPEC=ffwf-tau==0.17.1
 
 # The agent's tools resolve against a bind-mounted /work, so the container user
 # has to match the host user who owns it.
@@ -74,7 +79,7 @@ RUN groupadd -o -g "${TAU_GID}" tau \
  && mkdir -p /work \
  && chown -R "${TAU_UID}:${TAU_GID}" /work
 
-COPY --from=build /src/packages/web/dist-web /opt/tau-code/web
+COPY --from=build /src/packages/web/dist /opt/tau-code/web
 
 ENV HOME=/home/tau \
     PATH=/opt/tau/bin:$PATH \
@@ -90,11 +95,11 @@ ENTRYPOINT ["/usr/local/bin/tau-code-entrypoint"]
 CMD []
 
 # --------------------------------------------------------------- verify stage
-# Proves the image serves: the daemon starts, says hello at the protocol
-# version this client was generated against, and serves the web client's page
-# on the same port. No model is contacted, but τ refuses to start without one
-# configured, so this stage bakes an address nothing listens on -- which is
-# honest, because nothing calls it.
+# Proves the image serves: the entrypoint's server starts, says hello over HTTP
+# at the protocol this client was generated against, and serves the web
+# client's page on the same port. No model is contacted, but τ refuses to start
+# without one configured, so this stage bakes an address nothing listens on --
+# which is honest, because nothing calls it.
 #
 #   docker build --target verify -t ffwf/tau-code-verify . \
 #     && docker run --rm ffwf/tau-code-verify

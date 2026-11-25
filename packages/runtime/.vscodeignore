@@ -16,6 +16,10 @@ tsconfig.tsbuildinfo
 # megabytes once every target has been built.
 .cache/**
 payloads/**
+# Where `package-vsix.mjs --all` sets a single-target runtime/ aside while it
+# packages each payloads/<target>/. Without this line every --all .vsix carried
+# that second interpreter tree too (twice the files, about 50 MB instead of 25).
+runtime.parked/**
 
 # Bytecode belongs to whoever runs the interpreter, not to the archive: a .pyc
 # built here carries this machine's absolute paths in co_filename. The build

@@ -26,7 +26,7 @@ cat > "$CONFIG" <<EOF
 {
     "models": {
         "container-llm": {
-            "backend": "openai",
+            "provider": "openai",
             "model": "${TAU_MODEL_NAME:-stub}",
             "base_url": "${TAU_MODEL_BASE_URL}",
             "api_key": "${TAU_API_KEY:-not-needed}"

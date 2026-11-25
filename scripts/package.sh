@@ -84,8 +84,8 @@ if [ "$WHAT" = runtime ]; then
     done
   else
     # This machine's target only. `--all` is the release build and wants a
-    # deliberate `TAU_RUNTIME_TARGETS='...'`, because nine payloads is a
-    # different kind of afternoon.
+    # deliberate `TAU_RUNTIME_TARGETS='...'`, because a payload per
+    # target is a different kind of afternoon.
     npm run payload --workspace packages/runtime
     npm run package --workspace packages/runtime
   fi

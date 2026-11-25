@@ -9,6 +9,7 @@
 **/dist-web
 **/dist-webview
 **/dist-types
+**/dist-tsc
 **/*.tsbuildinfo
 *.vsix
 

@@ -36,6 +36,8 @@ export class ServeRelay implements vscode.Disposable {
   #disposed = false;
   /** The version notice already shown, so a reconnect does not repeat it. */
   #warned: string | null = null;
+  /** The incompatible-τ notice already shown. */
+  #refused: string | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -143,6 +145,7 @@ export class ServeRelay implements vscode.Disposable {
       const reason = error instanceof Error ? error.message : String(error);
       this.output.error(`[${this.label}] ${reason}`);
       if (error instanceof NoServer && error.resolution && !error.resolution.chosen) this.#offerRuntime(reason);
+      if (error instanceof NoServer && error.incompatible) this.#offerChoice(reason);
       const kind = error instanceof EdgeError ? error.kind : 'unavailable';
       if (this.#connections.has(connection)) {
         this.#connections.delete(connection);
@@ -238,6 +241,21 @@ export class ServeRelay implements vscode.Disposable {
     const install = 'Install the runtime extension';
     void vscode.window.showWarningMessage(reason, install).then((picked) => {
       if (picked === install) void vscode.commands.executeCommand('tau-code.installRuntime');
+    });
+  }
+
+  /**
+   * A τ that speaks another protocol (a stale tau runtime, an old τ on PATH): said once per panel as
+   * a notification too, because the fix is in the editor's settings, not in the page.
+   */
+  #offerChoice(reason: string): void {
+    if (this.#refused === reason) return;
+    this.#refused = reason;
+    const choose = 'Choose Which tau';
+    const log = 'Show Log';
+    void vscode.window.showErrorMessage(reason, choose, log).then((picked) => {
+      if (picked === choose) void vscode.commands.executeCommand('tau-code.chooseRuntime');
+      if (picked === log) void vscode.commands.executeCommand('tau-code.showLog');
     });
   }
 

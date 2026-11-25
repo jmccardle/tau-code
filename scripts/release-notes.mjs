@@ -5,7 +5,12 @@
  *
  *   node scripts/release-notes.mjs dist > NOTES.md
  *
- * Everything here is READ OFF THE ARTIFACTS, not restated from the sources
+ * The prose of the release is CHANGELOG.md's section for this version, copied
+ * in; no section is a refusal, because a release whose notes say nothing about
+ * what changed is the one a user cannot decide to install. The targets the
+ * release does NOT carry come from build-payload.mjs (`--held`), with why.
+ *
+ * Everything else here is READ OFF THE ARTIFACTS, not restated from the sources
  * that produced them. The τ version comes from each payload's manifest.json,
  * which build-payload.mjs wrote by reading the dist-info pip left on disk --
  * so these notes say what shipped rather than what was asked for. Sizes are
@@ -15,8 +20,9 @@
  * It refuses to write notes for a set of payloads that disagree about τ.
  * Two τs is the failure this whole extension pair is arranged to prevent
  * (ARCHITECTURE 14.3); a release carrying two of them would be that failure
- * shipped nine times, and a release body is far too late to notice it.
+ * shipped once per target, and a release body is far too late to notice it.
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +48,23 @@ function size(bytes) {
 }
 
 const files = readdirSync(dir);
+
+// --- what changed -----------------------------------------------------------
+const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+const heading = `## ${version}\n`;
+const at = changelog.indexOf(heading);
+if (at < 0) die(`CHANGELOG.md has no "## ${version}" section. Write it before tagging.`);
+const rest = changelog.slice(at + heading.length);
+const next = rest.search(/^## /m);
+const changes = (next < 0 ? rest : rest.slice(0, next)).trim().replace(/^### /gm, '## ');
+if (changes === '') die(`CHANGELOG.md's "## ${version}" section is empty.`);
+
+// --- what is not here, and why ------------------------------------------------
+const held = JSON.parse(
+  execFileSync(process.execPath, [join(ROOT, 'packages', 'runtime', 'scripts', 'build-payload.mjs'), '--held'], {
+    encoding: 'utf8',
+  }),
+);
 
 // --- the editor extension ---------------------------------------------------
 const editor = `ffwf-tau-code-${version}.vsix`;
@@ -93,11 +116,15 @@ lines.push(
     (protocol ? `, speaking protocol ${protocol}.` : '.'),
 );
 lines.push('');
+lines.push(changes);
+lines.push('');
 lines.push('## Install');
 lines.push('');
 lines.push('Two extensions, and most people want only the first.');
 lines.push('');
-lines.push('**tau code** is the client. It is universal, 170 KB, and spawns the `tau` on your `PATH`:');
+lines.push(
+  `**tau code** is the client. It is universal, ${size(statSync(join(dir, editor)).size)}, and spawns the \`tau\` on your \`PATH\`:`,
+);
 lines.push('');
 lines.push('```');
 lines.push(`code --install-extension ${editor}`);
@@ -130,10 +157,26 @@ for (const row of rows) {
 lines.push('');
 lines.push(
   `Every runtime here was built from one Linux runner. Nothing in what \`tau serve\` imports compiles — ` +
-    `the interpreters are prebuilt and the two native wheels, \`pydantic_core\` and \`websockets\`, publish for all ` +
-    `${String(rows.length)} targets — so a cross build is a download and a wheel tag, not a ` +
-    `compiler. The build fails on a target rather than shipping a payload missing a module.`,
+    `the interpreters are prebuilt, and the native wheels (τ's own \`tau._core\`, an abi3 wheel, and ` +
+    `\`websockets\`) are published for all ${String(rows.length)} targets — so a cross build is a download and a ` +
+    `wheel tag, not a compiler. The build fails on a target rather than shipping a payload missing a module.`,
 );
 lines.push('');
+const heldNames = Object.keys(held);
+if (heldNames.length > 0) {
+  lines.push('## Runtimes not in this release');
+  lines.push('');
+  lines.push('| target | why |');
+  lines.push('|---|---|');
+  for (const name of heldNames) lines.push(`| \`${name}\` | ${held[name]} |`);
+  lines.push('');
+  lines.push(
+    'On these the marketplaces may keep offering an older `ffwf.tau-runtime`, whose τ speaks an older ' +
+      'protocol. tau code refuses it before starting anything and says how to fix it: install ' +
+      `\`ffwf-tau==${taus[0]}\` yourself and set \`tau-code.binary\` to its \`tau\`, or set ` +
+      '`tau-code.runtime` to `system` to use the τ on PATH.',
+  );
+  lines.push('');
+}
 
 process.stdout.write(`${lines.join('\n')}\n`);

@@ -552,8 +552,8 @@ them was needed to build a `.vsix`:
 
 **A version tag publishes (2026-10-18).** `release.yml` calls `publish.yml`
 once the GitHub release exists, and that job downloads the release's own files
-and hands them to the same script — all of them: `ffwf.tau-code` and the nine
-`ffwf.tau-runtime` targets, which each marketplace files as one
+and hands them to the same script — all of them: `ffwf.tau-code` and every released
+`ffwf.tau-runtime` target (four as of 0.9.0, §14.8), which each marketplace files as one
 platform-specific version. The script reads every file's identity (publisher,
 name, version, target) out of its manifest and refuses a set that is stale,
 duplicated or missing a target, before anything is uploaded.
@@ -1008,7 +1008,7 @@ refused was publishing five npm packages so that one of them could be installed
 in a way that still left τ to the user, and that is still refused.
 
 It is a separate extension and not a payload inside `ffwf.tau-code` because the
-cost is not shared. A platform-specific tau code would be nine 18 MB downloads
+cost is not shared. A platform-specific tau code would be one 18 MB download per target
 where there is now one 170 KB download, paid by every user including those who
 already have a τ. Split, tau code stays universal and small, and only the
 people who want a runtime pay for one.
@@ -1091,6 +1091,34 @@ Three details the implementation needed:
   the extension host runs it, against an allowlist of the two commands that can
   appear in a notice. The browser client passes no notices and renders none.
 
+#### The stale-runtime guard (0.9.0)
+
+A protocol bump makes the two-τ problem sharper, because an old τ can now be
+the *only* one a user has. The marketplaces serve each platform its own latest
+`ffwf.tau-runtime`, and the held targets (§14.8) have none newer than 0.8.1,
+which carries τ 0.14.1 and speaks protocol 1. tau code 0.9.0 speaks protocol 2
+only, so a Windows or armv7 user who updates the extension is paired with a
+runtime that cannot work, and the failure without a guard is the worst kind:
+"protocol undefined" from a handshake, pointing at nothing.
+
+`packages/vscode/src/compat.ts` closes that before anything is spawned. Whatever
+resolution (above) chose, whether from `tau-code.binary`, `TAU_BIN`, the runtime
+or `PATH`, the extension asks it `tau --version`, reads the `(protocol N)` in the
+answer, and infers protocol 1 for any version below 0.17.0 that does not print
+one. A τ whose protocol is not 2 is **refused**, with a message that names what
+was found, what is needed, and the fix: install τ 0.17.1 yourself (for example
+`pipx install ffwf-tau==0.17.1`) and set `tau-code.binary` to it; or set
+`tau-code.runtime` to `system` when a good τ is on `PATH`; or update
+`ffwf.tau-runtime` on a released target. It is shown as an error notification
+with a "Choose Which tau" button.
+
+There is deliberately no fallback to a different τ, for the reason this section
+opened with: an extension that quietly ran some other τ would be choosing for
+the user, and the symptoms would again point at τ. `smoke:vscode` has a
+`STALE_RUNTIME_VSIX` mode that installs the real 0.8.1 linux-x64 runtime and
+checks that the refusal appears, so the guard is tested against the artifact
+that actually caused it, not a mock.
+
 ### 14.4 What makes the payload independent
 
 Four properties, each of which was measured rather than assumed.
@@ -1167,7 +1195,7 @@ What the pruning removes, and the two that were not obvious:
   *statically* into the executable and also ships it as a shared library, for
   embedders. Nothing in the payload names it. Deleted only after a **byte scan
   for the SONAME** across every plausible referrer — a scan and not `ldd`,
-  because eight of the nine targets cannot be executed on the machine that
+  because all but one of the targets cannot be executed on the machine that
   builds them, and a check only the host gets is not a check.
 - **Two-thirds of the interpreter, 16 MB of `.vsix`.** `bin/` ships
   `python3.14` with `python` and `python3` symlinked to it, and **vsce
@@ -1211,18 +1239,22 @@ is stripped of debug info. Against ~4 MB, `strip` on a Mach-O invalidates its
 signature — the hazard gobboclippy's `MacFinalize.cmake` exists to sequence
 around — and a payload that will not load on macOS is a far worse trade.
 
-The build runs entirely on one Linux machine for all nine targets, and that is
-not a convenience. The only compiled thing in τ's rpc closure is
-`pydantic-core`, and it publishes a wheel for every one of them — verified
-individually, `linux-armhf`/`armv7l` included. Nothing here compiles, so
-nothing needs the target's architecture. The build fails on a target with no
-wheel rather than shipping a payload that is missing a module.
+The build runs entirely on one Linux machine for every target, and that is
+not a convenience. Since τ 0.16 the compiled things in the closure are τ's own
+native module, `tau._core` (one `cp312-abi3` wheel per platform), and
+`websockets`' speedups; `pydantic-core` no longer carries the cross-target
+story. Nothing here compiles, so nothing needs the target's architecture: a
+cross build is wheels and wheel tags. The build fails on a target τ publishes
+no wheel for, at `pip`, rather than shipping a payload that is missing a
+module. That is why five targets are held (§14.8): τ publishes no armv7l or
+musllinux wheel yet, and `tau serve` does not run on Windows yet.
 
 ### 14.6 Verification runs before the prune, not after
 
-`build-payload.mjs` spawns the assembled interpreter and negotiates
-`get_capabilities` against a throwaway `HOME`, exactly as `docker/verify.mjs`
-does for the image. It runs **before** pruning and again after, and the
+`build-payload.mjs` spawns the assembled interpreter, starts `tau serve -d` and
+says `hello` over the HTTP edge against a throwaway `HOME` (with a
+`usercustomize` canary in its user site, which catches τ #79), much as
+`docker/verify.py` does for the image. It runs **before** pruning and again after, and the
 ordering is a bug that was shipped and then found: running the interpreter is
 what creates `__pycache__`, so a verify that ran last left 2.5 MB of bytecode
 in the tree it had just checked, every `.pyc` stamping the build machine's
@@ -1257,22 +1289,32 @@ Wasm is the right tool for a self-contained program and the wrong one for an
 agent whose job is to touch the machine. A browser-only τ is a different
 product with a different tool set, not a build flag on this one.
 
-### 14.8 Nine payloads, one runner, and a tag as the trigger
+### 14.8 Four payloads, one runner, and a tag as the trigger
 
 `.github/workflows/release.yml` builds every artifact a version tag claims and
-attaches them to a GitHub release. It exists because nine payloads is a
+attaches them to a GitHub release. It exists because several payloads are a
 different kind of afternoon than one — each is a download, a `pip install` and
 tens of megabytes on disk — and until this workflow there was exactly one built
 payload, `linux-x64`, because that is the machine the release was cut on.
 
-**One Linux runner builds all nine.** This is the load-bearing claim and it is
-the same one §14.4 makes about the payload: nothing in τ's RPC closure
-compiles. The interpreters come prebuilt from python-build-standalone, and the
-one native wheel — `pydantic_core` — publishes for all nine targets, so a cross
-build is a download and a set of wheel tags rather than a compiler. The matrix
-is nine jobs for nine readable logs and nine parallel downloads, not for nine
-architectures. It is `fail-fast: false` on purpose: one broken target should
-report alongside the eight that are fine, and there is no risk of half a
+**One Linux runner builds every released target.** This is the load-bearing
+claim and it is the same one §14.4 makes about the payload: nothing in τ's
+closure compiles. The interpreters come prebuilt from python-build-standalone,
+and the native pieces — τ's `tau._core` (a `cp312-abi3` wheel) and
+`websockets`' speedups — publish as wheels, so a cross build is a download and
+a set of wheel tags rather than a compiler. The matrix is one job per target for
+readable logs and parallel downloads, not for architectures. As of 0.9.0 the
+targets are **linux-x64, linux-arm64, darwin-x64 and darwin-arm64**. Five are
+**held**: linux-armhf, alpine-x64 and alpine-arm64 (τ publishes no armv7l or
+musllinux wheel yet; the extra Linux wheels are on hold in τ), and win32-x64
+and win32-arm64 (`tau serve` does not run on Windows yet; win32-arm64 also lacks
+a wheel). A held target is a `held: '<reason>'` field on its entry in `TARGETS`
+in `build-payload.mjs`: `--list` (which is the release matrix) and `--all` skip
+it, `--held` prints the held ones as JSON, and `--target <held>` still builds
+one, with `TAU_WHEELS` for instance, and says it is held. Putting a target back
+is deleting its `held` line; the matrix follows with no second edit. The matrix
+is `fail-fast: false` on purpose: one broken target should report alongside the
+ones that are fine, and there is no risk of half a
 release from letting them, because the release job `needs` the matrix and does
 not start at all.
 
@@ -1280,7 +1322,7 @@ not start at all.
 repository versions — master is a working branch, and a version tag is the
 thing that claims to build clean. `workflow_dispatch` takes a ref, and the
 release job asks the ref rather than the event: dispatched on a branch it runs
-the same checks and the same nine builds and creates nothing, which is how to
+the same checks and the same builds and creates nothing, which is how to
 find out before tagging rather than after; dispatched on a tag it releases,
 which is how a tag already pushed can be given the artifacts it should have
 had.
@@ -1299,7 +1341,7 @@ routinely: `npm run check:protocol` is run against **the payload's own shim**,
 so `packages/protocol/src/generated.ts` is compared to the wire of the exact
 interpreter being released rather than to a τ that happened to be on a
 developer's `PATH`. `smoke:runtime` follows, for the reason §14.6 gives. The
-other eight get the structural checks and say which ones they are.
+other targets get the structural checks and say which ones they are.
 
 Three things are read rather than restated, and each of them is a number that
 was wrong somewhere once. The matrix comes from `build-payload.mjs --list`, so
@@ -1310,8 +1352,8 @@ version tag being the released version is otherwise a convention nothing
 enforces. And the release body comes from `release-notes.mjs` reading each
 payload's `manifest.json`, which records what pip *installed* rather than what
 `tauSpec` *asked for*; it refuses to write notes for a set of payloads that
-disagree about which τ they carry, because §14.3's two-τ failure shipped nine
-times is not something to discover in a changelog.
+disagree about which τ they carry, because §14.3's two-τ failure shipped once per
+target is not something to discover in a changelog.
 
 **The image is built here but not published, and those are two decisions.**
 Publishing needs a registry credential and is therefore a different gesture,
@@ -1321,10 +1363,11 @@ step of their own. But *building* needs nothing, and an image that
 has quietly stopped building is otherwise found by whoever next runs
 `scripts/package.sh image` — which is a person, on their own afternoon. So the
 `image` job does what that script does minus the tagging: build the runtime
-stage, build the verify stage, run it. `docker/verify.mjs` is what makes it
-worth a job rather than a lint — it spawns the Python τ from the Node side and
-reads a protocol version back, which is the one question a two-runtime image
-can get wrong in a way nothing else catches.
+stage, build the verify stage, run it. `docker/verify.py` is what makes it
+worth a job rather than a lint — it runs the image's own entrypoint, says
+`hello` over the HTTP edge at the protocol `generated.ts` names, checks which
+page origins may call `/stream`, and fetches the page: the questions an image
+built from two toolchains can get wrong in a way nothing else catches.
 
 It is the one job `release` does not `needs`. The image is not in the release
 (§14.1), so a Dockerfile that broke should report red without holding back
@@ -1395,15 +1438,17 @@ The hub and the runner are deleted; both hosts are clients of τ's daemon
   and all (§1.2).
 - **A busy cursor queues.** `enqueue` is the core's own strategy for "run this
   after the current turn"; it replaced `reject` (§4).
-- **The image is τ and a directory.** `ffwf-tau[serve]` from PyPI, or from
+- **The image is τ and a directory.** `ffwf-tau` from PyPI (0.17.1), or from
   `--build-context tau-wheels=DIR` before a release is on PyPI, plus the built
-  web client, served by `tau serve --web-root`. Its verify stage says hello at
-  the protocol `generated.ts` names and fetches the page.
-- **The runtime payload carries a daemon.** It installs
-  `ffwf-tau-coding-agent[serve]`; `websockets` is the second compiled package in
-  the closure and publishes wheels for all nine targets (checked with
-  `pip download`, not assumed). Its build verifies by starting `tau serve` from
-  the payload and saying hello through the payload's own `websockets`.
+  web client, served by `tau serve --web-root` on `0.0.0.0:8256` with
+  `--allow-network` and `--allow-origin` for the published address
+  (`TAU_CODE_ORIGINS`). Its verify stage runs the entrypoint, says hello at the
+  protocol `generated.ts` names, checks origins and fetches the page.
+- **The runtime payload carries `tau serve`.** It installs `ffwf-tau` (its
+  native `tau._core` is an abi3 wheel; `websockets` is the second compiled
+  package in the closure) for the released targets. Its build verifies by
+  starting `tau serve -d` from the payload and saying hello over the HTTP edge
+  with the payload's own interpreter.
 - **The runtime payload carries every provider SDK.** τ imports the anthropic
   and google SDKs, and Pillow for image input, lazily, on the first request
   that needs them. The first live test with a real model found the payload

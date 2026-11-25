@@ -25,6 +25,13 @@
  * With RUNTIME_VSIX=…/ffwf-tau-runtime-<version>-<target>.vsix it installs the runtime companion
  * too and sets `tau-code.runtime` to `bundled`, so the server is the payload's τ.
  *
+ * With STALE_RUNTIME_VSIX=…/ffwf-tau-runtime-0.8.1-linux-x64.vsix (the last runtime before 0.9.0:
+ * τ 0.14.1, protocol 1, which the marketplaces keep serving on the targets 0.9.0 dropped) it checks
+ * the refusal instead, and stops there: the runtime is installed beside the τ on PATH with
+ * `tau-code.runtime` left at `auto`, so the stale runtime is chosen; "tau: Open Agent" must start
+ * no server and say, in the page and in a notification, which τ it found, what it needs and how
+ * to fix it, naming the τ on PATH that would work.
+ *
  * The bearer token never reaches the page: the page's own requests are checked for it.
  */
 import assert from 'node:assert/strict';
@@ -47,6 +54,8 @@ const XVFB = process.env['XVFB'] !== '0';
 // With RUNTIME_VSIX, the runtime companion (ffwf.tau-runtime) is installed too, and the extension
 // is set to use only it (`tau-code.runtime: bundled`); TAU_BIN is not passed.
 const RUNTIME_VSIX = process.env['RUNTIME_VSIX'] ?? null;
+const STALE_RUNTIME_VSIX = process.env['STALE_RUNTIME_VSIX'] ?? null;
+if (RUNTIME_VSIX && STALE_RUNTIME_VSIX) throw new Error('set RUNTIME_VSIX or STALE_RUNTIME_VSIX, not both');
 for (const [what, path, hint] of [
   ['.vsix', VSIX, 'run `npm run package:vsix` first, or set VSIX'],
   ['VSCodium CLI', CODIUM_CLI, 'set CODIUM_CLI to its `codium` script'],
@@ -118,7 +127,9 @@ const env = {
   USER: process.env['USER'],
   LANG: process.env['LANG'] ?? 'C.UTF-8',
   TAU_HOME: home,
-  ...(RUNTIME_VSIX ? {} : { TAU_BIN: tau }),
+  // TAU_BIN is an explicit choice and would beat any runtime; for the stale check, τ goes on PATH.
+  ...(RUNTIME_VSIX || STALE_RUNTIME_VSIX ? {} : { TAU_BIN: tau }),
+  ...(STALE_RUNTIME_VSIX ? { PATH: `${dirname(tau)}:${process.env['PATH']}` } : {}),
   // VSCodium puts its instance socket here when it is set, else in --user-data-dir, where a long
   // temp path passes the 107-byte socket limit. The socket's name is a hash of the user-data dir.
   ...(process.env['XDG_RUNTIME_DIR'] ? { XDG_RUNTIME_DIR: process.env['XDG_RUNTIME_DIR'] } : {}),
@@ -240,6 +251,39 @@ function watch(page) {
   });
 }
 
+/** Thrown to end the run after the stale-runtime check. */
+const STOP = Symbol('stop');
+
+/** The stale runtime is refused: no server, and the reason in the page and a notification. */
+async function stale(page) {
+  const frame = await tauFrame(page);
+  const said = frame.locator('.tau-app', { hasText: 'speaks protocol 1' });
+  await said.waitFor({ timeout: 60_000 });
+  const text = await said.innerText();
+  for (const expected of [
+    /tau 0\.14\.1 from the tau runtime extension \(linux-x64, Python [\d.]+\) speaks protocol 1/,
+    new RegExp(`tau code ${VERSION.replace(/\./g, '\\.')} speaks protocol 2, which needs tau 0\\.17\\.0 or newer`),
+    /from tau on PATH does speak protocol 2/,
+    /"tau-code\.runtime" to "system"/,
+    // linux-x64 is a released target, so the fix includes updating the runtime.
+    /Update it from the Extensions view: ffwf\.tau-runtime [\d.]+ for linux-x64/,
+  ]) {
+    assert.match(text, expected);
+  }
+  step(`the page says: ${/tau 0\.14\.1[^\n]*/.exec(text)?.[0]}`);
+  const toast = page.locator('.notification-toast', { hasText: 'speaks protocol 1' });
+  try {
+    await toast.first().waitFor({ timeout: 30_000 });
+  } catch (error) {
+    const shown = await page.locator('.notification-toast').allInnerTexts();
+    throw new Error(`no notification about protocol 1; the toasts: ${JSON.stringify(shown)}`, { cause: error });
+  }
+  await toast.getByRole('button', { name: 'Choose Which tau' }).first().waitFor();
+  step('a notification says the same, with "Choose Which tau"');
+  assert.deepEqual(records(), [], 'no server was started');
+  step('no tau serve was started');
+}
+
 async function say(frame, text) {
   const box = frame.getByLabel('message');
   await box.fill(text);
@@ -247,14 +291,15 @@ async function say(frame, text) {
 }
 
 try {
-  for (const vsix of [VSIX, ...(RUNTIME_VSIX ? [RUNTIME_VSIX] : [])]) {
+  const companion = RUNTIME_VSIX ?? STALE_RUNTIME_VSIX;
+  for (const vsix of [VSIX, ...(companion ? [companion] : [])]) {
     execFileSync(CODIUM_CLI, ['--user-data-dir', userData, '--extensions-dir', extensions, '--install-extension', vsix], {
       env,
       stdio: 'pipe',
     });
   }
   const installed = readdirSync(extensions).filter((name) => name.startsWith('ffwf.tau-'));
-  assert.equal(installed.length, RUNTIME_VSIX ? 2 : 1, `the ffwf.tau-* extensions in ${extensions}: ${installed.join(', ')}`);
+  assert.equal(installed.length, companion ? 2 : 1, `the ffwf.tau-* extensions in ${extensions}: ${installed.join(', ')}`);
   step(`installed ${installed.join(' and ')} into a throwaway extensions dir`);
 
   const port = await freePort();
@@ -265,6 +310,10 @@ try {
   step(`VSCodium ${XVFB ? 'under Xvfb ' : ''}opened ${work}`);
 
   await command(page, 'tau: Open Agent');
+  if (STALE_RUNTIME_VSIX) {
+    await stale(page);
+    throw STOP;
+  }
   let frame = await tauFrame(page);
   await frame.locator('.tau-status-ready').waitFor({ timeout: 60_000 });
   const [first] = records();
@@ -334,10 +383,14 @@ try {
   assert.deepEqual(problems, [], 'no webview console errors, and no token in the page');
   step('no webview console errors (CSP included), and the token never reached the page');
 } catch (error) {
+  if (error === STOP) {
+    // The stale-runtime check ends here, by design.
+  } else {
   failed = true;
   console.error(error);
   if (problems.length) console.error(problems);
   console.error(extensionLog());
+  }
 } finally {
   await browser?.close().catch(() => {});
   if (codium) {
@@ -362,4 +415,4 @@ try {
   } else console.log(`kept ${root} and ${editorRoot}`);
 }
 if (failed) process.exit(1);
-console.log(`smoke:vscode: green (${steps.length} checks)`);
+console.log(`smoke:vscode${STALE_RUNTIME_VSIX ? ' (stale runtime)' : ''}: green (${steps.length} checks)`);
