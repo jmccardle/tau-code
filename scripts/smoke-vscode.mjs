@@ -215,13 +215,27 @@ async function workbench() {
   }
 }
 
-/** Run a command from the palette, by its title. */
+/**
+ * Run a command from the palette, by its title. The palette lists the commands registered when it
+ * opens and does not refresh, so one opened before the extension's contributions are in never
+ * shows them: it is closed and opened again until the command is there, for up to a minute.
+ */
 async function command(page, title) {
-  await page.keyboard.press('F1');
-  const input = page.locator('.quick-input-widget input.input');
-  await input.waitFor();
-  await input.fill(`>${title}`);
-  await page.locator('.quick-input-list .monaco-list-row', { hasText: title }).first().waitFor();
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    await page.keyboard.press('F1');
+    const input = page.locator('.quick-input-widget input.input');
+    await input.waitFor();
+    await input.fill(`>${title}`);
+    const row = page.locator('.quick-input-list .monaco-list-row', { hasText: title }).first();
+    try {
+      await row.waitFor({ timeout: 5_000 });
+      break;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await page.keyboard.press('Escape');
+    }
+  }
   await page.keyboard.press('Enter');
 }
 
