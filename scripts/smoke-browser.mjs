@@ -14,6 +14,10 @@
  * reload (the tab's token); a page with no token. Then, against a second `tau serve` whose model is
  * a fake vision model (scripts/lib/fake-model.mjs), a tool result with an image (protocol 2): the
  * row says it holds one, and labels it as τ does. Any console error (a CSP refusal, say) fails it.
+ *
+ * `WEB_ROOT=installed` drives the client τ finds installed beside it (ffwf-tau-web, the package
+ * `tau_web`) instead: no `--web-root`, and the build is not needed. `npm run smoke:web-wheel`
+ * checks first that the installed one is this checkout's.
  */
 import assert from 'node:assert/strict';
 import { existsSync, writeFileSync } from 'node:fs';
@@ -24,9 +28,12 @@ import { fakeModel, png } from './lib/fake-model.mjs';
 import { serve } from './lib/serve.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+if (![undefined, 'installed'].includes(process.env['WEB_ROOT'])) throw new Error(`WEB_ROOT is 'installed' or unset`);
+const INSTALLED = process.env['WEB_ROOT'] === 'installed';
 const DIST = join(ROOT, 'packages/web/dist');
+const WEB_ROOT = INSTALLED ? null : DIST;
 const CHROME = process.env['CHROME'] ?? '/usr/bin/google-chrome';
-if (!existsSync(join(DIST, 'index.html'))) throw new Error(`${DIST} has no index.html: run npm run build first`);
+if (!INSTALLED && !existsSync(join(DIST, 'index.html'))) throw new Error(`${DIST} has no index.html: run npm run build first`);
 if (!existsSync(CHROME)) throw new Error(`no Chrome at ${CHROME}: set CHROME to a Chrome or Chromium binary`);
 
 // A question before each sample, answered "yes" to go on.
@@ -79,7 +86,7 @@ class Flood:
 extensions = [Flood()]
 `;
 
-const served = await serve({ extensions: { gate: GATE, tuner: TUNER, flood: FLOOD }, webRoot: DIST });
+const served = await serve({ extensions: { gate: GATE, tuner: TUNER, flood: FLOOD }, webRoot: WEB_ROOT });
 const { url, token } = served.record;
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 const problems = [];
@@ -259,7 +266,7 @@ try {
   // Protocol 2: a tool result with an image, from a second server with a fake vision model.
   const model = await fakeModel('pixel.png');
   const pictured = await serve({
-    webRoot: DIST,
+    webRoot: WEB_ROOT,
     config: { default_model: 'v', models: { v: { model: 'm', base_url: model.url, images: true } } },
   });
   try {

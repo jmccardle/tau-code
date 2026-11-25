@@ -86,6 +86,18 @@ npm run build
 tau serve --web-root packages/web/dist
 ```
 
+Or as a Python package, which τ finds and serves with no flags: `npm run package:web-wheel`
+builds `ffwf-tau-web` (the package `tau_web`, packages/web-py) into `dist-py/`, a pure wheel
+and an sdist that both carry the built client. Its version is τ's (0.17.x pairs with
+ffwf-tau 0.17.x, protocol 2), and once published, `pip install ffwf-tau` brings it along.
+
+```bash
+pip install ffwf-tau dist-py/ffwf_tau_web-*.whl
+python -m tau_web          # the client and the installed τ speak the same protocol, or exit 1
+tau serve
+TAU_BIN=$(command -v tau) npm run smoke:web-wheel   # / is this checkout's client, no --web-root
+```
+
 `tau serve` prints the address to open, with the token in its fragment:
 
 ```text

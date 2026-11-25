@@ -233,6 +233,69 @@ jobs:
         # writes names an address nothing listens on.
         run: docker run --rm ffwf/tau-code-verify:ci
 
+  # ------------------------------------------------------------- web wheel
+  # ffwf-tau-web: the built web client as the Python package `tau_web`, which `tau serve` serves
+  # with no flags (packages/web-py). Built on every run; published to PyPI on a tag only.
+  #
+  # ITS VERSION IS τ'S, NOT THIS TAG'S: packages/web-py/pyproject.toml says 0.17.x, which pairs
+  # with ffwf-tau 0.17.x (protocol 2). Every tau-code tag publishes it, so the release commit bumps
+  # that version too; a version already on PyPI fails the upload, which is the right answer --
+  # replacing a published version is a decision, not a retry. Publish it BEFORE ffwf-tau's own
+  # release of the same version, since ffwf-tau depends on it.
+  #
+  # Neither job `needs` the runtime or the release: the wheel holds none of them, and the
+  # marketplaces holding back a PyPI upload (or the other way) would only couple two failures.
+  # `smoke:web-wheel` (against a real ffwf-tau) is not here: the first ffwf-tau-web of a minor is
+  # published before any ffwf-tau that speaks it exists, so it is run locally before tagging.
+  web-wheel:
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - run: python -m pip install uv
+
+      - run: npm ci
+
+      - name: build ffwf-tau-web
+        # Refuses a wheel that is not py3-none-any, lacks tau_web/dist/index.html, or depends on
+        # anything; the wheel is built from the sdist, which proves the sdist needs no Node.
+        run: npm run package:web-wheel
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-wheel
+          path: dist-py/
+          if-no-files-found: error
+
+  web-wheel-publish:
+    needs: web-wheel
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # PyPI trusted publishing: no token is stored anywhere. The `pypi` environment's deployment
+    # policy should admit `v*` tags only, as `marketplaces` does.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-wheel
+          path: dist-py
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-py/
+
   # --------------------------------------------------------------- release
   release:
     needs: [checks, runtime]

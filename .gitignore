@@ -9,3 +9,7 @@ dist-types/
 .env
 dist-tsc/
 test-results/
+dist-py/
+packages/web-py/src/tau_web/_built.py
+packages/web-py/LICENSE
+__pycache__/
