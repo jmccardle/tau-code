@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-protocol",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "τ's wire (protocol 2): generated types, the HTTP edge transport, a JSON-RPC client and a session model. Isomorphic: runs in a browser and in Node >= 20, with no DOM or Node imports.",
   "license": "MIT",
   "type": "module",

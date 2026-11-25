@@ -3,10 +3,10 @@
 Clients for [τ](https://github.com/jmccardle/tau), the agent harness: a web client, and a VS Code /
 VSCodium extension, both speaking τ's wire to `tau serve`.
 
-**Status: 0.9.0, on τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge.** The protocol
+**Status: 0.9.1, on τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge.** The protocol
 package, the session model, the web client, the VS Code / VSCodium extension, the runtime
 companion (τ 0.17.1, four platforms) and the container are ported and tested against a real
-`tau serve`, the extension in a real VSCodium. CHANGELOG.md is the summary of what 0.9.0 changed
+`tau serve`, the extension in a real VSCodium. CHANGELOG.md says what each release changed
 and removed.
 
 **Requires τ 0.17.0 or later** (`pip install 'ffwf-tau>=0.17'`): the HTTP edge, and protocol 2.

@@ -1,8 +1,8 @@
 # tau runtime
 
 A self-contained CPython with [τ](https://github.com/jmccardle/tau) installed
-into it, for the **tau code** extension (`ffwf.tau-code`). 0.9.0 carries **τ 0.17.1**
-(protocol 2, the HTTP edge) on CPython 3.14.7.
+into it, for the **tau code** extension (`ffwf.tau-code`). 0.9.1 carries **τ 0.17.1**
+(protocol 2, the HTTP edge) and its web client **ffwf-tau-web 0.17.1** on CPython 3.14.7.
 
 **This extension does nothing on its own.** It ships files and tells tau code
 where they are. Install it if you want tau code to work without installing

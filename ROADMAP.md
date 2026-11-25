@@ -1,9 +1,8 @@
 # tau-code roadmap
 
-State as of 2026-11-24. `master` is `v0.8.1` plus the port to τ 0.17 (protocol 2), merged from
-`feat/http-edge-client`, and Phase R (the extension). The 0.9.0 release is prepared on
-`release/0.9.0` (CHANGELOG.md has its notes); tau-code itself is untagged until it is tagged
-(`tau-web-v0.17.0` tags the web wheel only).
+State as of 2026-11-25. `v0.9.0` is tagged (τ 0.17.1, protocol 2). `master` is 0.9.1, prepared and
+not yet tagged: `v0.9.0` plus the Tau design-system restyle (`feat/tau-design-system`), with
+ffwf-tau-web 0.17.1 (`tau-web-v0.17.1`) as the same client for `tau serve`.
 
 ## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
@@ -75,7 +74,14 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
 - **Not done:** `ffwf-tau-tokens` in the payload (Q6); tagging 0.9.0 and publishing it; then
   GitHub.
 
-## 0.9.0 (release/0.9.0, targeting τ 0.17.1, protocol 2; not yet tagged)
+## 0.9.1 (targeting τ 0.17.1, protocol 2; not yet tagged)
+- The web client and the webview in the Tau design system (Whiteprint / Blueprint, the tau mark as
+  an activity indicator, bundled fonts). Copy such as "Chat" is unchanged, pending a decision.
+- `ffwf.tau-runtime` has the tau-code icon, and pins `ffwf-tau-web==0.17.1` beside `ffwf-tau==0.17.1`.
+- ffwf-tau-web 0.17.1 is tagged first (`tau-web-v0.17.1`); `v0.9.1` after PyPI has it, since the
+  runtime build installs it from PyPI.
+
+## 0.9.0 (targeting τ 0.17.1, protocol 2; tagged `v0.9.0`)
 - **Breaking:** protocol 2 only (τ ≥ 0.17.0, the HTTP edge). Settings `tau-code.token` and
   `tau-code.model` are removed. Commands: new **tau: New Session**; **tau: Restart This Session's
   tau Server**; **tau: Choose Which tau Starts the Server**.

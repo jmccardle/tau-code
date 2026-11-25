@@ -3,7 +3,10 @@
 One section per release, newest first. `scripts/release-notes.mjs` copies the section of the
 version being released into the GitHub release, and refuses to write notes without one.
 
-## Unreleased
+## 0.9.1
+
+The client in the Tau design system. Same protocol (2) and the same bundled τ (0.17.1) as 0.9.0;
+the runtime now also pins the web client `tau serve` serves, **ffwf-tau-web 0.17.1**.
 
 ### Changed
 
@@ -18,6 +21,14 @@ version being released into the GitHub release, and refuses to write notes witho
 - **Bundled fonts.** IBM Plex Sans, Plex Sans Condensed and Plex Mono (Latin), a JetBrains Mono
   cut for τ and the status glyphs, and Tau Symbols ship with the client and the webview, with
   their licences under `fonts/`: about 115 kB of woff2, nothing fetched at run time.
+- **The runtime's icon** is the same tau mark as tau code's, so the two marketplace entries match.
+- **Runtime:** `ffwf.tau-runtime` pins **ffwf-tau-web 0.17.1** beside τ 0.17.1, so the page its
+  `tau serve` answers at `/` is this release's client. τ asks for ffwf-tau-web by range
+  (`>=0.17,<0.18`), which would otherwise take whatever was newest when the payload was built; the
+  build now fails if any pinned package installs at another version, and each payload's
+  `manifest.json` records `tauWebVersion`.
+- **ffwf-tau-web 0.17.1** (released from `tau-web-v0.17.1`) is this client, for `tau serve` with no
+  flags. τ 0.17.x picks it up on upgrade.
 
 ## 0.9.0
 

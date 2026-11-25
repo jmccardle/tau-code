@@ -14,7 +14,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ffwf-tau-web"
-version = "0.17.0"
+version = "0.17.1"
 description = "tau-code's web client, built, for `tau serve` to serve with no flags."
 readme = "README.md"
 license = "MIT"
