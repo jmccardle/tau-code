@@ -236,6 +236,16 @@ marketplace:
 that stays the two scripts below, because a published version number cannot be
 reused. `docs/ARCHITECTURE.md` §14.8 has the rest.
 
+Pushing a `tau-web-v*` tag publishes `ffwf-tau-web` to PyPI and does nothing
+else; a `v*` tag never publishes it. The web wheel's version is τ's, not
+tau-code's, so its tags follow τ in lockstep: bump `version` in
+`packages/web-py/pyproject.toml`, run `npm run package:web-wheel` and
+`npm run smoke:web-wheel` locally, then tag `tau-web-v<that version>` (for
+example `tau-web-v0.17.0`). The workflow refuses a tag that disagrees with
+pyproject.toml, and uploads through PyPI trusted publishing from the GitHub
+environment `pypi`, which admits `tau-web-v*` tags only. Publish it before
+the `ffwf-tau` release of the same version, which depends on it.
+
 ### The extension
 
 ```bash

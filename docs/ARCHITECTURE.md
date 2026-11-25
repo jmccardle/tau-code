@@ -1330,6 +1330,19 @@ It is the one job `release` does not `needs`. The image is not in the release
 (§14.1), so a Dockerfile that broke should report red without holding back
 `.vsix` files that contain none of it.
 
+**The web wheel has its own tag family.** `ffwf-tau-web` (packages/web-py) is
+versioned with τ, not with tau-code — 0.17.x pairs with `ffwf-tau` 0.17.x — so
+a `v*` tag cannot say anything true about it. It is released by
+`tau-web-v<version>` tags instead, and the two families do not overlap: `v*`
+cannot match a name that starts with `t`. Every job tests the ref's prefix: a
+`tau-web-v*` tag runs `checks`, `web-wheel` and `web-wheel-publish` and skips
+the payloads, the image and the release; a `v*` tag skips both web-wheel jobs;
+a branch builds everything and publishes nothing. `web-wheel` refuses a tag
+whose version is not `packages/web-py/pyproject.toml`'s before it builds, and
+`web-wheel-publish` uploads by PyPI trusted publishing from the `pypi`
+environment, whose deployment policy admits `tau-web-v*` tags only — the same
+shape as `marketplaces` and `v*`.
+
 ### 14.9 Two Node versions, and neither is the other's default
 
 `NODE_VERSION` in the workflow and `ARG NODE_VERSION` in the `Dockerfile` are
