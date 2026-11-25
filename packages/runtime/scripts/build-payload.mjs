@@ -13,8 +13,10 @@
  * tau's closure are tau's own native module (`tau._core`, a cp312-abi3 wheel)
  * and websockets' C speedups. Nothing here compiles, so nothing here needs a
  * machine of the target's architecture. A target tau publishes no wheel for
- * (as of 0.17.0: linux-armhf, alpine-*, win32-arm64) fails here, at pip,
- * rather than quietly shipping a payload missing a module.
+ * fails here, at pip, rather than quietly shipping a payload missing a module.
+ * Five targets are HELD for that reason and others (see HELD below): they are
+ * left out of `--list` and `--all`, so out of the release, but `--target`
+ * still builds one, for trying a wheel from `TAU_WHEELS`.
  *
  * What it does NOT do is decide the tau version. That is `tauSpec` in
  * package.json, one copy, and the manifest this writes records what pip
@@ -84,16 +86,19 @@ const TARGETS = {
     triple: 'armv7-unknown-linux-gnueabihf',
     layout: 'posix',
     pip: ['manylinux_2_17_armv7l', 'manylinux2014_armv7l'],
+    held: 'tau publishes no armv7l wheel yet (the extra Linux wheels are on hold in tau)',
   },
   'alpine-x64': {
     triple: 'x86_64-unknown-linux-musl',
     layout: 'posix',
     pip: ['musllinux_1_1_x86_64', 'musllinux_1_2_x86_64'],
+    held: 'tau publishes no musllinux wheel yet (the extra Linux wheels are on hold in tau)',
   },
   'alpine-arm64': {
     triple: 'aarch64-unknown-linux-musl',
     layout: 'posix',
     pip: ['musllinux_1_1_aarch64', 'musllinux_1_2_aarch64'],
+    held: 'tau publishes no musllinux wheel yet (the extra Linux wheels are on hold in tau)',
   },
   'darwin-x64': {
     triple: 'x86_64-apple-darwin',
@@ -105,9 +110,32 @@ const TARGETS = {
     layout: 'posix',
     pip: ['macosx_11_0_arm64', 'macosx_12_0_arm64'],
   },
-  'win32-x64': { triple: 'x86_64-pc-windows-msvc', layout: 'windows', pip: ['win_amd64'] },
-  'win32-arm64': { triple: 'aarch64-pc-windows-msvc', layout: 'windows', pip: ['win_arm64'] },
+  'win32-x64': {
+    triple: 'x86_64-pc-windows-msvc',
+    layout: 'windows',
+    pip: ['win_amd64'],
+    held: '`tau serve` does not run on Windows yet (in progress in tau, branch win/p1-serve)',
+  },
+  'win32-arm64': {
+    triple: 'aarch64-pc-windows-msvc',
+    layout: 'windows',
+    pip: ['win_arm64'],
+    held: '`tau serve` does not run on Windows yet, and tau publishes no win_arm64 wheel',
+  },
 };
+
+/**
+ * HELD TARGETS. A target with a `held` reason stays defined -- its interpreter, wheel tags and
+ * layout are known and were shipped through 0.8.1 -- but it is not RELEASED: `--list` (the CI
+ * matrix) and `--all` skip it. 0.9.0 ships the four targets that tau 0.17 has wheels for AND on
+ * which `tau serve` runs. To bring one back, delete its `held` line; the release matrix follows,
+ * because release.yml asks `--list`.
+ *
+ * A held target is not silently missing for its users: the marketplaces keep offering them the
+ * newest runtime that HAS their target (0.8.1, tau 0.14.1, protocol 1), and ffwf.tau-code refuses
+ * that tau with a message saying what to install instead (packages/vscode/src/compat.ts).
+ */
+const RELEASED = Object.keys(TARGETS).filter((name) => !TARGETS[name].held);
 
 /**
  * Dropped from the interpreter tree after extraction.
@@ -782,6 +810,10 @@ async function build(target, options) {
 
   const out = options.all ? join(PKG_ROOT, 'payloads', target, 'runtime') : PAYLOAD;
   say(`\n=== ${target}  (${spec.triple})`);
+  if (spec.held) {
+    // Built because it was named, and said so: a held target is not released (see HELD above).
+    say(`  held    ${target} is not a release target: ${spec.held}`);
+  }
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
 
@@ -968,21 +1000,31 @@ const flagIndex = argv.indexOf('--target');
 const asked = flagIndex >= 0 ? argv[flagIndex + 1] : null;
 
 if (argv.includes('--help') || argv.includes('-h')) {
-  say('usage: build-payload.mjs [--target <vscode-target>] [--all] [--list] [--keep-dev]');
-  say(`targets: ${Object.keys(TARGETS).join(', ')}`);
+  say('usage: build-payload.mjs [--target <vscode-target>] [--all] [--list] [--held] [--keep-dev]');
+  say(`targets: ${RELEASED.join(', ')}`);
+  for (const [name, spec] of Object.entries(TARGETS)) {
+    if (spec.held) say(`held:    ${name} -- ${spec.held}`);
+  }
   process.exit(0);
 }
 
 // The target list as JSON, on stdout, for something that has to enumerate the
 // targets without being a second place that knows them. `.github/workflows`
-// builds its matrix from this: a target added to TARGETS above is a target CI
-// builds, with no second edit and therefore no way for the two to disagree.
+// builds its matrix from this: a target added to TARGETS above (and not held) is
+// a target CI builds, with no second edit and therefore no way for the two to disagree.
 if (argv.includes('--list')) {
-  process.stdout.write(`${JSON.stringify(Object.keys(TARGETS))}\n`);
+  process.stdout.write(`${JSON.stringify(RELEASED)}\n`);
   process.exit(0);
 }
 
-const targets = options.all ? Object.keys(TARGETS) : [asked ?? hostTarget()];
+// The held targets and why, as JSON, for the release notes (scripts/release-notes.mjs).
+if (argv.includes('--held')) {
+  const held = Object.fromEntries(Object.entries(TARGETS).filter(([, spec]) => spec.held).map(([name, spec]) => [name, spec.held]));
+  process.stdout.write(`${JSON.stringify(held)}\n`);
+  process.exit(0);
+}
+
+const targets = options.all ? RELEASED : [asked ?? hostTarget()];
 if (targets[0] === null) {
   die(
     `this host is ${process.platform}/${process.arch}, which is not one of VS Code's targets. ` +
