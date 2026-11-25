@@ -18,11 +18,14 @@
 #
 # EVERY RUNTIME TARGET IS BUILT ON A LINUX RUNNER, and that is not a shortcut.
 # The payload is a prebuilt interpreter plus wheels; the only compiled thing in
-# tau's RPC closure is pydantic-core, which publishes a wheel for all nine
-# targets. Nothing compiles, so nothing needs a machine of its own
-# architecture, and build-payload.mjs fails on a target rather than shipping a
-# payload missing a module if that ever stops being true. The matrix is for
-# nine readable logs and nine parallel downloads, not for nine architectures.
+# tau's closure is tau._core (tau's own cp312-abi3 wheel) and websockets'
+# speedups, which publish wheels for every released target. Nothing compiles,
+# so nothing needs a machine of its own architecture, and build-payload.mjs
+# fails on a target rather than shipping a payload missing a module if that
+# ever stops being true. The matrix is for readable logs and parallel downloads,
+# not for architectures. It is `build-payload.mjs --list`: four targets
+# (linux-x64, linux-arm64, darwin-x64, darwin-arm64); the targets marked `held`
+# in build-payload.mjs are skipped, and deleting a `held` line adds one back.
 #
 # Checks run at tag time rather than on every push, which is how this
 # repository versions: master is a working branch and a version tag is the
@@ -30,7 +33,7 @@
 #
 # `workflow_dispatch` takes a ref, and what it does depends on what that ref
 # is, because the release job asks the ref and not the event. Dispatched on a
-# BRANCH it runs the same checks and the same nine builds and creates no
+# BRANCH it runs the same checks and the same builds and creates no
 # release -- which is how to find out before tagging. Dispatched on a TAG it
 # does create one, which is the only way to give a tag that was already pushed
 # the artifacts it should have had.
@@ -72,7 +75,7 @@ jobs:
   # ---------------------------------------------------------------- checks
   # Everything that does not need a payload: the version claim, the typecheck,
   # the tests, and the one .vsix that is the same file on every platform.
-  # Nine payload builds are minutes and gigabytes each, so they are gated on
+  # The payload builds are minutes and gigabytes each, so they are gated on
   # this rather than racing it.
   checks:
     runs-on: ubuntu-latest
@@ -126,7 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # Not fail-fast: one bad target should not hide the state of the other
-      # eight, and there is no risk of a partial release from letting them all
+      # targets, and there is no risk of a partial release from letting them all
       # report -- the release job `needs` this one and will not run at all.
       fail-fast: false
       matrix:
@@ -173,7 +176,7 @@ jobs:
 
       # --- the host's own target, which is the only one that can be run ------
       #
-      # Eight of the nine payloads get structural checks and say so. This one
+      # The other payloads get structural checks and say so. This one
       # can actually be executed, so it is, twice over: the schema it prints is
       # compared against the committed generated.ts, and `tau serve -d --json`
       # is driven end to end the way the extension starts it. `--schema` reads

@@ -1,8 +1,9 @@
 # tau-code roadmap
 
 State as of 2026-11-24. `master` is `v0.8.1` plus the port to τ 0.17 (protocol 2), merged from
-`feat/http-edge-client`, and Phase R (the extension). It is on forgejo, goblin and GitHub; tau-code
-itself is untagged until 0.9.0 (`tau-web-v0.17.0` tags the web wheel only).
+`feat/http-edge-client`, and Phase R (the extension). The 0.9.0 release is prepared on
+`release/0.9.0` (CHANGELOG.md has its notes); tau-code itself is untagged until it is tagged
+(`tau-web-v0.17.0` tags the web wheel only).
 
 ## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
@@ -50,18 +51,40 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
   runs VSCodium under Xvfb and drives it with Playwright: chat round trip, `/model` and an image
   result labelled `[image 1x1 image/png]`, a window reload keeping the session, a server restart.
   Green with the system τ 0.17.0 and with a local (unverified) runtime companion.
-- **The runtime** (`packages/runtime`): `tauSpec` = `ffwf-tau==0.17.0`; the build verifies over
-  the HTTP edge; `npm run smoke:runtime` is ported. **Its build stops at its own canary:** τ
-  0.17.0's `tau serve -d` re-launches the server as `python -m tau serve …` without `-I`
-  (`_serve_cli.py` `_spawn`, `sys.executable` with no interpreter flags), so the detached server
-  reads the user site: τ #79 is back. Fix in τ, then rebuild; no workaround here.
-- **Targets (Q3/Q4, open):** τ 0.17.0 publishes wheels for linux-x64, linux-arm64, darwin-x64,
-  darwin-arm64 and win32-x64 only, so `--all` fails on linux-armhf, alpine-x64, alpine-arm64 and
-  win32-arm64; and τ's serve path is not ported to Windows (D29 Open 1). Drop those targets, or
-  add wheels in τ: John decides.
-- **Not done:** `ffwf-tau-tokens` in the payload (Q6); the container (`Dockerfile`, `docker/`:
-  the entrypoint becomes `tau serve --port 3393 --host 0.0.0.0 --allow-network --allow-origin …
-  --web-root …`); the 0.9.0 release, then GitHub.
+- **The runtime** (`packages/runtime`): `tauSpec` = `ffwf-tau==0.17.1`; the build verifies over
+  the HTTP edge; `npm run smoke:runtime` is ported. **RT-1 / τ #79, resolved:** τ 0.17.0's
+  `tau serve -d` re-launched the server without `-I`, so the detached server read the user site and
+  the build's usercustomize canary failed. τ 0.17.1 keeps `-I`; the bundle moved to it.
+- **Targets (Q3/Q4, decided):** four are released: linux-x64, linux-arm64, darwin-x64,
+  darwin-arm64. Five are **held**, each with a `held: '<reason>'` field in `TARGETS` in
+  `packages/runtime/scripts/build-payload.mjs`: linux-armhf, alpine-x64, alpine-arm64 (τ publishes
+  no armv7l or musllinux wheel yet; the extra Linux wheels are on hold in τ), win32-x64 (`tau
+  serve` does not run on Windows yet; in progress in τ, branch `win/p1-serve`) and win32-arm64
+  (the same, and no wheel). `--list` (the release matrix) and `--all` skip held targets; `--held`
+  prints them as JSON; `--target <held>` still builds one and says it is held. To add one back,
+  delete its `held` line: the release matrix follows. The payload no longer leans on pydantic-core
+  for cross-target coverage: τ 0.16+ has its own native module `tau._core` (a cp312-abi3 wheel).
+- **Stale-runtime guard (done):** on the held platforms the marketplaces may keep serving the 0.8.1
+  runtime (τ 0.14.1, protocol 1). `packages/vscode/src/compat.ts` refuses any τ whose protocol is
+  not 2 before spawning, naming what it found, what is needed and the fix; no silent fallback.
+  `smoke:vscode` has a `STALE_RUNTIME_VSIX` mode that installs the real 0.8.1 linux-x64 runtime
+  and checks the refusal.
+- **The container (done):** τ 0.17.1; the entrypoint runs `tau serve --host 0.0.0.0
+  --allow-network --port 8256 --web-root …` with `--allow-origin` for each of `TAU_CODE_ORIGINS`;
+  `docker/verify.py` drives the real entrypoint over the HTTP edge.
+- **Not done:** `ffwf-tau-tokens` in the payload (Q6); tagging 0.9.0 and publishing it; then
+  GitHub.
+
+## 0.9.0 (release/0.9.0, targeting τ 0.17.1, protocol 2; not yet tagged)
+- **Breaking:** protocol 2 only (τ ≥ 0.17.0, the HTTP edge). Settings `tau-code.token` and
+  `tau-code.model` are removed. Commands: new **tau: New Session**; **tau: Restart This Session's
+  tau Server**; **tau: Choose Which tau Starts the Server**.
+- Bundled runtime and Dockerfile `TAU_SPEC` are `ffwf-tau==0.17.1`.
+- Runtime targets: four released, five held (Phase R, above). The stale-runtime guard refuses a
+  protocol-1 τ.
+- The container runs `tau serve` over the HTTP edge; run it with `docker run -t` to see the token.
+- `scripts/release-notes.mjs` copies the CHANGELOG section into the release body and lists held
+  targets.
 
 ## Shipped
 
@@ -90,7 +113,7 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
 - 130 tests, smoke, payload smoke and Docker verify are all green.
 
 ### Automated marketplace publishing
-- Pushing a `v*` tag runs `release.yml`: checks, nine runtime payloads, the image, a GitHub release, then `publish.yml`.
+- Pushing a `v*` tag runs `release.yml`: checks, the runtime payloads (one per released target, from `build-payload.mjs --list`), the image, a GitHub release, then `publish.yml`.
 - `publish.yml` downloads the release's own `.vsix` files and runs `scripts/publish-extension.sh` with `--skip-duplicate`. There is one job per marketplace (VS Marketplace, Open VSX), and they don't fail together.
 - The tokens `VSCE_PAT` and `OVSX_PAT` live in the GitHub environment `marketplaces`, which admits `v*` tags only.
 - `v*` tags never publish `ffwf-tau-web`; `tau-web-v*` tags publish only that, from the environment `pypi` (which admits `tau-web-v*` tags only).

@@ -3,15 +3,15 @@
 Clients for [τ](https://github.com/jmccardle/tau), the agent harness: a web client, and a VS Code /
 VSCodium extension, both speaking τ's wire to `tau serve`.
 
-**Status: ported to τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge; unreleased (0.9.0
-will carry it).** The protocol package, the session model, the web client and the VS Code /
-VSCodium extension are ported and tested against a real `tau serve`, the extension in a real
-VSCodium. The runtime companion's payload is ported but its build stops at its own check until τ
-fixes a regression (ROADMAP.md, Phase R).
+**Status: 0.9.0, on τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge.** The protocol
+package, the session model, the web client, the VS Code / VSCodium extension, the runtime
+companion (τ 0.17.1, four platforms) and the container are ported and tested against a real
+`tau serve`, the extension in a real VSCodium. CHANGELOG.md is the summary of what 0.9.0 changed
+and removed.
 
 **Requires τ 0.17.0 or later** (`pip install 'ffwf-tau>=0.17'`): the HTTP edge, and protocol 2.
-τ 0.16 serves only a Unix socket, which a browser cannot reach, and speaks protocol 1, which this
-client does not.
+τ 0.16 and older serve only a Unix socket, which a browser cannot reach, and speak protocol 1,
+which this client does not; the extension refuses them by name before it starts anything.
 
 ## What is here
 
@@ -144,7 +144,9 @@ a new one; **tau: New Session** for a new one; or the τ icon in the activity ba
 session. The extension runs `tau serve -d --json` in the folder (τ from `tau-code.binary`,
 `TAU_BIN`, the `ffwf.tau-runtime` companion, or `PATH`; `tau-code.runtime` chooses) and relays its
 HTTP edge to the page, so the token stays in the extension host and the page opens no connection.
-A window reload brings each tab back on its session. **tau: Show Agent Log** shows every command
+A window reload brings each tab back on its session. The runtime companion carries τ only for
+linux-x64, linux-arm64, darwin-x64 and darwin-arm64; elsewhere, install τ 0.17.1 yourself
+(`pipx install ffwf-tau==0.17.1`) and set `tau-code.binary` to it. **tau: Show Agent Log** shows every command
 it ran.
 
 ### Develop it
@@ -199,19 +201,31 @@ network, no key) and stop it after (`scripts/lib/serve.mjs`); nothing touches `~
 
 ## Not yet
 
-- **The runtime companion's release build** (`packages/runtime`): the payload is ported to τ 0.17
-  and works in the extension, but its build's own check stops it (τ 0.17.0's `serve -d` re-launches
-  without `-I`), and five of the nine targets have no τ 0.17 wheel. ROADMAP.md, Phase R.
-- **The container** (`Dockerfile`, `docker/`): its entrypoint runs τ 0.14's `tau serve --listen`,
-  which τ 0.16 does not have.
-- **A Python package of the web client** (`tau_web`, which `tau serve` would find without
-  `--web-root`): not built; its name is an open question.
+- **More runtime targets** (`packages/runtime`): `linux-armhf`, `alpine-x64` and `alpine-arm64`
+  wait on τ publishing armv7l and musllinux wheels; `win32-x64` and `win32-arm64` wait on
+  `tau serve` running on Windows (and an arm64 wheel). They are marked `held` in
+  `packages/runtime/scripts/build-payload.mjs`; ROADMAP.md, Phase R.
+
+## Run the container
+
+The image is τ 0.17.1 and the built web client; it serves one session (a new one in `/work`) per
+process.
+
+```bash
+docker build -t ffwf/tau-code .
+docker run --rm -t -p 127.0.0.1:8256:8256 -v "$PWD:/work" \
+  -e TAU_MODEL_BASE_URL=http://host.docker.internal:8000/v1 ffwf/tau-code
+```
+
+Use `-t`: the token is random on every start, and τ prints the `open: …#token=…` address only on a
+TTY. Open it with `127.0.0.1` for the host. τ allows pages from the address it bound
+(`0.0.0.0`), not the one you published, so the entrypoint adds `--allow-origin` for each of
+`TAU_CODE_ORIGINS` (default `http://127.0.0.1:8256 http://localhost:8256`); set it, space
+separated, when you publish a different port or host. Pass `-c` or `--session ID` as the
+container command to continue a session instead of starting a new one. `TAU_MODEL_BASE_URL`
+configures a model endpoint (`docker/write-config.sh` writes it as τ 0.17's `provider`).
 
 ## Publishing
-
-**As of 0.8.1, and on hold:** a release builds the extension and the runtime payloads; the
-extension builds, the payloads do not yet (ROADMAP.md, Phase R), so there is no release of the
-port until then. What follows describes the 0.8.x process.
 
 Two scripts, each publishing one kind of thing. Neither runs as part of a
 build, and both read their credentials from the environment.
@@ -219,15 +233,16 @@ build, and both read their credentials from the environment.
 ### Releases
 
 Pushing a `v*` tag builds everything and attaches it to a GitHub release:
-`.github/workflows/release.yml`. One Linux runner produces all ten `.vsix`
-files — the universal `ffwf-tau-code`, and one `ffwf-tau-runtime` per target —
+`.github/workflows/release.yml`. One Linux runner produces all five `.vsix`
+files — the universal `ffwf-tau-code`, and one `ffwf-tau-runtime` per released target (four;
+the held ones are skipped) —
 and the release body is generated from each payload's own `manifest.json`, so
 it states the τ that shipped rather than the one that was asked for. The tag
 has to agree with the tree; `scripts/check-version.mjs` is what makes "HEAD at
 a version tag is the released version" a check rather than a habit.
 
 Running it by hand (**Actions > release > Run workflow**) takes a ref, and the
-ref decides: pick a **branch** and it runs the same checks and the same ten
+ref decides: pick a **branch** and it runs the same checks and the same five
 builds and creates no release, which is how to find out before tagging; pick a
 **tag** and it makes the release. A dispatch runs the workflow as it exists at
 the ref you pick, so only a tag that already contains this file can be released
@@ -278,7 +293,7 @@ PYTHON=/path/to/venv/bin/python npm run reserve:names -- --publish
 Each placeholder is a README and no code, published and then deprecated so npm
 prints the notice on any install.
 
-**This has been run.** All nine names are held, and the npm organisation `@ffwf`
+**This has been run.** All nine names were reserved and are held, and the npm organisation `@ffwf`
 covers `@ffwf/*` besides. `docs/ARCHITECTURE.md` §9.5 lists what is claimed
 where, and the two credential rules that each cost a failed run: npm needs a
 granular token with 2FA bypass rather than a `npm login` session, and PyPI

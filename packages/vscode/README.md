@@ -29,8 +29,12 @@ ships its own Python with τ in it, so nothing needs to be on your `PATH`.
 
 τ needs a model. It reads `~/.tau/config.json`; run `tau` once and it writes a
 template you can edit. If `tau` is not on your `PATH`, set `tau-code.binary` to
-the full path. A τ that speaks another protocol is refused with a sentence
-saying which τ to install.
+the full path. A τ that speaks another protocol (anything older than 0.17.0
+speaks protocol 1) is refused before anything starts, with a sentence saying
+what was found and which τ to install; see Troubleshooting below.
+
+The runtime extension carries τ 0.17.1 for linux-x64, linux-arm64, darwin-x64
+and darwin-arm64.
 
 ## Use it
 
@@ -45,20 +49,23 @@ saying which τ to install.
    completes it.
 
 Each tab runs `tau serve -d --json` in the folder. τ starts the session's
-server, or reports the one already running, and the extension relays its HTTP
+server, or reports the one already running (its token is random per server, so
+there is no token setting), and the extension relays its HTTP
 edge to the panel: the server's token stays in the extension host, and the
 panel itself opens no connection. A server left idle exits after ten minutes;
 the tab starts it again when it reconnects.
 
 Commands in the palette under **tau**: `Open Agent`, `New Session`,
-`Reconnect to tau serve`, `Restart This Session's tau Server`, `Show Agent Log`
-(every command the extension ran), and the two that choose which τ starts a
-server.
+`Reconnect to tau serve`, `Restart This Session's tau Server` (stops that
+session's server, which disconnects every client of it, and reconnects),
+`Show Agent Log` (every command the extension ran), and `Choose Which tau Starts
+the Server`.
 
 ## Changing the model
 
 The status bar shows the cursor's model. `/model <name>` changes it, with Tab
-completing the names in `~/.tau/config.json`.
+completing the names in `~/.tau/config.json`. There is no model setting: `tau
+serve` takes no model flag.
 
 ## Settings
 
@@ -67,9 +74,30 @@ completing the names in `~/.tau/config.json`.
 | `tau-code.runtime` | Which τ starts a server when more than one is installed: `auto`, `bundled`, `system`. |
 | `tau-code.binary` | Path to τ's console script. A bare name is looked up on `PATH`. |
 
+The settings `tau-code.token` and `tau-code.model` were removed in 0.9.0.
+
 A server that is already running is used whichever τ started it. When that τ
 is a different version from the one this window would start, a notification
 says so, with a button to restart the server.
+
+## Troubleshooting: "needs tau 0.17 or later" (a stale runtime)
+
+0.9.0 speaks protocol 2 only. If the τ it would start is older (protocol 1), it
+refuses to start it and shows an error notification naming the version and
+protocol it found, the one it needs, and the fix, with a **Choose Which tau**
+button. It never falls back to another τ.
+
+This happens most on platforms with no 0.9.0 runtime (linux-armhf, Alpine, and
+Windows), where the marketplaces may still offer the 0.8.1 runtime, which carries
+τ 0.14.1. Fix it one of three ways:
+
+- Install τ yourself (`pipx install ffwf-tau==0.17.1`) and set `tau-code.binary`
+  to its `tau`.
+- Set `tau-code.runtime` to `system` when a good τ is on `PATH`.
+- On a released platform, update `ffwf.tau-runtime`.
+
+On Windows, use Remote-WSL or Remote-SSH, where the Linux runtime installs on the
+remote.
 
 ## Remote development
 

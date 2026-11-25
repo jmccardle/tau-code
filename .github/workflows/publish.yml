@@ -2,8 +2,8 @@
 #
 # Called by release.yml once the release exists, so what is published is
 # exactly what was released: the files are downloaded from the release, not
-# rebuilt. The universal `ffwf.tau-code` and all nine `ffwf.tau-runtime`
-# targets go up as one version on each marketplace.
+# rebuilt. The universal `ffwf.tau-code` and every released `ffwf.tau-runtime`
+# target goes up as one version on each marketplace.
 #
 # ONE JOB PER MARKETPLACE, and not fail-fast. The two fail independently -- the
 # Visual Studio Marketplace alone rejects a displayName another extension holds
