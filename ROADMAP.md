@@ -1,8 +1,8 @@
 # tau-code roadmap
 
 State as of 2026-11-24. `master` is `v0.8.1` plus the port to τ 0.17 (protocol 2), merged from
-`feat/http-edge-client`, and Phase R (the extension). It is on forgejo and goblin only, untagged,
-until 0.9.0.
+`feat/http-edge-client`, and Phase R (the extension). It is on forgejo, goblin and GitHub; tau-code
+itself is untagged until 0.9.0 (`tau-web-v0.17.0` tags the web wheel only).
 
 ## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
@@ -34,8 +34,10 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
     them);
   - the session picker (one `tau serve` is one session: Q-G (a));
   - the tree's elide, commit-branch and paste-subtree (no wire counterpart in protocol 2).
-- **Not built:** the `tau_web` Python package (`ffwf-tau-web`?) that `tau serve` would find without
-  `--web-root`, and τ's `ffwf-tau[web]` extra that would name it: Q-H is open.
+- **`ffwf-tau-web`** (packages/web-py, the package `tau_web`), which `tau serve` finds without
+  `--web-root`: built by `npm run package:web-wheel`, versioned with τ (0.17.x), and published to
+  PyPI by `tau-web-v*` tags (release.yml's `web-wheel-publish`, trusted publishing, GitHub
+  environment `pypi`). The first is `tau-web-v0.17.0`.
 
 ## Phase R: the extension on protocol 2 (built 2026-11-24)
 - **The VS Code / VSCodium extension** (`packages/vscode`): ported, back in the workspaces and the
@@ -91,6 +93,7 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
 - Pushing a `v*` tag runs `release.yml`: checks, nine runtime payloads, the image, a GitHub release, then `publish.yml`.
 - `publish.yml` downloads the release's own `.vsix` files and runs `scripts/publish-extension.sh` with `--skip-duplicate`. There is one job per marketplace (VS Marketplace, Open VSX), and they don't fail together.
 - The tokens `VSCE_PAT` and `OVSX_PAT` live in the GitHub environment `marketplaces`, which admits `v*` tags only.
+- `v*` tags never publish `ffwf-tau-web`; `tau-web-v*` tags publish only that, from the environment `pypi` (which admits `tau-web-v*` tags only).
 - The first run was 39151067252 for v0.7.0. Both marketplaces list `ffwf.tau-code` and all nine `ffwf.tau-runtime` targets at 0.7.0.
 - v0.6.0 was deliberately not backfilled to the marketplaces.
 
