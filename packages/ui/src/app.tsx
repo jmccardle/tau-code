@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { LinkState, SessionLink } from '@ffwf/tau-code-protocol';
+import { ActivityMark } from './activity-mark.js';
 import { Composer } from './composer.js';
 import { CursorTabs, Items, StepControls } from './cursors.js';
 import type { Call } from './line.js';
@@ -36,9 +37,11 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
 
   const view = state.focus === null ? undefined : model.views.get(state.focus);
   const walk = view ? model.walk(view.at) : null;
+  const open = model.openCursors();
   return (
     <div className="tau-app">
       <header className={`tau-status tau-status-${phase}`}>
+        <ActivityMark working={open.some((v) => v.busy)} unread={open.some((v) => v.questions.length > 0)} />
         <span className="tau-dot" />
         <span className="tau-status-session" title={`${welcome.session} in ${welcome.cwd}`}>
           {welcome.session}
@@ -48,7 +51,7 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
         </span>
         <span className="tau-spacer" />
         {view?.model && <span className="tau-hint">model {view.model}</span>}
-        <span className="tau-hint">τ {welcome.version}</span>
+        <span className="tau-hint">tau {welcome.version}</span>
         <button type="button" className="tau-link" onClick={() => setTreeOpen(!treeOpen)} aria-pressed={treeOpen}>
           {treeOpen ? 'hide tree' : 'tree'}
         </button>
@@ -68,7 +71,7 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
           <Transcript walk={walk} layer={model.layers.get(view.cursor)} client={link.clientId} />
         ) : (
           <div className="tau-transcript tau-hint">
-            No cursor is open. Reopen a closed one above, or open one from the tree.
+            no cursor is open: reopen a closed one above, or open one from the tree
           </div>
         )}
         {treeOpen && (
@@ -138,6 +141,7 @@ function Connection({ state, hint, onRetry }: { state: LinkState; hint: string |
   return (
     <div className="tau-app tau-connection" data-testid="connection">
       <div className={`tau-status tau-status-${state.phase}`}>
+        <ActivityMark working={state.phase === 'connecting'} unread={false} />
         <span className="tau-dot" />
         {state.phase === 'failed' ? 'cannot connect' : 'connecting to tau serve…'}
       </div>
@@ -145,7 +149,7 @@ function Connection({ state, hint, onRetry }: { state: LinkState; hint: string |
       {hint && <p>{hint}</p>}
       {state.phase === 'failed' && (
         <button type="button" onClick={onRetry}>
-          Try again
+          try again
         </button>
       )}
     </div>

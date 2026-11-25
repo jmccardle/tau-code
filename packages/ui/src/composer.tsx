@@ -133,7 +133,7 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
           aria-label="message"
           rows={Math.min(8, Math.max(2, text.split('\n').length))}
           value={text}
-          placeholder="Type a message, or / for a command (Tab completes). Enter sends; Shift+Enter is a new line."
+          placeholder="a message, or / for a command (tab completes). enter sends, shift+enter is a new line"
           onChange={(e) => {
             setText(e.target.value);
             if (choices.length) setChoices([]);
@@ -151,7 +151,7 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
           }}
         />
         <button type="submit" disabled={working || !text.trim()}>
-          Send
+          send
         </button>
       </form>
     </div>
@@ -177,7 +177,7 @@ function PendingForm(props: {
           title={`/config ${pending.extension}`}
           text={pending.form.description}
           schema={pending.form.schema as Schema}
-          submitLabel="Set"
+          submitLabel="set"
           extra={
             <label className="tau-choice">
               <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
@@ -188,7 +188,7 @@ function PendingForm(props: {
             await carryOut({ kind: 'configure', extension: pending.extension, values: values as Record<string, unknown>, save });
             onDone(true);
           }}
-          secondary={{ label: 'Cancel', onClick: () => onDone(false) }}
+          secondary={{ label: 'cancel', onClick: () => onDone(false) }}
         />
       </div>
     );
@@ -201,7 +201,7 @@ function PendingForm(props: {
         text={`${pending.form.description}${pending.missing.length ? ` (missing: ${pending.missing.join(', ')})` : ''}`}
         schema={pending.form.schema as Schema}
         start={pending.args}
-        submitLabel="Run"
+        submitLabel="run"
         onSubmit={async (args) => {
           const values = args as Record<string, unknown>;
           // `/config` with no extension: once one is chosen, it is that extension's options form.
@@ -214,7 +214,7 @@ function PendingForm(props: {
           await carryOut({ kind: 'run', command: pending.command, args: values });
           onDone(true);
         }}
-        secondary={{ label: 'Cancel', onClick: () => onDone(false) }}
+        secondary={{ label: 'cancel', onClick: () => onDone(false) }}
       />
     </div>
   );

@@ -66,7 +66,7 @@ export function TreePanel({ model, loaded, load, focus, onFocus, call, report }:
               }}
             >
               <input aria-label="label" placeholder="label" value={label} onChange={(e) => setLabel(e.target.value)} />
-              <button type="submit">Label</button>
+              <button type="submit">label</button>
             </form>
           </>
         ) : (
@@ -86,7 +86,7 @@ export function TreePanel({ model, loaded, load, focus, onFocus, call, report }:
               })
             }
           >
-            Go to (cursor #{focus})
+            go to (cursor #{focus})
           </button>
           <button
             type="button"
@@ -97,7 +97,7 @@ export function TreePanel({ model, loaded, load, focus, onFocus, call, report }:
               })
             }
           >
-            Open a cursor here
+            open a cursor here
           </button>
           <button type="button" className="tau-link" onClick={() => setPicked(null)}>
             cancel

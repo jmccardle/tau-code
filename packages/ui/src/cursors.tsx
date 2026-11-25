@@ -128,10 +128,10 @@ export function StepControls({ view, call, report }: StepControlsProps): JSX.Ele
         auto-step {view.auto ? 'on' : 'off'}
       </label>
       <button type="button" disabled={view.busy} onClick={() => attempt(report, () => call('step', { cursor }))}>
-        Step
+        step
       </button>
       <button type="button" disabled={!view.busy} onClick={() => attempt(report, () => call('abort', { cursor }))}>
-        Abort
+        abort
       </button>
       <span className="tau-step-state" data-testid="step-state">
         {view.busy ? 'working' : 'at rest'}

@@ -11,11 +11,14 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./vite-fonts": "./vite-fonts.mjs"
   },
   "files": [
     "dist",
-    "src/styles.css"
+    "src/styles.css",
+    "src/fonts",
+    "vite-fonts.mjs"
   ],
   "scripts": {
     "build": "tsc --build",

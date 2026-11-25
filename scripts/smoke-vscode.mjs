@@ -326,7 +326,7 @@ try {
     assert.ok(command.startsWith(join(extensions, 'ffwf.tau-runtime-')), `the server is the runtime's: ${command}`);
     step(`the server is the runtime companion's interpreter: ${command.split(' ')[0]}`);
   }
-  assert.match(await frame.locator('.tau-status').innerText(), new RegExp(`τ ${first.version.replace(/\./g, '\\.')}`));
+  assert.match(await frame.locator('.tau-status').innerText(), new RegExp(`tau ${first.version.replace(/\./g, '\\.')}`));
   step(`"tau: Open Agent" started tau serve ${first.version} (protocol 2, pid ${first.pid}) in the folder; the tab is connected`);
 
   await say(frame, 'hello there');

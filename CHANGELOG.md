@@ -3,6 +3,22 @@
 One section per release, newest first. `scripts/release-notes.mjs` copies the section of the
 version being released into the GitHub release, and refuses to write notes without one.
 
+## Unreleased
+
+### Changed
+
+- **The Tau design system.** The web client and the VS Code webview are drawn in Whiteprint
+  (light) and Blueprint (dark): solid blue paper, `trace` as the one accent, square corners, no
+  shadows, and every status colour paired with a glyph (● ok, ◐ running, ▲ warn, ✕ error). The
+  browser follows `prefers-color-scheme`; the webview follows the editor theme's kind, and a
+  high-contrast theme keeps the editor's own colours. Button labels are lowercase.
+- **The tau mark.** The strip shows the mark as an activity indicator (working while a cursor
+  steps, a dot while a question waits). The favicon, the activity-bar icon and the extension
+  icon are the design system's marks.
+- **Bundled fonts.** IBM Plex Sans, Plex Sans Condensed and Plex Mono (Latin), a JetBrains Mono
+  cut for τ and the status glyphs, and Tau Symbols ship with the client and the webview, with
+  their licences under `fonts/`: about 115 kB of woff2, nothing fetched at run time.
+
 ## 0.9.0
 
 **Breaking.** tau code now speaks **protocol 2** only: τ 0.17.0 or newer, over `tau serve`'s HTTP
