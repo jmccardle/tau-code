@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { PROTOCOL } from '@ffwf/tau-code-protocol';
 import type * as vscode from 'vscode';
-import { describe, tauRuntime, type TauResolution } from './runtime.js';
+import { describe, incompatible, tauRuntime, type TauResolution } from './runtime.js';
 
 /**
  * Starting and stopping the `tau serve` a panel talks to.
@@ -48,6 +48,8 @@ export class NoServer extends Error {
     message: string,
     /** The resolution, when there was one, for the "which τ" notice. */
     readonly resolution: TauResolution | null,
+    /** The chosen τ cannot speak this extension's protocol (compat.ts); choosing another τ fixes it. */
+    readonly incompatible = false,
   ) {
     super(message);
     this.name = 'NoServer';
@@ -90,6 +92,9 @@ export async function startServer(
   output.info(describe(resolution));
   const chosen = resolution.chosen;
   if (!chosen) throw new NoServer(resolution.problem ?? 'No tau was found.', resolution);
+  // Before spawning: a τ before 0.17 would start a daemon this extension cannot talk to.
+  const refused = incompatible(resolution);
+  if (refused) throw new NoServer(refused, resolution, true);
 
   const attempts: string[][] =
     choice === 'new' ? [[]] : choice === 'continue' ? [['-c'], []] : [['--session', choice.session], []];
@@ -122,8 +127,10 @@ export async function startServer(
 /** A record this client can use: protocol 2, and an HTTP edge. */
 function check(record: ServeRecord, resolution: TauResolution): Started['record'] {
   if (record.protocol !== PROTOCOL) {
+    // τ before 0.17 prints a daemon record with no `protocol` and no `version` at all.
+    const speaks = typeof record.protocol === 'number' ? `protocol ${String(record.protocol)}` : 'an older protocol';
     throw new NoServer(
-      `tau ${record.version} speaks protocol ${String(record.protocol)}, and this extension speaks ${PROTOCOL} ` +
+      `tau ${record.version ?? '(a version before 0.17, by its serve record)'} speaks ${speaks}, and this extension speaks ${PROTOCOL} ` +
         `(tau ≥ 0.17.0). Install a matching tau, or choose another with "tau: Choose Which tau Starts the Server".`,
       resolution,
     );
@@ -146,6 +153,8 @@ export async function stopServer(output: vscode.LogOutputChannel, cwd: string, s
   const resolution = await tauRuntime(output);
   const chosen = resolution.chosen;
   if (!chosen) throw new NoServer(resolution.problem ?? 'No tau was found.', resolution);
+  const refused = incompatible(resolution);
+  if (refused) throw new NoServer(refused, resolution, true);
   const args = [...chosen.args, 'serve', '--stop', '--json', '--session', session];
   output.info(`Stopping the server: ${chosen.command} ${args.join(' ')}`);
   const stopped = (await serveJson(chosen.command, args, cwd, resolution)) as unknown as {

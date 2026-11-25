@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { PROTOCOL } from '@ffwf/tau-code-protocol';
 import * as vscode from 'vscode';
+import { incompatibility, parseVersion } from './compat.js';
 
 /** The optional companion extension that ships a CPython with tau in it. */
 export const RUNTIME_EXTENSION_ID = 'ffwf.tau-runtime';
@@ -36,6 +38,10 @@ export interface TauCandidate {
   args: string[];
   /** What `--version` said, or null when it could not be read. */
   version: string | null;
+  /** The protocol `--version` named (τ ≥ 0.17 prints `(protocol 2)`), or null. */
+  protocol: number | null;
+  /** The runtime's VS Code target, for the bundled τ; otherwise null. */
+  target: string | null;
 }
 
 export interface TauResolution {
@@ -72,7 +78,10 @@ function expandHome(value: string | undefined): string | undefined {
  * is" is a different sentence from "there is nothing here", and the user needs
  * the first one to debug a path they typed.
  */
-async function probe(command: string, args: string[]): Promise<string | null | 'missing'> {
+async function probe(
+  command: string,
+  args: string[],
+): Promise<{ version: string | null; protocol: number | null } | null | 'missing'> {
   return new Promise((resolve) => {
     const child = execFile(
       command,
@@ -87,8 +96,8 @@ async function probe(command: string, args: string[]): Promise<string | null | '
           resolve(code === 'ENOENT' ? 'missing' : null);
           return;
         }
-        const match = /(\d+\.\d+\.\d+[^\s]*)/.exec(stdout);
-        resolve(match?.[1] ?? null);
+        const said = parseVersion(stdout);
+        resolve(said.version === null ? null : said);
       },
     );
     child.on('error', () => resolve('missing'));
@@ -101,9 +110,9 @@ async function candidate(
   command: string,
   args: string[],
 ): Promise<TauCandidate | null> {
-  const version = await probe(command, args);
-  if (version === 'missing') return null;
-  return { kind, where, command, args, version };
+  const said = await probe(command, args);
+  if (said === 'missing') return null;
+  return { kind, where, command, args, version: said?.version ?? null, protocol: said?.protocol ?? null, target: null };
 }
 
 /** Look up and activate the runtime extension, if it is installed and sound. */
@@ -141,6 +150,9 @@ async function bundled(output: vscode.LogOutputChannel): Promise<TauCandidate | 
     command: api.command,
     args: [...api.args],
     version: api.tauVersion,
+    // The runtime API names no protocol; compat.ts infers it from the version (before 0.17.0: 1).
+    protocol: null,
+    target: api.target,
   };
 }
 
@@ -177,12 +189,14 @@ export async function resolveTau(output: vscode.LogOutputChannel): Promise<TauRe
         command: path,
         args: [],
         version: null,
+        protocol: null,
+        target: null,
       };
     }
     if (fromEnv) {
       const found = await candidate('env', `TAU_BIN (${fromEnv})`, fromEnv, []);
       if (found) return found;
-      return { kind: 'env', where: `TAU_BIN (${fromEnv})`, command: fromEnv, args: [], version: null };
+      return { kind: 'env', where: `TAU_BIN (${fromEnv})`, command: fromEnv, args: [], version: null, protocol: null, target: null };
     }
     return null;
   };
@@ -244,6 +258,18 @@ export function versionMismatch(resolution: TauResolution): string | null {
     `Two taus are installed: ${chosen.version} from ${chosen.where}, which this window starts, ` +
     `and ${other.version} from ${other.where}. The "tau-code.runtime" setting chooses.`
   );
+}
+
+/**
+ * Why the chosen tau cannot serve this extension, or null when it can (or cannot be told before
+ * it starts). A stale tau runtime from before 0.9.0 is the case this is for: see compat.ts.
+ */
+export function incompatible(resolution: TauResolution): string | null {
+  if (!resolution.chosen) return null;
+  const version =
+    (vscode.extensions.getExtension('ffwf.tau-code')?.packageJSON as { version?: string } | undefined)?.version ??
+    'this version';
+  return incompatibility(resolution.chosen, resolution.other, PROTOCOL, version);
 }
 
 /** One line for the log, every start, saying what was picked and what was not. */
