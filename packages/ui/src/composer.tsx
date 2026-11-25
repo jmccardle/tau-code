@@ -1,4 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent } from 'react';
+import {
+  attach,
+  detach,
+  filesOf,
+  IMAGE_ACCEPT,
+  sendImages,
+  sizeText,
+  trayProblem,
+  type Attached,
+  type FileLike,
+} from './attachments.js';
+import { rememberImage } from './images.js';
 import { complete, planLine, type Call, type LinePlan } from './line.js';
 import { SchemaForm } from './schema-form.js';
 import type { Schema } from './schema.js';
@@ -13,10 +25,19 @@ export interface ComposerProps {
 /** A form the composer is waiting on: a command's missing arguments, or an extension's options. */
 type Pending = Extract<LinePlan, { kind: 'ask' } | { kind: 'options' }>;
 
+/** Whether a drag carries files (not text, not an editor's URIs). */
+function carriesFiles(event: globalThis.DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes('Files');
+}
+
 /**
  * The line to type: input is `send`, a `/command` is read by the server (`parse_line`) and then
  * run, configured, or shown as a form for what it is missing. Tab asks the server what could finish
  * the last word (`complete_line`).
+ *
+ * Images (protocol 3, τ's D31) wait in a tray above the line, picked with the attach button,
+ * pasted, or dropped anywhere on the page, and go with the next plain message, or alone. A refused send keeps both the
+ * tray and the line.
  */
 export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
@@ -24,10 +45,38 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
   const [choices, setChoices] = useState<string[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState(false);
+  const [tray, setTray] = useState<Attached[]>([]);
+  const [reading, setReading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  /** The tray, for reads made after an `await` (a closure's `tray` is the render's). */
+  const trayRef = useRef<Attached[]>(tray);
   /** The line that was carried out, to clear from the box once it has gone (not if it was edited). */
   const [sent, setSent] = useState<string | null>(null);
   const clear = (line: string | null): void => {
     if (line !== null) setText((now) => (now.trim() === line ? '' : now));
+  };
+
+  /** Read files into the tray; say why any were not added. */
+  const add = async (files: readonly FileLike[]): Promise<void> => {
+    if (files.length === 0) return;
+    setReading(true);
+    setError(null);
+    try {
+      // Read against the tray as it is now; a second paste while this one reads waits its turn.
+      const { tray: next, problems } = await attach(trayRef.current, files);
+      trayRef.current = next;
+      setTray(next);
+      if (problems.length) setError(problems.join('\n'));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setReading(false);
+    }
+  };
+  const remove = (id: number): void => {
+    trayRef.current = detach(trayRef.current, id);
+    setTray(trayRef.current);
   };
 
   /** Do what the plan says; true once it is done, false while a form is waiting for it. */
@@ -53,17 +102,33 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
     }
   };
 
+  /** Send `line` with the tray's images (a plain `send`, never a command); the rest stay. */
+  const sendTray = async (line: string, images: readonly Attached[]): Promise<void> => {
+    const gone = await sendImages(call, cursor, line, images, rememberImage);
+    trayRef.current = trayRef.current.filter((image) => !gone.has(image.id));
+    setTray(trayRef.current);
+  };
+
   const submit = async (): Promise<void> => {
     const line = text.trim();
-    if (!line) return;
+    const images = trayRef.current;
+    if (!line && images.length === 0) return;
+    setChoices([]);
+    const problem = trayProblem(line, images);
+    if (problem !== null) {
+      setError(problem);
+      return;
+    }
     setWorking(true);
     setError(null);
-    setChoices([]);
     try {
-      // The line stays in the box until it has gone: a refused or failed send keeps what was
-      // typed, and so does a form that is cancelled.
+      // The line and the tray stay until they have gone: a refused or failed send keeps what was
+      // typed and attached, and so does a form that is cancelled.
       setSent(line);
-      if (await carryOut(await planLine(call, cursor, line))) clear(line);
+      if (images.length > 0) {
+        await sendTray(line, images);
+        clear(line);
+      } else if (await carryOut(await planLine(call, cursor, line))) clear(line);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -83,8 +148,47 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
     }
   };
 
+  const onPaste = (e: ClipboardEvent): void => {
+    const files = filesOf(e.clipboardData);
+    if (files.length === 0) return; // text: the box takes it as ever
+    e.preventDefault();
+    void add(files);
+  };
+  // A drop of files anywhere on the page attaches them: the composer is the one place they can go,
+  // and a browser would otherwise open a missed drop as a page of its own, leaving the session.
+  // A drag of text or an editor's URIs is left alone, so the box takes it as it always did.
+  const addLatest = useRef(add);
+  addLatest.current = add;
+  useEffect(() => {
+    const over = (e: globalThis.DragEvent): void => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      setDragging(true);
+    };
+    const leave = (e: globalThis.DragEvent): void => {
+      if (e.relatedTarget === null) setDragging(false); // left the page
+    };
+    const drop = (e: globalThis.DragEvent): void => {
+      setDragging(false);
+      const files = filesOf(e.dataTransfer);
+      if (files.length === 0) return;
+      e.preventDefault();
+      void addLatest.current(files);
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+  }, []);
+
+  const canSend = !working && !reading && (text.trim() !== '' || tray.length > 0);
   return (
-    <div className="tau-composer">
+    <div className={`tau-composer${dragging ? ' tau-dropping' : ''}`}>
       {pending && (
         <PendingForm
           pending={pending}
@@ -122,6 +226,26 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
           {error}
         </div>
       )}
+      {(tray.length > 0 || reading) && (
+        <ul className="tau-tray" aria-label="attached images" data-testid="tray">
+          {tray.map((image) => (
+            <li key={image.id} className="tau-tray-item" title={`${image.name}: ${image.mime}, ${sizeText(image.bytes)}`}>
+              <img className="tau-thumb" src={image.url} alt={image.name} />
+              <span className="tau-tray-name">{image.name}</span>
+              <button
+                type="button"
+                className="tau-tray-remove"
+                aria-label={`remove ${image.name}`}
+                title={`remove ${image.name}`}
+                onClick={() => remove(image.id)}
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+          {reading && <li className="tau-hint">reading…</li>}
+        </ul>
+      )}
       <form
         className="tau-composer-row"
         onSubmit={(e) => {
@@ -133,11 +257,12 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
           aria-label="message"
           rows={Math.min(8, Math.max(2, text.split('\n').length))}
           value={text}
-          placeholder="a message, or / for a command (tab completes). enter sends, shift+enter is a new line"
+          placeholder="a message, or / for a command (tab completes). enter sends, shift+enter is a new line. paste or drop images"
           onChange={(e) => {
             setText(e.target.value);
             if (choices.length) setChoices([]);
           }}
+          onPaste={onPaste}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -150,7 +275,31 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
             }
           }}
         />
-        <button type="submit" disabled={working || !text.trim()}>
+        <input
+          ref={picker}
+          type="file"
+          accept={IMAGE_ACCEPT}
+          multiple
+          hidden
+          aria-hidden="true"
+          tabIndex={-1}
+          data-testid="image-picker"
+          onChange={(e) => {
+            const files = filesOf(e.currentTarget);
+            e.currentTarget.value = ''; // the same file may be picked again after a remove
+            void add(files);
+          }}
+        />
+        <button
+          type="button"
+          className="tau-attach"
+          aria-label="attach images"
+          title="attach images: png, jpeg, gif or webp"
+          onClick={() => picker.current?.click()}
+        >
+          attach
+        </button>
+        <button type="submit" disabled={!canSend}>
           send
         </button>
       </form>

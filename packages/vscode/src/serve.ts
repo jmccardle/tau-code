@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { PROTOCOL } from '@ffwf/tau-code-protocol';
 import type * as vscode from 'vscode';
 import { describe, incompatible, tauRuntime, type TauResolution } from './runtime.js';
+import { firstTauOf } from './compat.js';
 
 /**
  * Starting and stopping the `tau serve` a panel talks to.
@@ -92,7 +93,7 @@ export async function startServer(
   output.info(describe(resolution));
   const chosen = resolution.chosen;
   if (!chosen) throw new NoServer(resolution.problem ?? 'No tau was found.', resolution);
-  // Before spawning: a τ before 0.17 would start a daemon this extension cannot talk to.
+  // Before spawning: a τ of another protocol would start a server this extension cannot talk to.
   const refused = incompatible(resolution);
   if (refused) throw new NoServer(refused, resolution, true);
 
@@ -124,14 +125,14 @@ export async function startServer(
   throw new NoServer('tau serve -d named no session.', resolution);
 }
 
-/** A record this client can use: protocol 2, and an HTTP edge. */
+/** A record this client can use: `PROTOCOL`, and an HTTP edge. */
 function check(record: ServeRecord, resolution: TauResolution): Started['record'] {
   if (record.protocol !== PROTOCOL) {
     // τ before 0.17 prints a daemon record with no `protocol` and no `version` at all.
     const speaks = typeof record.protocol === 'number' ? `protocol ${String(record.protocol)}` : 'an older protocol';
     throw new NoServer(
       `tau ${record.version ?? '(a version before 0.17, by its serve record)'} speaks ${speaks}, and this extension speaks ${PROTOCOL} ` +
-        `(tau ≥ 0.17.0). Install a matching tau, or choose another with "tau: Choose Which tau Starts the Server".`,
+        `(tau ≥ ${firstTauOf(PROTOCOL)}). Install a matching tau, or choose another with "tau: Choose Which tau Starts the Server".`,
       resolution,
     );
   }
@@ -189,7 +190,7 @@ function serveJson(command: string, args: string[], cwd: string, resolution: Tau
         reject(
           new NoServer(
             `\`tau serve --json\` printed something that is not a serve record, so this tau predates what the ` +
-              `extension needs (tau ≥ 0.17.0). It printed: ${stdout.slice(0, 300)}`,
+              `extension needs (tau ≥ ${firstTauOf(PROTOCOL)}). It printed: ${stdout.slice(0, 300)}`,
             resolution,
           ),
         );

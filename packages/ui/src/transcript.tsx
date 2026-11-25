@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { imageLabel, type LiveLayer, type Node } from '@ffwf/tau-code-protocol';
+import { UserImages } from './images.js';
 import { LiveMarkdown, Markdown } from './markdown.js';
 import { layerShows, prettyArgs, rows, type Row } from './rows.js';
 
@@ -23,7 +24,8 @@ function RowView({ row }: { row: Row }): JSX.Element {
       return (
         <div className={`tau-row tau-row-user${row.mine ? ' tau-mine' : ''}`} data-node={row.node}>
           {head}
-          <div className="tau-row-text">{row.text}</div>
+          {row.text !== '' && <div className="tau-row-text">{row.text}</div>}
+          {row.images && <UserImages images={row.images} />}
         </div>
       );
     case 'assistant':

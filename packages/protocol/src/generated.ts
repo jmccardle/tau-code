@@ -9,7 +9,7 @@
  */
 
 /** The protocol `hello` names. The server refuses any other number (`ProtocolMismatch`). */
-export const PROTOCOL = 2 as const;
+export const PROTOCOL = 3 as const;
 
 /** Nodes added to the tree, in id order, bodies included. */
 export interface Appended {
@@ -27,7 +27,12 @@ export type Author = "Provider" | "Tools" | "Core" | {
 export type Body = {
   System: string;
 } | {
-  User: string;
+  /** `Body::User`'s two encodings: the text alone, or the text with its images. */
+  User: string | {
+    images: Image[];
+    text: string;
+    [key: string]: unknown;
+  };
 } | {
   Assistant: {
     /**
@@ -199,6 +204,21 @@ export interface Image {
   [key: string]: unknown;
 }
 
+/**
+ * One image a client sends with an input (D31): exactly one of `data`, the image file's bytes in
+ * standard base64 (with padding, nothing else), or `sha256`, the name of an image this session
+ * already keeps (a node's or an input's; nothing is read from a path). The format and size are
+ * read from the bytes, never taken from the client. Built from the wire or by hand, it is checked
+ * at once: `BadImage` (a `ValueError`) for bytes that are not strict base64 of a PNG, JPEG, GIF or
+ * WebP image of at most `MAX_INPUT_BYTES`, or a `sha256` that is not 64 lowercase hex digits. Its
+ * `repr` never shows the bytes.
+ */
+export interface ImageInput {
+  data?: string | null;
+  sha256?: string | null;
+  [key: string]: unknown;
+}
+
 export interface Item {
   data: ItemData;
   id: number;
@@ -209,6 +229,7 @@ export interface Item {
 export type ItemData = {
   Input: {
     by: Author;
+    images?: Image[];
     text: string;
     [key: string]: unknown;
   };
@@ -526,10 +547,29 @@ export interface HelloParams {
 /** What `hello` answers. */
 export type HelloResult = Welcome;
 
-/** Add `text` to the cursor's scratchpad as this client's input; returns the item. */
+/**
+ * The bytes of the image named `sha256` that this session holds (a node's, or an input's on a
+ * scratchpad), as base64: what a client draws a node's `Image` with (D31). `MissingImage` (a
+ * `LookupError`) if the session holds none by that name.
+ */
+export interface ImageParams {
+  sha256: string;
+}
+/** What `image` answers. */
+export type ImageResult = string;
+
+/**
+ * Add `text` to the cursor's scratchpad as this client's input, with `images` after it (D31);
+ * returns the item. At most `MAX_INPUT_IMAGES` images, each an `ImageInput` (its bytes are checked
+ * as it is made: `BadImage`). The images are held to the model of the cursor's branch as a tool's
+ * are (D30 section 6): `ValueError` saying why if it does not take images or one is over its
+ * provider's limits, `MissingImage` for a `sha256` the session does not hold, `ValueError` for too
+ * many; nothing is added then.
+ */
 export interface InputParams {
   cursor: number;
   text: string;
+  images?: ImageInput[];
 }
 /** What `input` answers. */
 export type InputResult = number;
@@ -636,6 +676,7 @@ export type RunResult = string | null;
 export interface SendParams {
   cursor: number;
   text: string;
+  images?: ImageInput[];
 }
 /** What `send` answers. */
 export type SendResult = number;
@@ -692,6 +733,7 @@ export interface Requests {
   configure: ConfigureParams;
   go_to: GoToParams;
   hello: HelloParams;
+  image: ImageParams;
   input: InputParams;
   node: NodeParams;
   nodes: NodesParams;
@@ -722,6 +764,7 @@ export interface Results {
   configure: ConfigureResult;
   go_to: GoToResult;
   hello: HelloResult;
+  image: ImageResult;
   input: InputResult;
   node: NodeResult;
   nodes: NodesResult;
@@ -746,7 +789,7 @@ export type Method = keyof Requests;
 export type Delta = TextDelta | ThinkingDelta | CallNamed | CallArgs | Retrying | ToolProgress;
 
 /** Every method, in the schema's order. */
-export const METHODS = ["abort","answer","children","close_cursor","commands","complete","complete_line","configure","go_to","hello","input","node","nodes","open","options","parse_line","remove_item","remove_label","reopen","run","send","set_auto","set_label","step","walk","watch"] as const;
+export const METHODS = ["abort","answer","children","close_cursor","commands","complete","complete_line","configure","go_to","hello","image","input","node","nodes","open","options","parse_line","remove_item","remove_label","reopen","run","send","set_auto","set_label","step","walk","watch"] as const;
 /** Every event `kind`, in the schema's order. */
 export const EVENT_KINDS = ["Live","CursorView","CursorGone","Labels","Appended","Notice"] as const;
 /** Every delta `kind`, in the schema's order. */

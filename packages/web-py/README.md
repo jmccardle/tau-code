@@ -9,7 +9,7 @@ tau serve                 # open the printed http://127.0.0.1:…/#token=… add
 ```
 
 It holds files only (`tau_web/dist/`) and runs no Node. Its version follows τ's: ffwf-tau-web
-0.17.x speaks protocol 2 and pairs with ffwf-tau 0.17.x.
+0.17.x speaks protocol 2 and pairs with ffwf-tau 0.17.x; 0.18.x speaks protocol 3 and pairs with ffwf-tau 0.18.x.
 
 Check that it matches the τ installed beside it:
 

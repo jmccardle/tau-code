@@ -1,4 +1,4 @@
-import { authorText, bodyKind, isFrontend, outcomeOf, proseText } from '@ffwf/tau-code-protocol';
+import { authorText, bodyKind, isFrontend, outcomeOf, proseText, userOf } from '@ffwf/tau-code-protocol';
 import type { Image, LiveLayer, Node } from '@ffwf/tau-code-protocol';
 
 /** How a transcript row is drawn. */
@@ -19,7 +19,10 @@ export interface Row {
   label?: string;
   /** A result: whether the call succeeded. */
   ok?: boolean;
-  /** A result: the images it gave the model, in order (protocol 2). Absent when there are none. */
+  /**
+   * The images a result gave the model (D30, since protocol 2), or a user's message carried
+   * (D31, protocol 3), in order. Absent when there are none.
+   */
   images?: Image[];
 }
 
@@ -36,8 +39,14 @@ export function rows(walk: readonly Node[], client: string): Row[] {
         out.push({ ...base, key: `${node.id}`, kind: 'system', text: (body as { System: string }).System });
         break;
       case 'User': {
-        const text = (body as { User: string }).User;
-        out.push({ ...base, key: `${node.id}`, kind: 'user', text: node.typed ?? text });
+        const { text, images } = userOf((body as Extract<Node['body'], { User: unknown }>).User);
+        out.push({
+          ...base,
+          key: `${node.id}`,
+          kind: 'user',
+          text: node.typed ?? text,
+          ...(images.length > 0 ? { images } : {}),
+        });
         break;
       }
       case 'Assistant': {

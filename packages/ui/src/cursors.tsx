@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { endingText, isFrontend, itemText } from '@ffwf/tau-code-protocol';
 import type { CursorView, SessionModel } from '@ffwf/tau-code-protocol';
 import type { Call } from './line.js';
+import { UserImages } from './images.js';
 
 /** Run an action, reporting a failure with `report`; τ's sentence is the message. */
 export function attempt(report: (message: string | null) => void, action: () => Promise<unknown>): void {
@@ -160,11 +161,12 @@ export function Items({ view, client, call, report }: ItemsProps): JSX.Element |
     <div className="tau-items">
       <div className="tau-hint">waiting to be delivered</div>
       {view.items.map((item) => {
-        const { by, text, author } = itemText(item.data);
+        const { by, text, author, images } = itemText(item.data);
         const mine = author !== null && isFrontend(author, client);
         return (
           <div key={item.id} className="tau-item">
             <span className="tau-hint">{mine ? 'you' : by}:</span> <span className="tau-item-text">{text}</span>
+            <UserImages images={images} />
             {mine && (
               <button
                 type="button"

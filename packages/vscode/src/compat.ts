@@ -14,16 +14,29 @@
  * daemon record with no protocol, no URL and no token. Without this check the user got a sentence
  * about "protocol undefined". A system tau older than 0.17 is the same failure by another road.
  *
- * Nothing falls back. A tau that cannot speak protocol 2 is refused with what was found, what is
+ * Protocol 3 (τ 0.18, tau code 0.10) makes the same failure common: the 0.9 runtime carries τ
+ * 0.17.1, which speaks 2, and its runtime API names no protocol, only the version.
+ *
+ * Nothing falls back. A tau that cannot speak this extension's protocol is refused with what was found, what is
  * needed, and what to do -- including, when there is one, the other tau that WOULD work, so the
  * fix is one setting rather than a search.
  */
 
-/** The first τ release that speaks protocol 2 (τ 0.17.0, the HTTP edge). */
-export const FIRST_TAU_OF_PROTOCOL_2 = '0.17.0';
+/**
+ * The first τ release of each protocol since the daemon: 2 is τ 0.17.0 (the HTTP edge, D29), 3 is
+ * τ 0.18.0 (images in a user's message, D31). Every τ before 0.17.0 speaks something that is not 2.
+ */
+export const FIRST_TAU_OF_PROTOCOL: Readonly<Record<number, string>> = { 2: '0.17.0', 3: '0.18.0' };
+
+/** The first τ that speaks `protocol`. A protocol not in the table is this file's bug: thrown. */
+export function firstTauOf(protocol: number): string {
+  const first = FIRST_TAU_OF_PROTOCOL[protocol];
+  if (first === undefined) throw new Error(`compat.ts names no first tau for protocol ${String(protocol)}`);
+  return first;
+}
 
 /** The τ this release bundles and was tested against; named in the fix. */
-export const TESTED_TAU = '0.17.1';
+export const TESTED_TAU = '0.18.0';
 
 /**
  * The targets this release ships ffwf.tau-runtime for. The same list as build-payload.mjs's
@@ -38,14 +51,14 @@ export interface Speaker {
   where: string;
   /** `0.14.1`, or null when it did not say. */
   version: string | null;
-  /** The protocol it named (`tau 0.17.0 (protocol 2)`), or null when it named none. */
+  /** The protocol it named (`tau 0.18.0 (protocol 3)`), or null when it named none. */
   protocol: number | null;
   /** The runtime's VS Code target (`linux-armhf`), for a bundled τ; otherwise null. */
   target: string | null;
 }
 
 /**
- * `tau --version` output to `{version, protocol}`. τ ≥ 0.17 prints `tau 0.17.0 (protocol 2)`;
+ * `tau --version` output to `{version, protocol}`. τ ≥ 0.17 prints `tau 0.18.0 (protocol 3)`;
  * earlier ones print `tau 0.14.1`. Either part may be missing.
  */
 export function parseVersion(text: string): { version: string | null; protocol: number | null } {
@@ -72,12 +85,16 @@ function older(a: string, b: string): boolean {
 /**
  * The protocol a candidate speaks, as far as can be known without starting it: the number it
  * named, else protocol 1 for any τ before 0.17.0 (every earlier release, back to 0.11's daemon,
- * speaks something that is not 2), else unknown -- and unknown is let through, because
- * `serve.ts`'s record check reads the protocol off the running server and refuses there.
+ * speaks something that is not 2), else 2 for a τ before 0.18.0, else unknown -- and unknown is
+ * let through, because `serve.ts`'s record check reads the protocol off the running server and
+ * refuses there. A named protocol wins over the version: a τ built from source between releases
+ * keeps the last release's number while it speaks the next protocol.
  */
 export function protocolOf(speaker: Speaker): number | null {
   if (speaker.protocol !== null) return speaker.protocol;
-  if (speaker.version !== null && older(speaker.version, FIRST_TAU_OF_PROTOCOL_2)) return 1;
+  if (speaker.version === null) return null;
+  if (older(speaker.version, firstTauOf(2))) return 1;
+  if (older(speaker.version, firstTauOf(3))) return 2;
   return null;
 }
 
@@ -91,7 +108,7 @@ export function incompatibility(chosen: Speaker, other: Speaker | null, wanted: 
 
   const found =
     `tau ${chosen.version ?? '(unknown version)'} from ${chosen.where} speaks protocol ${String(speaks)}. ` +
-    `tau code ${extensionVersion} speaks protocol ${String(wanted)}, which needs tau ${FIRST_TAU_OF_PROTOCOL_2} or newer.`;
+    `tau code ${extensionVersion} speaks protocol ${String(wanted)}, which needs tau ${firstTauOf(wanted)} or newer.`;
 
   const otherWorks = other !== null && protocolOf(other) === wanted;
   const install =
@@ -119,9 +136,9 @@ export function incompatibility(chosen: Speaker, other: Speaker | null, wanted: 
         `or uninstall ffwf.tau-runtime.`
       : `${why} To fix it, ${install}, then uninstall ffwf.tau-runtime or set "tau-code.runtime" to "system".`;
   } else if (chosen.kind === 'setting') {
-    fix = ` "tau-code.binary" names this tau. Point it at a tau ${FIRST_TAU_OF_PROTOCOL_2} or newer: ${install}.`;
+    fix = ` "tau-code.binary" names this tau. Point it at a tau ${firstTauOf(wanted)} or newer: ${install}.`;
   } else if (chosen.kind === 'env') {
-    fix = ` The TAU_BIN environment variable names this tau. Point it at a tau ${FIRST_TAU_OF_PROTOCOL_2} or newer, or unset it and ${install}.`;
+    fix = ` The TAU_BIN environment variable names this tau. Point it at a tau ${firstTauOf(wanted)} or newer, or unset it and ${install}.`;
   } else {
     fix = otherWorks
       ? ` tau ${other.version ?? ''} from ${other.where} does speak protocol ${String(wanted)}: ` +

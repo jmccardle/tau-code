@@ -82,7 +82,7 @@ export class SessionModel {
     for (const listener of this.#listeners) listener();
   }
 
-  /** Take one event. A kind protocol 2 does not have is a `ProtocolViolation`. */
+  /** Take one event. A kind protocol 3 does not have is a `ProtocolViolation`. */
   hear(event: Event): void {
     switch (event.kind) {
       case 'CursorView':

@@ -1524,3 +1524,45 @@ client's `TauApp` (`@ffwf/tau-code-ui`) in its webview; what is editor-specific 
   and Playwright drives the command palette and the webview: a chat round trip, `/model` and an
   image result labelled `[image 1x1 image/png]`, a window reload restoring the tab's session, and
   a server restart; the token is checked absent from every webview document.
+
+## 17. Images in a user's message: protocol 3 (2026-11-25)
+
+τ 0.18 (its D31) lets a person send images with a message. The wire is protocol 3: `Body.User` is
+the bare text, or `{text, images}` once there are images; an `Input` item has `images` (left out
+when empty); `send` and `input` take `images: [ImageInput]`, at most 20, each `{data}` (the file's
+bytes in strict, padded base64) or `{sha256}` (an image the session already holds); `image(sha256)`
+gives an image's bytes back. A τ of protocol 2 meets a shape it cannot decode, so 3 is not
+additive, and `hello` naming 2 is refused.
+
+- **The tray is the composer's** (`packages/ui/src/composer.tsx`, logic in `attachments.ts`). A
+  picker (`accept` the four formats, `multiple`), a paste (`clipboardData.files`) and a drop of files anywhere on
+  the page (`dataTransfer.files`; a browser would otherwise open a missed drop as a page of its own)
+  all go through `attach`, which sniffs the bytes as τ does, holds each
+  image to 20 MiB and the tray to 20, keeps the request under the edge's 64 MiB body cap (a 413
+  would close the connection: the transport cannot tell which call it lost), skips an image
+  already attached, and computes its SHA-256 (`crypto.subtle`) and a `data:` URL for its
+  thumbnail. These checks are courtesy: the server owns every limit, and its refusal is shown as
+  it is. A paste or a drop that carries no files is left to the text box, so text and an editor's
+  URI drops behave as before.
+- **Images go only with a plain `send`.** A `/command` line with images is refused in the client:
+  the server reads a command line and runs it, and a command's text has nowhere to put an image.
+- **A refused send keeps everything.** `Refused` (the model takes no images, or not these) and
+  `InvalidParams` (an image the server would not read, or too many) queue nothing, so the tray and
+  the line stay, with τ's sentence above them. On success, the sent images leave the tray; any
+  added while it was sending stay.
+- **Drawing images.** A node names an image by `{mime, sha256, width, height}`, never its bytes.
+  The page keeps the `data:` URL of each image it sends, by SHA-256 (`images.tsx`), so its own
+  messages draw them; keyed by content, an entry can never draw the wrong image. Every other image
+  (another tab's, an `@path` image, anything after a reload) is labelled `[image WxH mime]`.
+  Fetching those with `image()` is the next slice. The pages' CSPs (τ's web root, the webview)
+  allow `img-src data:`, not `blob:`, which is why the thumbnails are `data:` URLs.
+- **VS Code** needs nothing new: the relay moves whole JSON-RPC messages, images included, and
+  the token stays in the host. The stale-τ guard (`compat.ts`) now reads a τ before 0.18.0 that
+  names no protocol as protocol 2, so the 0.9 runtime companion (τ 0.17.1) is refused before
+  anything is spawned. The "Attach file" host command and Explorer drops are a later slice.
+- **Tested** by `attachments.test.mjs` (sniffing, base64 at 20 MiB, paste and drop hand-over,
+  remove, every limit, a refused send that keeps the tray), `npm run smoke` (the wire against τ's
+  mock with `images: true`: the `User` node, the echo, `image()`, a send by `sha256`, and each
+  refusal), `npm run smoke:browser` (pick, paste, drop, remove, the refusals, the send, and another
+  tab's labels) and `npm run smoke:vscode` (a picked and a pasted image through the relay).
+

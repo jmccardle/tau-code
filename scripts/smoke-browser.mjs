@@ -11,9 +11,13 @@
  * two tabs (the late tab sees it in its snapshot, and sees it close); a command (`/flood`) asked
  * for its missing argument through its form; `/config tuner` from its options form; auto-step off
  * and on; the tree, a cursor opened at a node, closed, and reopened; a label set and removed; a
- * reload (the tab's token); a page with no token. Then, against a second `tau serve` whose model is
- * a fake vision model (scripts/lib/fake-model.mjs), a tool result with an image (protocol 2): the
- * row says it holds one, and labels it as τ does. Any console error (a CSP refusal, say) fails it.
+ * reload (the tab's token); a page with no token; an image refused by a model that takes none, the
+ * tray and the line kept. Then, against a `tau serve` whose mock model takes images (protocol 3):
+ * images picked, pasted and dropped into the tray, one removed, a non-image and a /command refused,
+ * then sent: the message shows its own images, the mock echoes them, and another tab labels them.
+ * Then, against one whose model is a fake vision model (scripts/lib/fake-model.mjs), a tool
+ * result with an image (protocol 2): the row says it holds one, and labels it as τ does. Any
+ * console error (a CSP refusal, say) fails it.
  *
  * `WEB_ROOT=installed` drives the client τ finds installed beside it (ffwf-tau-web, the package
  * `tau_web`) instead: no `--web-root`, and the build is not needed. `npm run smoke:web-wheel`
@@ -24,7 +28,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { fakeModel, png } from './lib/fake-model.mjs';
+import { fakeModel, png, pngOf } from './lib/fake-model.mjs';
 import { serve } from './lib/serve.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -119,6 +123,40 @@ async function say(page, text) {
 }
 
 const transcript = (page) => page.getByTestId('transcript');
+const tray = (page) => page.getByTestId('tray');
+const composerError = (page) => page.locator('.tau-composer .tau-error');
+
+/** Pick `files` ([name, bytes]) with the attach button's file input. */
+async function pick(page, files) {
+  await page.getByTestId('image-picker').setInputFiles(files.map(([name, bytes]) => ({ name, mimeType: 'application/octet-stream', buffer: bytes })));
+}
+
+/**
+ * Paste `files` ([name, bytes]) into the message box, or drop them on the composer, as the page
+ * gets them from the OS: a DataTransfer of Files.
+ */
+async function transfer(page, how, files, target = '.tau-composer') {
+  await page.evaluate(
+    ({ how, files, target }) => {
+      const data = new DataTransfer();
+      for (const [name, b64] of files) {
+        data.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name));
+      }
+      if (how === 'paste') {
+        const box = document.querySelector('[aria-label="message"]');
+        box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      } else {
+        const where = document.querySelector(target);
+        where.dispatchEvent(new DragEvent('dragover', { dataTransfer: data, bubbles: true, cancelable: true }));
+        const drop = new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true });
+        where.dispatchEvent(drop);
+        // Taken: a browser left to its default would open the file as a page, leaving the session.
+        if (!drop.defaultPrevented) throw new Error(`a drop of files on ${target} was not taken`);
+      }
+    },
+    { how, files: files.map(([name, bytes]) => [name, bytes.toString('base64')]), target },
+  );
+}
 const question = (page) => page.getByTestId('questions').locator('.tau-question');
 const stepState = (page) => page.getByTestId('step-state');
 
@@ -260,8 +298,94 @@ try {
   await a.locator('.tau-status-ready').waitFor();
   step('a reload connects with the tab\'s token');
 
+  // Protocol 3: this mock model takes no images. The send is refused; the tray and the line stay.
+  await pick(a, [['pixel.png', png()]]);
+  await tray(a).locator('.tau-tray-item').waitFor();
+  await a.getByLabel('message').fill('what is this');
+  await a.getByLabel('message').press('Enter');
+  await composerError(a).getByText(/send: Refused: .*image/).waitFor();
+  assert.equal(await tray(a).locator('.tau-tray-item').count(), 1, 'the tray is kept');
+  assert.equal(await a.getByLabel('message').inputValue(), 'what is this', 'the line is kept');
+  assert.equal(await a.locator('.tau-items').count(), 0, 'nothing was queued');
+  step(`a model that takes no images refuses the send; the tray and the line stay ("${(await composerError(a).innerText()).slice(0, 80)}…")`);
+
   await context.close();
   await context2.close();
+
+  // Protocol 3: images in a message, to a mock model that takes them.
+  const seeing = await serve({
+    webRoot: WEB_ROOT,
+    config: { default_model: 'mock', models: { mock: { model: 'mock', provider: 'mock', images: true, options: { delay_ms: 1 } } } },
+  });
+  try {
+    const context4 = await browser.newContext();
+    const s = await tab(context4, `${seeing.record.url}#token=${seeing.record.token}`);
+    await s.locator('.tau-status-ready').waitFor();
+    const send = s.locator('.tau-composer-row button[type="submit"]');
+    assert.equal(await send.isDisabled(), true, 'nothing to send yet');
+
+    // Picked (two), one removed; the attach button is a labelled, focusable control.
+    const attachButton = s.getByRole('button', { name: 'attach images' });
+    await attachButton.focus();
+    assert.equal(await s.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'attach images');
+    await pick(s, [['wide.png', pngOf(64, 32, (x, y) => [x * 4, y * 8, 160])], ['spare.png', pngOf(3, 3, () => [200, 40, 40])]]);
+    await tray(s).locator('.tau-tray-item').nth(1).waitFor();
+    assert.equal(await send.isDisabled(), false, 'images alone can be sent');
+    await tray(s).getByRole('button', { name: 'remove spare.png' }).click();
+    await tray(s).locator('.tau-tray-item', { hasText: 'spare.png' }).waitFor({ state: 'detached' });
+    step('the picker adds images to the tray as thumbnails; one is removed by its labelled control');
+
+    // Pasted, and dropped, as a person would from a screenshot tool or a file manager.
+    await transfer(s, 'paste', [['shot.png', pngOf(2, 2, (x) => [x * 255, 128, 0])]]);
+    await tray(s).locator('.tau-tray-item', { hasText: 'shot.png' }).waitFor();
+    // Dropped on the transcript, short of the composer: still the composer's.
+    await transfer(s, 'drop', [['pixel.png', png()]], '[data-testid="transcript"]');
+    await tray(s).locator('.tau-tray-item', { hasText: 'pixel.png' }).waitFor();
+    assert.equal(await tray(s).locator('img.tau-thumb').count(), 3);
+    assert.match(await tray(s).locator('img.tau-thumb').first().getAttribute('src'), /^data:image\/png;base64,/);
+    step('a pasted image and one dropped anywhere on the page join the tray (data: thumbnails, as the CSP allows)');
+
+    // Not an image; the same image twice; a /command with images.
+    await transfer(s, 'drop', [['notes.txt', Buffer.from('hello')], ['again.png', png()]]);
+    await composerError(s).getByText('notes.txt is not a png, jpeg, gif or webp image').waitFor();
+    await composerError(s).getByText('again.png is attached already').waitFor();
+    assert.equal(await tray(s).locator('.tau-tray-item').count(), 3);
+    await s.getByLabel('message').fill('/model mock');
+    await s.getByLabel('message').press('Enter');
+    await composerError(s).getByText(/^images go with a message, not a \/command/).waitFor();
+    assert.equal(await tray(s).locator('.tau-tray-item').count(), 3, 'the tray is kept');
+    step('a non-image, a repeat and a /command with images are refused in the client, saying why');
+
+    // Sent: the message shows its own images; the mock echoes them; the tray and the line clear.
+    await say(s, 'what are these');
+    const user = transcript(s).locator('.tau-row-user', { hasText: 'what are these' });
+    await user.waitFor();
+    await transcript(s).getByText(/\[3 images: image\/png 64x32, image\/png 2x2, image\/png 1x1\]/).waitFor();
+    assert.equal(await user.locator('img.tau-thumb').count(), 3, 'its own images, drawn');
+    assert.equal(await user.locator('img.tau-thumb').first().getAttribute('alt'), '[image 64x32 image/png]');
+    assert.equal(await tray(s).count(), 0, 'the tray is empty');
+    assert.equal(await s.getByLabel('message').inputValue(), '');
+    step('sent: the message draws its own three images, and the mock echoes [3 images: ...]');
+
+    // Another tab has no bytes for them (fetching is slice 2): it labels each as τ does.
+    const context5 = await browser.newContext();
+    const other = await tab(context5, `${seeing.record.url}#token=${seeing.record.token}`);
+    const theirs = transcript(other).locator('.tau-row-user', { hasText: 'what are these' });
+    await theirs.waitFor();
+    assert.equal(await theirs.locator('img').count(), 0);
+    assert.deepEqual(await theirs.locator('.tau-image').allInnerTexts(), [
+      '[image 64x32 image/png]',
+      '[image 2x2 image/png]',
+      '[image 1x1 image/png]',
+    ]);
+    await other.getByRole('button', { name: 'tree' }).click();
+    await other.getByTestId('tree').locator('.tau-tree-line', { hasText: 'what are these [3 images]' }).waitFor();
+    step('another tab labels the images [image WxH mime], and its tree counts them');
+    await context5.close();
+    await context4.close();
+  } finally {
+    await seeing.stop();
+  }
 
   // Protocol 2: a tool result with an image, from a second server with a fake vision model.
   const model = await fakeModel('pixel.png');

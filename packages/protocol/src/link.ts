@@ -237,7 +237,7 @@ export class SessionLink {
       try {
         model.hear(event);
       } catch (error) {
-        // A kind protocol 2 does not have: this server speaks something else. Final.
+        // A kind protocol 3 does not have: this server speaks something else. Final.
         if (generation === this.#generation) this.#fail((error as Error).message, 'protocol');
       }
     });
