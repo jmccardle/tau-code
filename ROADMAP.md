@@ -1,8 +1,8 @@
 # tau-code roadmap
 
 State as of 2026-11-24. `master` is `v0.8.1` plus the port to τ 0.17 (protocol 2), merged from
-`feat/http-edge-client`. It is on forgejo and goblin only, untagged, until 0.9.0; master does not
-build the VS Code extension until Phase R.
+`feat/http-edge-client`, and Phase R (the extension). It is on forgejo and goblin only, untagged,
+until 0.9.0.
 
 ## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
@@ -37,18 +37,29 @@ The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.
 - **Not built:** the `tau_web` Python package (`ffwf-tau-web`?) that `tau serve` would find without
   `--web-root`, and τ's `ffwf-tau[web]` extra that would name it: Q-H is open.
 
-## Phase R (deferred, its own review)
-- **The VS Code extension** (`packages/vscode`): still τ 0.14's protocol 0.11 (a WebSocket daemon of
-  many sessions, `tau-code.token`). It is **out of the npm workspaces and the TypeScript build**
-  so the gate is honest; nothing was deleted. Port: the webview loads the web `dist/`, and the
-  extension host either relays `/stream` (the token stays in the host) or τ allows the webview's
-  origin (`--allow-origin`).
-- **The runtime** (`packages/runtime`): its extension shell still builds; its payload
-  (`tauSpec` = τ 0.14.1, `scripts/build-payload.mjs`, `scripts/smoke-runtime.mjs`) is not ported.
-  Q4–Q6 (targets, CPython, tau-tokens).
-- **The container** (`Dockerfile`, `docker/`): the entrypoint becomes `tau serve --port 3393 --host
-  0.0.0.0 --allow-network --allow-origin … --web-root …`.
-- **0.9.0**: the release that carries the port (a wire break), then GitHub.
+## Phase R: the extension on protocol 2 (built 2026-11-24)
+- **The VS Code / VSCodium extension** (`packages/vscode`): ported, back in the workspaces and the
+  TypeScript build. The webview mounts the web client's `TauApp`; the extension host runs
+  `tau serve -d --json` per tab (one tab, one session: `-c` for "Open Agent", none for "New
+  Session", `--session <id>` after a reload) and relays the HTTP edge with `HttpTransport`, so the
+  token stays in the host (HE-14's relay, not `--allow-origin`). `tau-code.token` and
+  `tau-code.model` are gone. ARCHITECTURE §16.
+- **Tested in a real VSCodium:** `npm run smoke:vscode` installs the `.vsix` into throwaway dirs,
+  runs VSCodium under Xvfb and drives it with Playwright: chat round trip, `/model` and an image
+  result labelled `[image 1x1 image/png]`, a window reload keeping the session, a server restart.
+  Green with the system τ 0.17.0 and with a local (unverified) runtime companion.
+- **The runtime** (`packages/runtime`): `tauSpec` = `ffwf-tau==0.17.0`; the build verifies over
+  the HTTP edge; `npm run smoke:runtime` is ported. **Its build stops at its own canary:** τ
+  0.17.0's `tau serve -d` re-launches the server as `python -m tau serve …` without `-I`
+  (`_serve_cli.py` `_spawn`, `sys.executable` with no interpreter flags), so the detached server
+  reads the user site: τ #79 is back. Fix in τ, then rebuild; no workaround here.
+- **Targets (Q3/Q4, open):** τ 0.17.0 publishes wheels for linux-x64, linux-arm64, darwin-x64,
+  darwin-arm64 and win32-x64 only, so `--all` fails on linux-armhf, alpine-x64, alpine-arm64 and
+  win32-arm64; and τ's serve path is not ported to Windows (D29 Open 1). Drop those targets, or
+  add wheels in τ: John decides.
+- **Not done:** `ffwf-tau-tokens` in the payload (Q6); the container (`Dockerfile`, `docker/`:
+  the entrypoint becomes `tau serve --port 3393 --host 0.0.0.0 --allow-network --allow-origin …
+  --web-root …`); the 0.9.0 release, then GitHub.
 
 ## Shipped
 
