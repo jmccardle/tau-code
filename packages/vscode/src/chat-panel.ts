@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { DaemonRelay } from './session.js';
+import { ServeRelay } from './relay.js';
+import type { SessionChoice } from './serve.js';
+import type { PageState } from './webview/messages.js';
 
 /**
  * An agent in an editor tab.
@@ -9,36 +11,41 @@ import { DaemonRelay } from './session.js';
  * transcript beside the code it is editing wants. The sidebar view is the same
  * UI in a narrower place; neither is a wrapper around the other, because
  * `WebviewView` and `WebviewPanel` are different VS Code types that happen to
- * both expose a `Webview`. `DaemonRelay` is what they share.
+ * both expose a `Webview`. `ServeRelay` is what they share.
  */
 export class ChatPanel implements vscode.Disposable {
   static readonly viewType = 'tau-code.panel';
 
   static readonly #open = new Set<ChatPanel>();
+  static #count = 1;
 
   #panel: vscode.WebviewPanel;
-  #session: DaemonRelay;
+  #relay: ServeRelay;
 
   private constructor(
     context: vscode.ExtensionContext,
     output: vscode.LogOutputChannel,
     panel: vscode.WebviewPanel,
+    choice: SessionChoice,
   ) {
     this.#panel = panel;
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg');
 
-    this.#session = new DaemonRelay(context, output, panel.webview, `tab ${panel.title}`);
+    this.#relay = new ServeRelay(context, output, panel.webview, `tab ${ChatPanel.#count++}`, choice);
 
     panel.onDidDispose(() => {
       ChatPanel.#open.delete(this);
-      this.#session.dispose();
+      this.#relay.dispose();
     });
 
     ChatPanel.#open.add(this);
   }
 
-  /** Open a new agent tab beside the active editor. */
-  static create(context: vscode.ExtensionContext, output: vscode.LogOutputChannel): ChatPanel {
+  /**
+   * Open a new agent tab beside the active editor: on the folder's newest session (`continue`), or
+   * on a new one.
+   */
+  static create(context: vscode.ExtensionContext, output: vscode.LogOutputChannel, choice: SessionChoice): ChatPanel {
     const panel = vscode.window.createWebviewPanel(
       ChatPanel.viewType,
       'tau',
@@ -57,22 +64,23 @@ export class ChatPanel implements vscode.Disposable {
         ],
       },
     );
-    return new ChatPanel(context, output, panel);
+    return new ChatPanel(context, output, panel, choice);
   }
 
   /**
    * Rebuild a panel VS Code restored after a window reload.
    *
-   * The session DID survive the reload: it is the daemon's, not the extension
-   * host's. The page remembers which one it was on (webview state), and
-   * re-attaches to it -- a turn that was running is still running.
+   * The session DID survive the reload: it is its `tau serve`'s, not the extension
+   * host's. The page remembered which one it was on (webview state), and the panel
+   * reopens it -- a turn that was running is still running.
    */
   static restore(
     context: vscode.ExtensionContext,
     output: vscode.LogOutputChannel,
     panel: vscode.WebviewPanel,
+    state: PageState | undefined,
   ): void {
-    new ChatPanel(context, output, panel);
+    new ChatPanel(context, output, panel, state?.session ? { session: state.session } : 'continue');
   }
 
   /** The focused agent tab, or null when none has focus. */
@@ -83,7 +91,7 @@ export class ChatPanel implements vscode.Disposable {
     return null;
   }
 
-  /** Every agent tab in this window, for a restart that replaces the daemon under all of them. */
+  /** Every agent tab in this window, for a command that acts on whichever has focus. */
   static all(): readonly ChatPanel[] {
     return [...ChatPanel.#open];
   }
@@ -92,8 +100,12 @@ export class ChatPanel implements vscode.Disposable {
     return ChatPanel.#open.size;
   }
 
+  get relay(): ServeRelay {
+    return this.#relay;
+  }
+
   restart(): void {
-    this.#session.restart();
+    this.#relay.restart();
   }
 
   reveal(): void {
@@ -112,7 +124,7 @@ export class ChatPanelSerializer implements vscode.WebviewPanelSerializer {
     private readonly output: vscode.LogOutputChannel,
   ) {}
 
-  async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
-    ChatPanel.restore(this.context, this.output, panel);
+  async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: unknown): Promise<void> {
+    ChatPanel.restore(this.context, this.output, panel, (state ?? undefined) as PageState | undefined);
   }
 }

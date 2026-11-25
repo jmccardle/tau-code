@@ -2,15 +2,16 @@
   "name": "ffwf-tau-code",
   "private": true,
   "version": "0.8.1",
-  "description": "Clients for the tau agent harness's `tau serve` HTTP edge: a web client (served by tau itself), and a VS Code extension (being ported).",
+  "description": "Clients for the tau agent harness's `tau serve` HTTP edge: a web client (served by tau itself), and a VS Code extension.",
   "license": "MIT",
   "//internal-deps": "The five @ffwf/tau-code-* packages depend on each other by `*`, not by version. None of them is published to npm and none is meant to be (ARCHITECTURE 9.1), so a range npm cannot resolve from the registry is the only kind that works: an exact pin links the workspace only while the two numbers happen to agree, and silently becomes an unresolvable registry fetch the moment a release bumps one of them. `*` always matches the sibling on disk. Do not 'correct' these to the current version.",
-  "//workspaces": "Order matters: npm builds workspaces in this order, and each package builds against the dist of the ones before it. packages/vscode is NOT a workspace while the port to τ 0.16 is under way: it is written against serve protocol 0.11 (a WebSocket, a daemon of many sessions) and does not build against protocol 1. It comes back with Phase R (ROADMAP.md). packages/runtime ships a payload and imports nothing here, so it still builds.",
+  "//workspaces": "Order matters: npm builds workspaces in this order, and each package builds against the dist of the ones before it. packages/vscode is last: it bundles protocol and ui. packages/runtime ships a payload rather than code and depends on nothing here, so its position is free; it sits beside vscode because the two are the pair a release builds.",
   "workspaces": [
     "packages/protocol",
     "packages/ui",
     "packages/web",
-    "packages/runtime"
+    "packages/runtime",
+    "packages/vscode"
   ],
   "engines": {
     "node": ">=20"
@@ -22,6 +23,8 @@
     "test": "node scripts/test.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:browser": "node scripts/smoke-browser.mjs",
+    "smoke:vscode": "npm run package --workspace packages/vscode && node scripts/smoke-vscode.mjs",
+    "smoke:runtime": "node scripts/smoke-runtime.mjs",
     "check:protocol": "node scripts/generate-protocol.mjs --check",
     "check": "npm run check:protocol && npm run build && npm run typecheck && npm test && npm run smoke && npm run smoke:browser",
     "dev": "npm run dev --workspace @ffwf/tau-code-web",

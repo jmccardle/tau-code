@@ -1,14 +1,17 @@
-import type { Transport } from '@ffwf/tau-code-protocol';
-import type { FromWebview, HostNotice, ToWebview } from './messages.js';
+import { EdgeError, type Transport } from '@ffwf/tau-code-protocol';
+import type { FromWebview, PageState, ToWebview } from './messages.js';
 
 /**
  * The webview's side of the relay.
  *
- * `acquireVsCodeApi()` may be called ONCE per page; a second call throws. So
- * the page has one `Relay`, which owns the API and the one `message` listener,
- * and each connection is a `RelayTransport` it hands out with a number. The
- * host tags every frame with that number, and a frame for a connection the
- * page has moved on from is dropped here.
+ * `acquireVsCodeApi()` may be called ONCE per page; a second call throws. So the page has one
+ * `Relay`, which owns the API and the one `message` listener, and each connection is a
+ * `RelayTransport` it hands out with a number. The host tags every message with that number, and
+ * a message for a connection the page has moved on from is dropped here.
+ *
+ * `open()` resolves once the host has the stream open, and rejects with the `EdgeError` the host
+ * met (or `unavailable` when there is no τ to start), so `SessionLink` retries what can change and
+ * stops on what cannot, exactly as it does over HTTP in a browser.
  */
 
 interface VsCodeApi {
@@ -19,77 +22,94 @@ interface VsCodeApi {
 
 declare function acquireVsCodeApi(): VsCodeApi;
 
+interface Opening {
+  transport: RelayTransport;
+  resolve: (transport: Transport) => void;
+  reject: (error: Error) => void;
+}
+
 export class Relay {
   #api: VsCodeApi;
   #next = 1;
-  #connections = new Map<number, RelayTransport>();
-  #onNotice: ((notice: HostNotice) => void) | null = null;
-  #notices: HostNotice[] = [];
+  #opening = new Map<number, Opening>();
+  #open = new Map<number, RelayTransport>();
 
   constructor() {
     this.#api = acquireVsCodeApi();
-    window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
-      const message = event.data;
-      switch (message.tauCode) {
-        case 'frame':
-          this.#connections.get(message.connection)?.deliver(message.frame);
-          return;
-        case 'closed':
-          this.#connections.get(message.connection)?.closedByHost(message.reason, message.code);
-          this.#connections.delete(message.connection);
-          return;
-        case 'notice':
-          if (this.#onNotice) this.#onNotice(message.notice);
-          else this.#notices.push(message.notice);
-          return;
+    window.addEventListener('message', (event: MessageEvent<ToWebview>) => this.#hear(event.data));
+  }
+
+  #hear(message: ToWebview): void {
+    switch (message.tauCode) {
+      case 'opened': {
+        const opening = this.#opening.get(message.connection);
+        if (!opening) return;
+        this.#opening.delete(message.connection);
+        this.#open.set(message.connection, opening.transport);
+        opening.resolve(opening.transport);
+        return;
       }
-    });
+      case 'refused': {
+        const opening = this.#opening.get(message.connection);
+        if (!opening) return;
+        this.#opening.delete(message.connection);
+        opening.reject(new EdgeError(message.kind, message.reason));
+        return;
+      }
+      case 'message':
+        this.#open.get(message.connection)?.deliver(message.message);
+        return;
+      case 'closed': {
+        const transport = this.#open.get(message.connection) ?? this.#opening.get(message.connection)?.transport;
+        const opening = this.#opening.get(message.connection);
+        this.#open.delete(message.connection);
+        this.#opening.delete(message.connection);
+        opening?.reject(new EdgeError('unreachable', message.reason));
+        transport?.closedByHost(message.reason, message.violation);
+        return;
+      }
+    }
   }
 
-  /** A new connection to the daemon, through the host. */
-  open(): Transport {
+  /** A new connection to the session's server, through the host. */
+  open(): Promise<Transport> {
     const connection = this.#next++;
-    const transport = new RelayTransport(connection, (message) => this.#api.postMessage(message), () =>
-      this.#connections.delete(connection),
-    );
-    this.#connections.set(connection, transport);
+    const transport = new RelayTransport(connection, (message) => this.#api.postMessage(message), () => {
+      this.#open.delete(connection);
+      this.#opening.delete(connection);
+    });
+    const opened = new Promise<Transport>((resolve, reject) => {
+      this.#opening.set(connection, { transport, resolve, reject });
+    });
     this.#api.postMessage({ tauCode: 'open', connection });
-    return transport;
-  }
-
-  /** Notices the host sent, including any sent before this was registered. */
-  onNotice(handler: (notice: HostNotice) => void): void {
-    this.#onNotice = handler;
-    for (const notice of this.#notices.splice(0)) handler(notice);
+    return opened;
   }
 
   /** Ask the host to run an editor command. */
-  command(command: string, argument?: string): void {
-    this.#api.postMessage({ tauCode: 'command', command, ...(argument === undefined ? {} : { argument }) });
+  command(command: string): void {
+    this.#api.postMessage({ tauCode: 'command', command });
   }
 
-  /** Tell the host which daemon answered, so it can compare it with the τ it would start. */
-  reportDaemon(version: string, pid: number): void {
-    this.#api.postMessage({ tauCode: 'daemon', version, pid });
+  get state(): PageState {
+    const state = this.#api.getState();
+    return state && typeof state === 'object' ? (state as PageState) : {};
   }
 
-  /** The session this page was on, so a restored tab re-attaches to it. */
-  get rememberedSession(): string | null {
-    const state = this.#api.getState() as { sessionId?: unknown } | null;
-    return typeof state?.sessionId === 'string' ? state.sessionId : null;
-  }
-
-  remember(sessionId: string | null): void {
-    this.#api.setState({ sessionId });
+  /** Keep `patch` in webview state: the host reads it back to restore this panel. */
+  remember(patch: PageState): void {
+    const state = { ...this.state, ...patch };
+    this.#api.setState(state);
   }
 }
 
 class RelayTransport implements Transport {
-  #onMessage: ((frame: unknown) => void) | null = null;
-  #onClose: ((reason: string, code: number | null) => void) | null = null;
+  #onMessage: ((message: unknown) => void) | null = null;
+  /** Messages that arrived before `onMessage` was called. */
+  #early: unknown[] = [];
+  #onClose: ((reason: string, violation: boolean) => void) | null = null;
   #closed = false;
   /** A close that arrived before anyone listened; delivered on `onClose`. */
-  #pendingClose: { reason: string; code: number | null } | null = null;
+  #pendingClose: { reason: string; violation: boolean } | null = null;
 
   constructor(
     readonly connection: number,
@@ -97,35 +117,37 @@ class RelayTransport implements Transport {
     private readonly forget: () => void,
   ) {}
 
-  deliver(frame: unknown): void {
-    if (!this.#closed) this.#onMessage?.(frame);
+  deliver(message: unknown): void {
+    if (this.#closed) return;
+    if (this.#onMessage) this.#onMessage(message);
+    else this.#early.push(message);
   }
 
-  closedByHost(reason: string, code: number | null): void {
+  closedByHost(reason: string, violation: boolean): void {
     if (this.#closed) return;
     this.#closed = true;
-    if (this.#onClose) this.#onClose(reason, code);
-    else this.#pendingClose = { reason, code };
+    if (this.#onClose) this.#onClose(reason, violation);
+    else this.#pendingClose = { reason, violation };
   }
 
-  send(frame: unknown): void {
-    // Throwing, not returning: the client sends inside a Promise executor, so
-    // this rejects that one request with a sentence. Swallowing it would leave
-    // the request pending forever.
-    if (this.#closed) throw new Error('The connection to tau serve is closed.');
-    this.post({ tauCode: 'frame', connection: this.connection, frame });
+  send(message: object): void {
+    // As `HttpTransport`: a send after the close is dropped, because the close was already
+    // reported, and the client rejects every call that was waiting on it.
+    if (this.#closed) return;
+    this.post({ tauCode: 'message', connection: this.connection, message });
   }
 
-  onMessage(handler: (frame: unknown) => void): void {
+  onMessage(handler: (message: unknown) => void): void {
     this.#onMessage = handler;
+    for (const message of this.#early.splice(0)) handler(message);
   }
 
-  onClose(handler: (reason: string, code: number | null) => void): void {
+  onClose(handler: (reason: string, violation: boolean) => void): void {
     this.#onClose = handler;
     const pending = this.#pendingClose;
     if (pending) {
       this.#pendingClose = null;
-      handler(pending.reason, pending.code);
+      handler(pending.reason, pending.violation);
     }
   }
 
@@ -134,5 +156,7 @@ class RelayTransport implements Transport {
     this.#closed = true;
     this.post({ tauCode: 'close', connection: this.connection });
     this.forget();
+    // `Transport.close`: the close handler runs once, for this close too.
+    this.#onClose?.('closed by this client', false);
   }
 }

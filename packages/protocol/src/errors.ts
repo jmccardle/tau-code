@@ -65,9 +65,12 @@ export class ServeError extends Error {
  * - `unauthorized`: `401`, the token is missing or wrong. Final until the token changes.
  * - `forbidden`: `403`, the page's origin is not allowed (D29 §3). Final.
  * - `not-an-edge`: something answered, but not with τ's event stream. Final.
+ * - `unavailable`: there is nothing to dial, and a host that opens servers (an editor extension)
+ *   says why: no τ was found, or `tau serve` refused to start. Final until the user changes
+ *   something (installs τ, picks another), then `retry()`.
  */
 export class EdgeError extends Error {
-  readonly kind: 'unreachable' | 'unauthorized' | 'forbidden' | 'not-an-edge';
+  readonly kind: 'unreachable' | 'unauthorized' | 'forbidden' | 'not-an-edge' | 'unavailable';
   readonly status: number | null;
 
   constructor(kind: EdgeError['kind'], message: string, status: number | null = null) {

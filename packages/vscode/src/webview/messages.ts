@@ -1,34 +1,43 @@
 /**
  * What the webview and the extension host say to each other.
  *
- * Shared by both sides so neither invents a shape the other does not read.
- * Protocol frames ride inside `frame` untouched; everything else here is the
- * host's own business -- which connection, why it closed, which τ it found.
+ * Shared by both sides so neither invents a shape the other does not read. Protocol messages ride
+ * inside `message` untouched; everything else is the host's own business: which connection, why
+ * it could not open, why it closed.
+ *
+ * The bearer token never crosses this line. The host holds the serve record and dials the HTTP
+ * edge itself (relay.ts); the page only ever sees JSON-RPC messages.
  */
 
-import type { HostNotice } from '@ffwf/tau-code-ui';
-
-export type { HostNotice };
+import type { EdgeError } from '@ffwf/tau-code-protocol';
 
 /** What the host knows that the webview needs, written into the page. */
 export interface WebviewContext {
-  /** The workspace folder new sessions are created in, or null with none open. */
-  cwd: string | null;
-  /** The `tau-code.model` setting: the model new sessions start on, or null for τ's default. */
-  model: string | null;
-  /** The `tau-code.token` setting, for a daemon with `serve.token` set. */
-  token: string | null;
+  /** `user@host` of the extension host, the prefix of this page's `hello` client id. */
+  where: string;
+}
+
+/** What the page keeps in webview state, and the host reads back to restore a panel. */
+export interface PageState {
+  /** The session this page was on (`Welcome.session`). */
+  session?: string;
+  /** This page's client id, stable across reloads of the page. */
+  client?: string;
 }
 
 export type FromWebview =
+  /** Open connection `connection`: start or find the server, open its stream. */
   | { tauCode: 'open'; connection: number }
-  | { tauCode: 'frame'; connection: number; frame: unknown }
+  | { tauCode: 'message'; connection: number; message: unknown }
   | { tauCode: 'close'; connection: number }
-  | { tauCode: 'command'; command: string; argument?: string }
-  /** The daemon that answered hello: which τ is actually serving this panel. */
-  | { tauCode: 'daemon'; version: string; pid: number };
+  /** Run an editor command (the page cannot). */
+  | { tauCode: 'command'; command: string };
 
 export type ToWebview =
-  | { tauCode: 'frame'; connection: number; frame: unknown }
-  | { tauCode: 'closed'; connection: number; reason: string; code: number | null }
-  | { tauCode: 'notice'; notice: HostNotice };
+  /** The stream is open: messages follow. */
+  | { tauCode: 'opened'; connection: number }
+  /** The connection could not be opened, and why (`EdgeError.kind` says whether a retry can help). */
+  | { tauCode: 'refused'; connection: number; kind: EdgeError['kind']; reason: string }
+  | { tauCode: 'message'; connection: number; message: unknown }
+  /** The connection is gone (`Transport.onClose`). */
+  | { tauCode: 'closed'; connection: number; reason: string; violation: boolean };

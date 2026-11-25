@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import { ChatPanel, ChatPanelSerializer } from './chat-panel.js';
 import { ChatViewProvider } from './chat-view.js';
 import { describe, invalidate, RUNTIME_EXTENSION_ID, tauRuntime } from './runtime.js';
-import { stopDaemon } from './daemon.js';
-import { DaemonRelay } from './session.js';
+import { ServeRelay } from './relay.js';
+import type { SessionChoice } from './serve.js';
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('tau', { log: true });
@@ -33,27 +33,18 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
 
-    // Bring agent tabs back after a window reload. The session lives in the
-    // daemon, so the restored tab re-attaches to the one it was showing.
+    // Bring agent tabs back after a window reload. The session lives in its
+    // `tau serve`, so the restored tab reopens the one it was showing.
     vscode.window.registerWebviewPanelSerializer(
       ChatPanel.viewType,
       new ChatPanelSerializer(context, output),
     ),
 
-    vscode.commands.registerCommand('tau-code.open', () => {
-      if (!DaemonRelay.workingDirectory()) {
-        void vscode.window
-          .showWarningMessage(
-            'tau needs a working directory. Open the project folder first.',
-            'Open folder',
-          )
-          .then((choice) => {
-            if (choice === 'Open folder') void vscode.commands.executeCommand('vscode.openFolder');
-          });
-        return;
-      }
-      ChatPanel.create(context, output);
-    }),
+    // The folder's newest session (or a new one, in a folder with none), and a
+    // new session. One `tau serve` is one session, so each tab is one session;
+    // two tabs on the same session are two clients of one server.
+    vscode.commands.registerCommand('tau-code.open', () => openPanel(context, output, 'continue')),
+    vscode.commands.registerCommand('tau-code.newSession', () => openPanel(context, output, 'new')),
 
     // Offered by the banner when nothing was found. It is `installExtension` and
     // not a link to the listing, because the answer to "there is no tau" should
@@ -61,7 +52,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('tau-code.installRuntime', async () => {
       if (vscode.extensions.getExtension(RUNTIME_EXTENSION_ID)) {
         void vscode.window.showInformationMessage(
-          `${RUNTIME_EXTENSION_ID} is already installed. It starts the daemon the next time none is running.`,
+          `${RUNTIME_EXTENSION_ID} is already installed. It starts the server the next time none is running.`,
         );
         return;
       }
@@ -69,7 +60,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await vscode.commands.executeCommand('workbench.extensions.installExtension', RUNTIME_EXTENSION_ID);
         invalidate();
         void vscode.window.showInformationMessage(
-          'The tau runtime is installed. It starts the daemon the next time none is running; "tau: Reconnect to tau serve" checks now.',
+          'The tau runtime is installed. It starts the server the next time none is running; "tau: Reconnect to tau serve" checks now.',
         );
       } catch (error) {
         // Named rather than swallowed: the usual cause is a marketplace with no
@@ -102,7 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
         .update('runtime', choice.label, vscode.ConfigurationTarget.Global);
       invalidate();
       void vscode.window.showInformationMessage(
-        `tau-code.runtime is now "${choice.label}". It applies the next time the daemon starts; a daemon already running keeps running.`,
+        `tau-code.runtime is now "${choice.label}". It applies the next time a server starts; a server already running keeps running.`,
       );
     }),
 
@@ -117,51 +108,64 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.restart();
         return;
       }
-      if (sidebar.isLive) {
+      if (sidebar.relay) {
         sidebar.restart();
         return;
       }
       void vscode.window.showInformationMessage('No tau panel is open. Run "tau: Open Agent".');
     }),
 
-    // Stop the daemon and start this window's τ in its place. Offered by the
-    // notice that says another τ's daemon is serving. Modal, because the daemon
-    // is shared: every editor window, browser tab and `tau --connect` on it is
-    // disconnected, and a running turn is stopped.
+    // Stop the focused panel's server and start this window's τ in its place.
+    // Offered by the notice that says another τ is serving. Modal, because the
+    // server is shared: every editor tab, browser tab and `tau -c` on that
+    // session is disconnected, and a running step is stopped.
     vscode.commands.registerCommand('tau-code.restartDaemon', async () => {
+      // The focused tab; else the only tab; else the sidebar.
+      const tabs = ChatPanel.all();
+      const relay = (ChatPanel.active() ?? (tabs.length === 1 ? tabs[0] : null))?.relay ?? sidebar.relay;
+      if (!relay?.session) {
+        void vscode.window.showInformationMessage('No tau panel is connected to a server. Run "tau: Open Agent".');
+        return;
+      }
       const confirm = 'Restart';
       const choice = await vscode.window.showWarningMessage(
-        'Restart the tau daemon?',
+        `Restart the tau server of session ${relay.session}?`,
         {
           modal: true,
           detail:
-            'Every client attached to it (other editor windows, browser tabs, tau --connect) is ' +
-            'disconnected and reconnects to the new one. A turn that is running is stopped. ' +
-            'Sessions are kept.',
+            'Every client of it (other editor tabs and windows, browser tabs, tau -c) is disconnected and ' +
+            'reconnects to the new one. A step that is running is stopped. The session is kept.',
         },
         confirm,
       );
       if (choice !== confirm) return;
-      const token = vscode.workspace.getConfiguration('tau-code').get<string>('token')?.trim() || null;
+      invalidate();
       try {
-        await stopDaemon(output, token);
+        await relay.restartServer();
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        output.error(`Could not stop the daemon: ${detail}`);
-        void vscode.window.showErrorMessage(`Could not stop the tau daemon: ${detail}`);
-        return;
+        output.error(`Could not stop the server: ${detail}`);
+        void vscode.window.showErrorMessage(`Could not stop the tau server: ${detail}`);
       }
-      // Each panel re-runs `tau serve -d` on reconnect, which now starts this
-      // window's τ.
-      for (const panel of ChatPanel.all()) panel.restart();
-      if (sidebar.isLive) sidebar.restart();
     }),
 
     vscode.commands.registerCommand('tau-code.showLog', () => output.show()),
   );
 }
 
+function openPanel(context: vscode.ExtensionContext, output: vscode.LogOutputChannel, choice: SessionChoice): void {
+  if (!ServeRelay.workingDirectory()) {
+    void vscode.window
+      .showWarningMessage('tau needs a working directory. Open the project folder first.', 'Open folder')
+      .then((picked) => {
+        if (picked === 'Open folder') void vscode.commands.executeCommand('vscode.openFolder');
+      });
+    return;
+  }
+  ChatPanel.create(context, output, choice);
+}
+
 export function deactivate(): void {
-  // Every disposable is registered on the context, including each agent
-  // process, so the editor's own teardown reaps them.
+  // Every disposable is registered on the context. Servers are left running:
+  // a detached `tau serve` outlives its clients and exits after ten idle minutes.
 }
