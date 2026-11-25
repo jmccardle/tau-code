@@ -13,8 +13,9 @@
  *
  * What it writes into packages/web-py (all gitignored): `src/tau_web/dist/` (the client),
  * `src/tau_web/_built.py` (the protocol it speaks, from the pinned schema, and the tau-code version
- * it was built from) and `LICENSE` (the repository's). Then it opens what it built and refuses
- * a wheel that is not py3-none-any, has no `tau_web/dist/index.html`, or depends on anything
+ * it was built from) and `LICENSE` (the repository's). Sourcemaps (`*.map`) are left out. Then it
+ * opens what it built and refuses a wheel that is not py3-none-any, has no
+ * `tau_web/dist/index.html`, holds a `.map`, or depends on anything
  * (ffwf-tau depends on this package; a dependency back would be circular).
  *
  * Needs `uv` on PATH (it fetches hatchling, the build backend, from PyPI).
@@ -55,7 +56,9 @@ if (!compiled || Number(compiled[1]) !== protocol) {
 const clientVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
 rmSync(join(PKG, 'dist'), { recursive: true, force: true });
-cpSync(CLIENT, join(PKG, 'dist'), { recursive: true });
+// Sourcemaps stay out: they are most of the client's bytes, and τ serves its root to anyone.
+// Dev builds and `--web-root` keep them.
+cpSync(CLIENT, join(PKG, 'dist'), { recursive: true, filter: (source) => !source.endsWith('.map') });
 writeFileSync(
   join(PKG, '_built.py'),
   `"""Written by tau-code's scripts/build-web-wheel.mjs; not committed."""\n\n` +
@@ -84,11 +87,14 @@ wheel, sdist = sys.argv[1:]
 names = zipfile.ZipFile(wheel).namelist()
 assert "tau_web/dist/index.html" in names, "the wheel has no tau_web/dist/index.html"
 assert "tau_web/_built.py" in names, "the wheel has no tau_web/_built.py"
+maps = [n for n in names if n.endswith(".map")]
+assert not maps, f"the wheel holds sourcemaps: {maps}"
 meta = next(n for n in names if n.endswith(".dist-info/METADATA"))
 requires = [l for l in zipfile.ZipFile(wheel).read(meta).decode().splitlines() if l.startswith("Requires-Dist:")]
 assert not requires, f"the wheel depends on something: {requires}"
 members = tarfile.open(sdist).getnames()
 assert any(m.endswith("src/tau_web/dist/index.html") for m in members), "the sdist has no client"
+assert not [m for m in members if m.endswith(".map")], "the sdist holds sourcemaps"
 print(f"{len(names)} files in the wheel, {len(members)} in the sdist")
 `;
 execFileSync('python3', ['-I', '-c', INSPECT, join(OUT, wheel), join(OUT, sdists[0])], { stdio: 'inherit' });
