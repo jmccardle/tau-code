@@ -139,7 +139,7 @@ try {
   await question(a).waitFor();
   assert.match(await question(a).innerText(), /gate asks[\s\S]*run the thing\?/);
   await question(a).getByLabel('yes').check();
-  await question(a).getByRole('button', { name: 'Answer' }).click();
+  await question(a).getByRole('button', { name: 'answer' }).click();
   await transcript(a).getByText('mock: hello there').waitFor();
   await stepState(a).getByText('at rest · done').waitFor();
   assert.equal(await question(a).count(), 0, 'the answered question closed');
@@ -151,7 +151,7 @@ try {
   await dialog.waitFor();
   assert.match(await dialog.innerText(), /missing: text/);
   await dialog.locator('#args-text').fill('hi from flood');
-  await dialog.getByRole('button', { name: 'Run' }).click();
+  await dialog.getByRole('button', { name: 'run' }).click();
   await a.getByTestId('notices').getByText('/flood:flood: flooded').waitFor();
   assert.equal(await a.getByTestId('notices').getByText('hi from flood').count(), 2);
   step('/flood 2 asked for its missing text, ran, and its tells arrived as notices');
@@ -174,12 +174,12 @@ try {
   await dialog.waitFor();
   await dialog.locator('#options-depth').fill('4');
   await dialog.getByLabel('slow').check();
-  await dialog.getByRole('button', { name: 'Set' }).click();
+  await dialog.getByRole('button', { name: 'set' }).click();
   await a.getByTestId('notices').getByText('/config tuner: set').waitFor();
   await say(a, '/config tuner');
   await dialog.waitFor();
   assert.equal(await dialog.locator('#options-depth').inputValue(), '4', 'the form shows the value set');
-  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await dialog.getByRole('button', { name: 'cancel' }).click();
   step('/config tuner shows its options form; a set value reads back');
 
   // A second tab arrives while a question is open: it sees it, and sees it close when A answers.
@@ -194,7 +194,7 @@ try {
   await question(late).waitFor();
   step('a late tab sees the open question in its snapshot');
   await question(a).getByLabel('yes').check();
-  await question(a).getByRole('button', { name: 'Answer' }).click();
+  await question(a).getByRole('button', { name: 'answer' }).click();
   await transcript(late).getByText('mock: second').waitFor();
   assert.equal(await question(late).count(), 0, 'the late tab saw it close');
   step('answered in one tab, closed in the other; both show the reply');
@@ -203,7 +203,7 @@ try {
   // Declined: the step halts.
   await say(a, 'third');
   await question(a).waitFor();
-  await question(a).getByRole('button', { name: 'Decline' }).click();
+  await question(a).getByRole('button', { name: 'decline' }).click();
   await stepState(a).getByText('halted: verdict: None').waitFor();
   step('a declined question halts the step, and the controls say so');
 
@@ -215,29 +215,29 @@ try {
     await a.locator('.tau-step').getByText(on ? 'auto-step on' : 'auto-step off').waitFor();
   };
   await setAuto(false);
-  await a.locator('.tau-step').getByRole('button', { name: 'Step' }).click();
+  await a.locator('.tau-step').getByRole('button', { name: 'step' }).click();
   await question(a).waitFor();
   await stepState(a).getByText('working').waitFor();
-  await a.locator('.tau-step').getByRole('button', { name: 'Abort' }).click();
+  await a.locator('.tau-step').getByRole('button', { name: 'abort' }).click();
   await stepState(a).getByText('at rest · aborted').waitFor();
   assert.equal(await question(a).count(), 0, 'abort declined the open question');
   await setAuto(true);
   await question(a).waitFor();
-  await question(a).getByRole('button', { name: 'Decline' }).click();
+  await question(a).getByRole('button', { name: 'decline' }).click();
   await stepState(a).getByText(/halted/).waitFor();
-  step('auto-step off: Step runs one step, Abort stops it; auto-step on wakes the cursor');
+  step('auto-step off: step runs one step, abort stops it; auto-step on wakes the cursor');
 
   // The tree: open a cursor at the first input, close it, reopen it; label and unlabel.
   await a.getByRole('button', { name: 'tree' }).click();
   const tree = a.getByTestId('tree');
   await tree.locator('.tau-tree-line', { hasText: /#\d+\s+hello there/ }).click();
-  await tree.getByRole('button', { name: 'Open a cursor here' }).click();
+  await tree.getByRole('button', { name: 'open a cursor here' }).click();
   await a.locator('[data-cursor="1"]').waitFor();
   assert.equal(await a.locator('.tau-tab.tau-selected [data-cursor="1"]').count(), 1, 'the new cursor is followed');
   await transcript(a).getByText('hello there').waitFor();
   assert.equal(await transcript(a).getByText('mock: hello there').count(), 0, 'its walk ends at the input');
   await tree.getByLabel('label').fill('side');
-  await tree.getByRole('button', { name: 'Label' }).click();
+  await tree.getByRole('button', { name: 'label' }).click();
   await a.locator('.tau-tab-labels', { hasText: 'side' }).waitFor();
   await tree.getByTitle('Remove the label side').click();
   await a.locator('.tau-tab-labels', { hasText: 'side' }).waitFor({ state: 'detached' });
@@ -251,7 +251,7 @@ try {
 
   // Going to another node moves the cursor: a branch.
   await tree.locator('.tau-tree-line', { hasText: 'mock: second' }).click();
-  await tree.getByRole('button', { name: /Go to/ }).click();
+  await tree.getByRole('button', { name: /go to/ }).click();
   await transcript(a).getByText('mock: second').waitFor();
   step('go to moves the followed cursor to a picked node');
 

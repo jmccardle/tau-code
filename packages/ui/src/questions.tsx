@@ -56,9 +56,9 @@ export function Questions({ questions, client, call }: QuestionsProps): JSX.Elem
               title={`${question.extension} asks`}
               text={question.text}
               schema={question.schema}
-              submitLabel="Answer"
+              submitLabel="answer"
               onSubmit={(value) => send(question, value)}
-              secondary={{ label: 'Decline', onClick: () => send(question, null) }}
+              secondary={{ label: 'decline', onClick: () => send(question, null) }}
             />
           </div>
         ),
