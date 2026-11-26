@@ -96,7 +96,7 @@ function fake(answers) {
   return { call, asked };
 }
 
-const form = (name, extension = null) => ({ name, description: 'd', schema: { type: 'object', properties: {} }, extension });
+const form = (name, extension = null) => ({ name, description: 'd', schema: { type: 'object', properties: {} }, extension, yields: false });
 
 test('plain text is sent; a line naming no command is sent with a warning, as τ says', async () => {
   assert.deepEqual(await planLine(fake({}).call, 0, 'hello'), { kind: 'send', text: 'hello' });
@@ -111,11 +111,11 @@ test('plain text is sent; a line naming no command is sent with a warning, as τ
 });
 
 test('a whole command runs by its qualified name; a short one asks; a refusal is thrown', async () => {
-  const whole = fake({ parse_line: { command: form('note', 'a'), args: { text: 'x' }, missing: [] } });
+  const whole = fake({ parse_line: { command: form('note', 'a'), args: { text: 'x' }, missing: [], extension: null, save: false } });
   assert.deepEqual(await planLine(whole.call, 2, '/a:note x'), { kind: 'run', command: 'a:note', args: { text: 'x' } });
   assert.deepEqual(whole.asked, [['parse_line', { cursor: 2, line: '/a:note x' }]]);
 
-  const short = fake({ parse_line: { command: form('flood', 'flood'), args: { count: 2 }, missing: ['text'] } });
+  const short = fake({ parse_line: { command: form('flood', 'flood'), args: { count: 2 }, missing: ['text'], extension: null, save: false } });
   const plan = await planLine(short.call, 0, '/flood 2');
   assert.equal(plan.kind, 'ask');
   assert.deepEqual(plan.missing, ['text']);
@@ -126,12 +126,12 @@ test('a whole command runs by its qualified name; a short one asks; a refusal is
 });
 
 test('/config <extension> shows its options; with values it configures', async () => {
-  const options = { name: 'tuner', description: 'tuner options', schema: { type: 'object', properties: {} } };
+  const options = { name: 'tuner', description: 'tuner options', schema: { type: 'object', properties: {} }, extension: 'tuner', yields: false };
   const bare = fake({ parse_line: { command: options, args: {}, missing: [], extension: 'tuner', save: true }, options });
   assert.deepEqual(await planLine(bare.call, 0, '/config tuner --save'), { kind: 'options', extension: 'tuner', form: options, save: true });
   assert.deepEqual(bare.asked[1], ['options', { cursor: 0, extension: 'tuner' }]);
 
-  const set = fake({ parse_line: { command: options, args: { depth: 3 }, missing: [], extension: 'tuner' } });
+  const set = fake({ parse_line: { command: options, args: { depth: 3 }, missing: [], extension: 'tuner', save: false } });
   assert.deepEqual(await planLine(set.call, 0, '/config tuner depth=3'), {
     kind: 'configure',
     extension: 'tuner',

@@ -339,16 +339,14 @@ try {
   await a.locator('.tau-status-ready').waitFor();
   step('a reload connects with the tab\'s token');
 
-  // Protocol 3: this mock model takes no images. The send is refused; the tray and the line stay.
+  // Protocol 3: this mock model takes no images (`models()`: `images` is null). The client says so
+  // in the header, disables the attach button, and takes none into the tray.
+  await a.getByTestId('model').getByText(/no images/).waitFor();
+  assert.equal(await a.getByRole('button', { name: 'attach images' }).isDisabled(), true, 'attach is disabled');
   await pick(a, [['pixel.png', png()]]);
-  await tray(a).locator('.tau-tray-item').waitFor();
-  await a.getByLabel('message').fill('what is this');
-  await a.getByLabel('message').press('Enter');
-  await composerError(a).getByText(/send: Refused: .*image/).waitFor();
-  assert.equal(await tray(a).locator('.tau-tray-item').count(), 1, 'the tray is kept');
-  assert.equal(await a.getByLabel('message').inputValue(), 'what is this', 'the line is kept');
-  assert.equal(await a.locator('.tau-items').count(), 0, 'nothing was queued');
-  step(`a model that takes no images refuses the send; the tray and the line stay ("${(await composerError(a).innerText()).slice(0, 80)}…")`);
+  await composerError(a).getByText('this model takes no images').waitFor();
+  assert.equal(await tray(a).locator('.tau-tray-item').count(), 0, 'nothing is in the tray');
+  step('a model that takes no images: the header says so, attach is disabled, a pick is refused');
 
   await context.close();
   await context2.close();

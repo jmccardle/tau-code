@@ -28,6 +28,11 @@ protocol 3 and refuses a client of 2; τ 0.17 is refused by this client the same
 - **Notices say who and how loud.** A notice shows the extension that said it, and is styled by
   its `level` (info, warning, error) in the design system's tokens, with a glyph each. A notice
   about a cursor shows on that cursor's view only.
+- **`models()` and the model's limits.** τ's new call (D32 section 8) answers the catalog as `ModelInfo[]`
+  (context window, `max_tokens`, `ImageLimits`, `ModelPrice`, which is the default). The client reads it
+  at connect and on each `Commands`, shows the followed cursor's context window beside its model name,
+  and, for a model whose `images` is null, says "no images", disables `attach` and takes no pick,
+  paste or drop into the tray.
 - **`Commands`**, τ's new state event (first in the snapshot): the model keeps the command forms,
   and an open `/config` form is read again when it changes.
 
@@ -43,6 +48,10 @@ protocol 3 and refuses a client of 2; τ 0.17 is refused by this client the same
 - **Protocol 3**, as τ froze it (its D32, τ master 49cc6872). The generated types are τ 0.18's schema: `Body.User` is the text or
   `{text, images}`, `ItemData.Input` has `images`, `send` and `input` take `images`, and there is a
   new call, `image(sha256)`. The generator accepts `maxItems` on a plain array (a bound τ checks).
+- **Always-sent fields are required** in the generated types, as τ's final schema has them:
+  `Notice.cursor/extension/level`, `Completion.label/detail`, `Form.extension/yields` and
+  `Parsed.extension/save`. The client's defaulting of them (`level ?? 'info'`, `save ?? false`) is
+  gone: an event or answer missing one is a τ that is not this protocol, not a case to paper over.
 - **The extension's stale-τ guard** knows protocol 3: a τ before 0.18.0 that names no protocol
   (the 0.9 runtime companion, τ 0.17.1) is protocol 2, and is refused before anything starts, with
   the fix.

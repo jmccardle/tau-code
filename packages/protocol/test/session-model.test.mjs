@@ -93,7 +93,7 @@ test('notices are numbered, dismissable and bounded; every change bumps version'
   const model = new SessionModel();
   let heard = 0;
   model.subscribe(() => heard++);
-  for (let i = 0; i < NOTICES_KEPT + 5; i++) model.hear({ kind: 'Notice', text: `n${i}` });
+  for (let i = 0; i < NOTICES_KEPT + 5; i++) model.hear({ kind: 'Notice', text: `n${i}`, cursor: null, extension: null, level: 'info' });
   assert.equal(model.notices.length, NOTICES_KEPT);
   assert.equal(model.notices[0].text, 'n5');
   model.dismiss(model.notices[0].id);
@@ -121,9 +121,9 @@ test('Commands replaces the command forms whole and counts; it may come first, b
   assert.equal(model.commandsVersion, 2, 'each Commands is counted, even one that holds the same forms');
 });
 
-test('a notice keeps its cursor, extension and level; its defaults are the schema\'s', () => {
+test('a notice keeps its cursor, extension and level, as sent', () => {
   const model = new SessionModel();
-  model.hear({ kind: 'Notice', text: 'plain' });
+  model.hear({ kind: 'Notice', text: 'plain', cursor: null, extension: null, level: 'info' });
   model.hear({ kind: 'Notice', text: 'costly', cursor: 2, extension: 'usage', level: 'warning' });
   model.hear({ kind: 'Notice', text: 'broke', cursor: null, extension: null, level: 'error' });
   model.notify('mine');
@@ -140,12 +140,33 @@ test('a notice keeps its cursor, extension and level; its defaults are the schem
 
 test('a notice about a cursor shows on that cursor\'s view; the session\'s show on every view', () => {
   const model = new SessionModel();
-  model.hear({ kind: 'Notice', text: 'session' });
-  model.hear({ kind: 'Notice', text: 'zero', cursor: 0 });
-  model.hear({ kind: 'Notice', text: 'one', cursor: 1 });
+  model.hear({ kind: 'Notice', text: 'session', cursor: null, extension: null, level: 'info' });
+  model.hear({ kind: 'Notice', text: 'zero', cursor: 0, extension: null, level: 'info' });
+  model.hear({ kind: 'Notice', text: 'one', cursor: 1, extension: null, level: 'info' });
   const on = (cursor) => model.noticesFor(cursor).map((n) => n.text);
   assert.deepEqual(on(0), ['session', 'zero']);
   assert.deepEqual(on(1), ['session', 'one']);
   assert.deepEqual(on(null), ['session'], 'with no cursor followed, only the session\'s');
   assert.equal(model.notices.length, 3, 'the others are kept, for when their cursor is followed');
+});
+
+test('models are held as models() answered; one is found by its qualified name', () => {
+  const model = new SessionModel();
+  let heard = 0;
+  model.subscribe(() => heard++);
+  const info = (name, images) => ({
+    name,
+    provider: 'p',
+    context_window: 200000,
+    max_tokens: null,
+    images,
+    price: null,
+    default: false,
+  });
+  assert.equal(model.modelInfo('a/x'), undefined);
+  model.setModels([info('a/x', { max_bytes: 5, max_side: null }), info('a/y', null)]);
+  assert.equal(heard, 1);
+  assert.equal(model.modelInfo('a/x').images.max_bytes, 5);
+  assert.equal(model.modelInfo('a/y').images, null);
+  assert.equal(model.modelInfo(null), undefined);
 });

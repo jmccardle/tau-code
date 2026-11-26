@@ -87,6 +87,13 @@ try {
   assert.ok(model.commands.some((form) => form.name === 'model'), 'and it names the built-in commands');
   console.log(`ok: Commands holds the ${model.commands.length} command forms commands() returns`);
 
+  // D32 section 8: models() answers the catalog, and the followed cursor's model is one of it.
+  const catalog = await a.call('models', {});
+  const current = catalog.find((m) => m.name === model.views.get(cursor).model);
+  assert.ok(current, 'the cursor\'s model is in the catalog');
+  assert.ok(catalog.every((m) => 'images' in m && 'context_window' in m && 'price' in m), 'every field is sent');
+  console.log(`ok: models() lists ${catalog.length} (${current.name}: context ${current.context_window}, images ${current.images === null ? 'no' : 'yes'})`);
+
   // D32: completions are items, `{value, label?, detail?}`, not strings.
   const items = await a.call('complete_line', { cursor, line: '/mo' });
   assert.ok(items.length > 0 && items.every((item) => typeof item.value === 'string'), 'complete_line answers items');

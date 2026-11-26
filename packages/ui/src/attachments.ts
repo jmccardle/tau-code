@@ -102,6 +102,13 @@ export function sha256Hex(bytes: Uint8Array): string {
   return bytesToHex(noble256(bytes));
 }
 
+/** A token count, for a person: `8192`, `200k`, `1M`. */
+export function tokensText(tokens: number): string {
+  if (tokens >= 1_000_000) return `${+(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1000) return `${+(tokens / 1000).toFixed(1)}k`;
+  return String(tokens);
+}
+
 /** A size, for a person: `512 B`, `1.5 KiB`, `20.0 MiB`. */
 export function sizeText(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

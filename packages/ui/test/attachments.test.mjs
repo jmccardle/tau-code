@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { ServeError } from '@ffwf/tau-code-protocol';
 import {
   MAX_IMAGES,
+  tokensText,
   MAX_IMAGE_BYTES,
   MAX_REQUEST_BYTES,
   attach,
@@ -218,4 +219,12 @@ test('the SHA-256 is one implementation, and needs no crypto.subtle (plain http 
   } finally {
     Object.defineProperty(globalThis, 'crypto', crypto);
   }
+});
+
+test('a token count reads as a person says it', () => {
+  assert.equal(tokensText(512), '512');
+  assert.equal(tokensText(8192), '8.2k');
+  assert.equal(tokensText(200000), '200k');
+  assert.equal(tokensText(1000000), '1M');
+  assert.equal(tokensText(1048576), '1M');
 });

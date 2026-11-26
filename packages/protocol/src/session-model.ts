@@ -1,5 +1,5 @@
 import { ProtocolViolation } from './errors.js';
-import type { CursorView, Event, Form, Live, Node, Notice, Retrying, Welcome } from './generated.js';
+import type { CursorView, Event, Form, Live, ModelInfo, Node, Notice, Retrying, Welcome } from './generated.js';
 
 /** A tool call forming in a reply: `CallNamed`, then its `CallArgs`. */
 export interface LiveCall {
@@ -64,6 +64,8 @@ export const NOTICES_KEPT = 50;
  * - `commands`: every command's form, from the latest `Commands` event (first in the snapshot,
  *   and again whenever they change), so a client never calls `commands()`. `commandsVersion`
  *   counts the `Commands` heard: a form read with `options()` is stale once it moves;
+ * - `models`: the driver's catalog as `models()` last answered (D32 section 8), which the link reads
+ *   at connect and again on each `Commands`; `modelInfo(name)` is one of them;
  * - `notices`: the `Notice`s heard, newest last.
  *
  * On a reconnect there is no resume: a new connection gets a new model, rebuilt from the
@@ -76,6 +78,7 @@ export class SessionModel {
   labels: [string, number][] = [];
   commands: Form[] = [];
   commandsVersion = 0;
+  models: ModelInfo[] = [];
   readonly nodes = new Map<number, Node>();
   readonly layers = new Map<number, LiveLayer>();
   notices: HeardNotice[] = [];
@@ -122,7 +125,7 @@ export class SessionModel {
         }
         break;
       case 'Notice':
-        this.#notice(event.text, event.level ?? 'info', event.cursor ?? null, event.extension ?? null);
+        this.#notice(event.text, event.level, event.cursor, event.extension);
         break;
       case 'Live':
         this.#live(event);
@@ -131,6 +134,17 @@ export class SessionModel {
         throw new ProtocolViolation(`an event of unknown kind ${JSON.stringify((event as { kind: unknown }).kind)}`);
     }
     this.#changed();
+  }
+
+  /** What `models()` answered: replaces the catalog held. */
+  setModels(models: ModelInfo[]): void {
+    this.models = models;
+    this.#changed();
+  }
+
+  /** The catalog's entry for a qualified model name (`CursorView.model`), if it has one. */
+  modelInfo(name: string | null | undefined): ModelInfo | undefined {
+    return name == null ? undefined : this.models.find((m) => m.name === name);
   }
 
   /** Nodes a `walk`, `nodes` or `node` call returned. */

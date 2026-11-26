@@ -26,6 +26,12 @@ export interface ComposerProps {
    * form held open when it moves is stale (D32), and is read again.
    */
   commandsVersion: number;
+  /**
+   * Whether the cursor's model takes images: `ModelInfo.images !== null` (D32 section 8). True
+   * while the catalog has no entry for it (not read yet); the server refuses an image it cannot
+   * take either way.
+   */
+  takesImages: boolean;
 }
 
 /** A form the composer is waiting on: a command's missing arguments, or an extension's options. */
@@ -45,7 +51,7 @@ function carriesFiles(event: globalThis.DragEvent): boolean {
  * pasted, or dropped anywhere on the page, and go with the next plain message, or alone. A refused send keeps both the
  * tray and the line.
  */
-export function Composer({ cursor, call, note, commandsVersion }: ComposerProps): JSX.Element {
+export function Composer({ cursor, call, note, commandsVersion, takesImages }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [choices, setChoices] = useState<Completion[]>([]);
@@ -80,6 +86,10 @@ export function Composer({ cursor, call, note, commandsVersion }: ComposerProps)
   /** Read files into the tray; say why any were not added. */
   const add = async (files: readonly FileLike[]): Promise<void> => {
     if (files.length === 0) return;
+    if (!takesImages) {
+      setError('this model takes no images');
+      return;
+    }
     setReading(true);
     setError(null);
     try {
@@ -315,7 +325,8 @@ export function Composer({ cursor, call, note, commandsVersion }: ComposerProps)
           type="button"
           className="tau-attach"
           aria-label="attach images"
-          title="attach images: png, jpeg, gif or webp"
+          title={takesImages ? 'attach images: png, jpeg, gif or webp' : 'this model takes no images'}
+          disabled={!takesImages}
           onClick={() => picker.current?.click()}
         >
           attach

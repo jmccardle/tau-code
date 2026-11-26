@@ -236,6 +236,9 @@ export class SessionLink {
     client.on('event', (event) => {
       try {
         model.hear(event);
+        // `Commands` also says `models()` may have changed (D32 section 8). Before `hello` has
+        // answered, the read after it covers the first one.
+        if (event.kind === 'Commands' && model.welcome) this.#readModels(client, model, generation);
       } catch (error) {
         // A kind protocol 3 does not have: this server speaks something else. Final.
         if (generation === this.#generation) this.#fail((error as Error).message, 'protocol');
@@ -287,8 +290,19 @@ export class SessionLink {
       focus,
       treeLoaded: false,
     });
+    this.#readModels(client, model, generation);
     this.#watch();
     this.#follow();
+  }
+
+  /** Ask `models()` and give the model the answer, unless this connection has been replaced. */
+  #readModels(client: ServeClient, model: SessionModel, generation: number): void {
+    this.#background(
+      client.call('models', {}).then((models) => {
+        if (generation === this.#generation) model.setModels(models);
+      }),
+      'models',
+    );
   }
 
   #reconnectLater(reason: string): void {
