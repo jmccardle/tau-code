@@ -3,7 +3,9 @@
 One section per release, newest first. `scripts/release-notes.mjs` copies the section of the
 version being released into the GitHub release, and refuses to write notes without one.
 
-## Unreleased (0.10.0, with τ 0.18.0 and ffwf-tau-web 0.18.0)
+## 0.10.0
+
+Date: TBD. With τ 0.18.0 and ffwf-tau-web 0.18.0.
 
 Images in a user's message: τ 0.18's protocol 3 (τ's D31). **Needs τ 0.18.0**, which speaks
 protocol 3 and refuses a client of 2; τ 0.17 is refused by this client the same way.
@@ -46,6 +48,10 @@ protocol 3 and refuses a client of 2; τ 0.17 is refused by this client the same
 - **The extension's stale-τ guard** knows protocol 3: a τ before 0.18.0 that names no protocol
   (the 0.9 runtime companion, τ 0.17.1) is protocol 2, and is refused before anything starts, with
   the fix.
+- **Runtime and container: τ 0.18.0.** `ffwf.tau-runtime` pins `ffwf-tau==0.18.0` and
+  `ffwf-tau-web==0.18.0`, the Dockerfile's `TAU_SPEC` is `ffwf-tau==0.18.0`, and the extension's
+  `TESTED_TAU` is 0.18.0. **ffwf-tau-web 0.18.0** is this client (protocol 3), released from
+  `tau-web-v0.18.0`.
 - A POST to the HTTP edge may take a second longer for each MiB it carries, so a message with
   large images is not cut off by the 10 s deadline meant for small requests.
 

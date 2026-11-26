@@ -7,7 +7,7 @@
  *   served.record.url, served.record.token   // the serve record `-d --json` printed
  *   await served.stop();                      // `tau serve --stop`, then removes the temp dirs
  *
- * τ is `$TAU_BIN`, else `tau` on PATH; it must be τ ≥ 0.17.0 (the HTTP edge, protocol 2).
+ * τ is `$TAU_BIN`, else `tau` on PATH; it must be τ ≥ 0.18.0 (protocol 3).
  */
 import { execFile } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

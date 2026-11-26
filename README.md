@@ -3,11 +3,11 @@
 Clients for [τ](https://github.com/jmccardle/tau), the agent harness: a web client, and a VS Code /
 VSCodium extension, both speaking τ's wire to `tau serve`.
 
-**Status: 0.9.1 released, on τ 0.17's wire (protocol 2). This branch is on the way to 0.10.0, on τ
-0.18's wire (protocol 3: images in a user's message), which is not released yet: build τ from its
-`master` to run it.** Over `tau serve`'s HTTP edge. The protocol
+**Status: 0.10.0 release candidate, on τ 0.18's wire (protocol 3: images in a user's message,
+completion items, attributed notices). 0.9.1 is the last release, on τ 0.17's wire (protocol 2).
+τ 0.18.0 is not released yet: build τ from its `master` to run this.** Over `tau serve`'s HTTP edge. The protocol
 package, the session model, the web client, the VS Code / VSCodium extension, the runtime
-companion (τ 0.17.1, four platforms) and the container are ported and tested against a real
+companion (τ 0.18.0, four platforms) and the container are ported and tested against a real
 `tau serve`, the extension in a real VSCodium. CHANGELOG.md says what each release changed
 and removed.
 
@@ -154,8 +154,8 @@ session. The extension runs `tau serve -d --json` in the folder (τ from `tau-co
 `TAU_BIN`, the `ffwf.tau-runtime` companion, or `PATH`; `tau-code.runtime` chooses) and relays its
 HTTP edge to the page, so the token stays in the extension host and the page opens no connection.
 A window reload brings each tab back on its session. The runtime companion carries τ only for
-linux-x64, linux-arm64, darwin-x64 and darwin-arm64; elsewhere, install τ 0.17.1 yourself
-(`pipx install ffwf-tau==0.17.1`) and set `tau-code.binary` to it. **tau: Show Agent Log** shows every command
+linux-x64, linux-arm64, darwin-x64 and darwin-arm64; elsewhere, install τ 0.18.0 yourself
+(`pipx install ffwf-tau==0.18.0`) and set `tau-code.binary` to it. **tau: Show Agent Log** shows every command
 it ran.
 
 ### Develop it
@@ -217,7 +217,7 @@ network, no key) and stop it after (`scripts/lib/serve.mjs`); nothing touches `~
 
 ## Run the container
 
-The image is τ 0.17.1 and the built web client; it serves one session (a new one in `/work`) per
+The image is τ 0.18.0 and the built web client; it serves one session (a new one in `/work`) per
 process.
 
 ```bash
@@ -232,7 +232,7 @@ TTY. Open it with `127.0.0.1` for the host. τ allows pages from the address it 
 `TAU_CODE_ORIGINS` (default `http://127.0.0.1:8256 http://localhost:8256`); set it, space
 separated, when you publish a different port or host. Pass `-c` or `--session ID` as the
 container command to continue a session instead of starting a new one. `TAU_MODEL_BASE_URL`
-configures a model endpoint (`docker/write-config.sh` writes it as τ 0.17's `provider`).
+configures a model endpoint (`docker/write-config.sh` writes it as τ 0.18's `provider`).
 
 ## Publishing
 
@@ -265,7 +265,7 @@ else; a `v*` tag never publishes it. The web wheel's version is τ's, not
 tau-code's, so its tags follow τ in lockstep: bump `version` in
 `packages/web-py/pyproject.toml`, run `npm run package:web-wheel` and
 `npm run smoke:web-wheel` locally, then tag `tau-web-v<that version>` (for
-example `tau-web-v0.17.0`). The workflow refuses a tag that disagrees with
+example `tau-web-v0.18.0`). The workflow refuses a tag that disagrees with
 pyproject.toml, and uploads through PyPI trusted publishing from the GitHub
 environment `pypi`, which admits `tau-web-v*` tags only. Publish it before
 the `ffwf-tau` release of the same version, which depends on it.

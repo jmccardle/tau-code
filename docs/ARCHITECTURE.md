@@ -1104,10 +1104,10 @@ runtime that cannot work, and the failure without a guard is the worst kind:
 `packages/vscode/src/compat.ts` closes that before anything is spawned. Whatever
 resolution (above) chose, whether from `tau-code.binary`, `TAU_BIN`, the runtime
 or `PATH`, the extension asks it `tau --version`, reads the `(protocol N)` in the
-answer, and infers protocol 1 for any version below 0.17.0 that does not print
-one. A τ whose protocol is not 2 is **refused**, with a message that names what
-was found, what is needed, and the fix: install τ 0.17.1 yourself (for example
-`pipx install ffwf-tau==0.17.1`) and set `tau-code.binary` to it; or set
+answer, and infers protocol 2 for a 0.17.x and protocol 1 for anything older that does not print
+one. A τ whose protocol is not 3 is **refused**, with a message that names what
+was found, what is needed, and the fix: install τ 0.18.0 yourself (for example
+`pipx install ffwf-tau==0.18.0`) and set `tau-code.binary` to it; or set
 `tau-code.runtime` to `system` when a good τ is on `PATH`; or update
 `ffwf.tau-runtime` on a released target. It is shown as an error notification
 with a "Choose Which tau" button.
@@ -1374,7 +1374,7 @@ It is the one job `release` does not `needs`. The image is not in the release
 `.vsix` files that contain none of it.
 
 **The web wheel has its own tag family.** `ffwf-tau-web` (packages/web-py) is
-versioned with τ, not with tau-code — 0.17.x pairs with `ffwf-tau` 0.17.x — so
+versioned with τ, not with tau-code — 0.18.x pairs with `ffwf-tau` 0.18.x — so
 a `v*` tag cannot say anything true about it. It is released by
 `tau-web-v<version>` tags instead, and the two families do not overlap: `v*`
 cannot match a name that starts with `t`. Every job tests the ref's prefix: a
@@ -1438,7 +1438,7 @@ The hub and the runner are deleted; both hosts are clients of τ's daemon
   and all (§1.2).
 - **A busy cursor queues.** `enqueue` is the core's own strategy for "run this
   after the current turn"; it replaced `reject` (§4).
-- **The image is τ and a directory.** `ffwf-tau` from PyPI (0.17.1), or from
+- **The image is τ and a directory.** `ffwf-tau` from PyPI (0.18.0), or from
   `--build-context tau-wheels=DIR` before a release is on PyPI, plus the built
   web client, served by `tau serve --web-root` on `0.0.0.0:8256` with
   `--allow-network` and `--allow-origin` for the published address
@@ -1510,9 +1510,9 @@ client's `TauApp` (`@ffwf/tau-code-ui`) in its webview; what is editor-specific 
 - **Gone:** `tau-code.token` (the record carries the token) and `tau-code.model` (`tau serve` takes
   no model; a cursor's model is changed with `/model`). "Restart the tau Daemon" is "Restart This
   Session's tau Server": `tau serve --stop --session <id>`, then a reconnect, which starts it again.
-- **The runtime payload is one wheel.** `tauSpec` is `ffwf-tau==0.17.1` (a cp312-abi3 wheel with
+- **The runtime payload is one wheel.** `tauSpec` is `ffwf-tau==0.18.0` (a cp312-abi3 wheel with
   τ's native `tau._core`, plus pure-Python httpx, websockets, h11, textual) and, since 0.9.1,
-  `ffwf-tau-web==0.17.1`: τ asks for the web client by range, so without the pin the payload would
+  `ffwf-tau-web==0.18.0`: τ asks for the web client by range, so without the pin the payload would
   carry whichever one was newest on PyPI at build time. The build fails if any `==` pin installs
   at another version, and the manifest records `tauWebVersion` beside `tauVersion`. The provider
   SDKs and Pillow are gone from τ's closure, and with them §15's lazy-import list; the build imports

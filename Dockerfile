@@ -56,14 +56,14 @@ RUN npx tsc --build packages/web \
 # -------------------------------------------------------------- runtime stage
 FROM python:3.12-slim-bookworm AS runtime
 
-# Which τ. 0.17.x speaks protocol 2, the one this client was generated against,
+# Which τ. 0.18.x speaks protocol 3, the one this client was generated against,
 # over the HTTP edge; `serve` needs no extra since 0.16. A τ that is not on PyPI
 # yet builds with --build-context tau-wheels (above).
 #
 # packages/runtime pins the same release (its `tauSpec`). Those two move
 # together: two artifacts shipping two τs is how a client ends up tested
 # against neither.
-ARG TAU_SPEC=ffwf-tau==0.17.1
+ARG TAU_SPEC=ffwf-tau==0.18.0
 
 # The agent's tools resolve against a bind-mounted /work, so the container user
 # has to match the host user who owns it.

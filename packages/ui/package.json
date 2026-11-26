@@ -1,6 +1,6 @@
 {
   "name": "@ffwf/tau-code-ui",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "React views of a τ session (protocol 3): host-agnostic, handed a SessionLink.",
   "license": "MIT",
   "type": "module",

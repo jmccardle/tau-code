@@ -4,7 +4,7 @@
 # package.json) releases the extension: payloads, image, GitHub release, marketplaces -- and never
 # the web wheel. `tau-web-v*` (τ's version, packages/web-py/pyproject.toml) publishes only
 # ffwf-tau-web to PyPI -- and never the extension. The patterns cannot both match one tag: `v*`
-# requires the name to start with `v`, and `tau-web-v0.17.0` starts with `t`. Every job's `if`
+# requires the name to start with `v`, and `tau-web-v0.18.0` starts with `t`. Every job's `if`
 # tests the ref's prefix, so a branch run builds everything and publishes nothing.
 #
 # Two of the four artifacts (ARCHITECTURE 14.1) are .vsix files, and those are
@@ -252,8 +252,8 @@ jobs:
   # with no flags (packages/web-py). Built on every branch run and every `tau-web-v*` tag;
   # published to PyPI on a `tau-web-v*` tag only. A `v*` tag skips both.
   #
-  # ITS VERSION IS τ'S, NOT tau-code's: packages/web-py/pyproject.toml says 0.17.x, which pairs
-  # with ffwf-tau 0.17.x (protocol 2), and its tag is `tau-web-v<that version>`, in lockstep with
+  # ITS VERSION IS τ'S, NOT tau-code's: packages/web-py/pyproject.toml says 0.18.x, which pairs
+  # with ffwf-tau 0.18.x (protocol 3), and its tag is `tau-web-v<that version>`, in lockstep with
   # τ. The tag must equal pyproject.toml's version or the job fails before building. A version
   # already on PyPI fails the upload, which is the right answer -- replacing a published version
   # is a decision, not a retry. Publish it BEFORE ffwf-tau's own release of the same version,
@@ -280,7 +280,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: the version this tag claims
-        # `tau-web-v0.17.0` on a tree whose pyproject.toml says anything but 0.17.0 fails here,
+        # `tau-web-v0.18.0` on a tree whose pyproject.toml says anything but 0.18.0 fails here,
         # before anything is built. The tag reaches Python by environment, never by interpolation.
         if: startsWith(github.ref, 'refs/tags/tau-web-v')
         env:
