@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent } from 'react';
+import type { Completion, NoticeLevel } from '@ffwf/tau-code-protocol';
 import {
   attach,
   detach,
@@ -19,7 +20,12 @@ export interface ComposerProps {
   cursor: number;
   call: Call;
   /** Show the result of a command, or another line of this client's own. */
-  note: (text: string) => void;
+  note: (text: string, level?: NoticeLevel) => void;
+  /**
+   * How many `Commands` events the session has sent (`SessionModel.commandsVersion`). An options
+   * form held open when it moves is stale (D32), and is read again.
+   */
+  commandsVersion: number;
 }
 
 /** A form the composer is waiting on: a command's missing arguments, or an extension's options. */
@@ -39,10 +45,10 @@ function carriesFiles(event: globalThis.DragEvent): boolean {
  * pasted, or dropped anywhere on the page, and go with the next plain message, or alone. A refused send keeps both the
  * tray and the line.
  */
-export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
+export function Composer({ cursor, call, note, commandsVersion }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [choices, setChoices] = useState<string[]>([]);
+  const [choices, setChoices] = useState<Completion[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState(false);
   const [tray, setTray] = useState<Attached[]>([]);
@@ -56,6 +62,20 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
   const clear = (line: string | null): void => {
     if (line !== null) setText((now) => (now.trim() === line ? '' : now));
   };
+
+  // `Commands` says the options forms held are stale: read the open one again. The form is
+  // replaced under the person's hands only when τ says it changed.
+  const versionSeen = useRef(commandsVersion);
+  useEffect(() => {
+    if (commandsVersion === versionSeen.current) return;
+    versionSeen.current = commandsVersion;
+    if (pending?.kind !== 'options') return;
+    const { extension } = pending;
+    call('options', { cursor, extension }).then(
+      (form) => setPending((now) => (now?.kind === 'options' && now.extension === extension ? { ...now, form } : now)),
+      (failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)),
+    );
+  }, [commandsVersion, pending, call, cursor]);
 
   /** Read files into the tray; say why any were not added. */
   const add = async (files: readonly FileLike[]): Promise<void> => {
@@ -84,7 +104,7 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
     switch (plan.kind) {
       case 'send':
         await call('send', { cursor, text: plan.text });
-        if (plan.warning) note(plan.warning);
+        if (plan.warning) note(plan.warning, 'warning');
         return true;
       case 'run': {
         const result = await call('run', { cursor, command: plan.command, args: plan.args });
@@ -140,7 +160,7 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
     try {
       const found = await call('complete_line', { cursor, line: text });
       if (found.length === 1) {
-        setText(complete(text, found[0] as string) + ' ');
+        setText(complete(text, (found[0] as Completion).value) + ' ');
         setChoices([]);
       } else setChoices(found);
     } catch (failure) {
@@ -206,17 +226,18 @@ export function Composer({ cursor, call, note }: ComposerProps): JSX.Element {
         <div className="tau-completions" role="listbox">
           {choices.map((choice) => (
             <button
-              key={choice}
+              key={choice.value}
               type="button"
               role="option"
               aria-selected={false}
               className="tau-chip"
               onClick={() => {
-                setText(complete(text, choice) + ' ');
+                setText(complete(text, choice.value) + ' ');
                 setChoices([]);
               }}
             >
-              {choice}
+              {choice.label ?? choice.value}
+              {choice.detail && <span className="tau-chip-detail">{choice.detail}</span>}
             </button>
           ))}
         </div>
@@ -311,7 +332,7 @@ function PendingForm(props: {
   pending: Pending;
   cursor: number;
   call: Call;
-  note: (text: string) => void;
+  note: (text: string, level?: NoticeLevel) => void;
   /** The form closed: `done` once its action succeeded, false when cancelled. */
   onDone: (done: boolean) => void;
   carryOut: (plan: LinePlan) => Promise<boolean>;

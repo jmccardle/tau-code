@@ -1540,8 +1540,9 @@ additive, and `hello` naming 2 is refused.
   all go through `attach`, which sniffs the bytes as τ does, holds each
   image to 20 MiB and the tray to 20, keeps the request under the edge's 64 MiB body cap (a 413
   would close the connection: the transport cannot tell which call it lost), skips an image
-  already attached, and computes its SHA-256 (`crypto.subtle`) and a `data:` URL for its
-  thumbnail. These checks are courtesy: the server owns every limit, and its refusal is shown as
+  already attached, and computes its SHA-256 (`@noble/hashes`, pinned: one implementation everywhere; `crypto.subtle` is
+  withheld from a page that is not a secure context, such as plain http on a LAN address) and a
+  `data:` URL for its thumbnail. These checks are courtesy: the server owns every limit, and its refusal is shown as
   it is. A paste or a drop that carries no files is left to the text box, so text and an editor's
   URI drops behave as before.
 - **Images go only with a plain `send`.** A `/command` line with images is refused in the client:
@@ -1566,3 +1567,30 @@ additive, and `hello` naming 2 is refused.
   refusal), `npm run smoke:browser` (pick, paste, drop, remove, the refusals, the send, and another
   tab's labels) and `npm run smoke:vscode` (a picked and a pasted image through the relay).
 
+## 18. Protocol 3 as frozen: τ's D32 (2026-11-25)
+
+τ's D32 adds to protocol 3 before it is tagged; the schema pinned here is τ `origin/master`'s
+(49cc6872), and `check:protocol` holds it to the τ you run.
+
+- **Completion items.** `complete` and `complete_line` answer `[{value, label?, detail?}]`, not
+  strings. The composer inserts `value` (`complete(line, value)` is unchanged: a whole word,
+  quoted if it needs to be) and lists `label ?? value` with `detail` dimmed beside it. One item is
+  inserted at once; several are listed.
+- **Notices say who, about which cursor, how loud.** `HeardNotice` keeps `cursor`, `extension`
+  and `level`. The footer shows the extension before the text, and styles by level with the design
+  system's tokens only: info is `ink-muted` (●), warning `caution` (▲), error `redline` (✕, and
+  `role="alert"`); `trace` stays the one accent. A notice with a `cursor` shows only while that
+  cursor is followed (`SessionModel.noticesFor`); the others are kept (50 in all) for when it is.
+  The client's own lines (`note`) are about the followed cursor, and a command line that was sent
+  as text is a warning.
+- **`Commands` is a state event.** It is first in the snapshot and again whenever the forms change;
+  `SessionModel.commands` is the latest, and `commandsVersion` counts them. This client has no
+  command palette and never polled `commands()`: a `/command` is read by `parse_line`, which
+  always answers with the forms as they are. What it does take from `Commands` is the rule that
+  an options form it holds is stale: an open `/config <extension>` form is read again with
+  `options()` when a `Commands` arrives.
+- **No `crypto.subtle`, no `crypto.randomUUID`.** Neither exists in a page that is not a secure
+  context, and the tab's id used the second. The image hash is `@noble/hashes`' SHA-256 and the id
+  is `crypto.getRandomValues` (`randomId`); neither branches on what the browser has.
+  `smoke:browser` drives a page at a non-loopback name (Chrome's `--host-resolver-rules`, with
+  `--allow-origin` on the server) and attaches and sends an image there.

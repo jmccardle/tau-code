@@ -174,6 +174,8 @@ body.vscode-high-contrast, body.vscode-high-contrast-light {
 }
 .tau-app .tau-error::before { content: "✕"; }
 .tau-notice::before, .tau-info::before, .tau-banner::before { content: "▲"; }
+.tau-notice-info::before { content: "●"; }
+.tau-notice-error::before { content: "✕"; }
 
 /* ── the strip: mark, session, where, model, version ─────────────────────── */
 
@@ -421,7 +423,13 @@ body.vscode-high-contrast, body.vscode-high-contrast-light {
   overflow-y: auto;
 }
 .tau-notices { display: flex; flex-direction: column; gap: 2px; }
+/* A notice's level (τ's D32): info is quiet ink, warning is caution (▲), error is redline (✕).
+   The glyph says it too, so the colour never comes alone. `trace` stays the one accent. */
 .tau-notice { color: var(--caution); }
+.tau-notice-info { color: var(--ink-muted); }
+.tau-notice-error { color: var(--redline); }
+.tau-notice-from { font: 600 13px/20px var(--font-mono); margin-right: var(--space-2); }
+.tau-notice-from::after { content: ":"; }
 .tau-shown { display: flex; flex-wrap: wrap; gap: 0 var(--space-3); font: 13px/20px var(--font-mono); }
 .tau-questions { display: flex; flex-direction: column; gap: var(--space-2); }
 .tau-question, .tau-dialog {
@@ -460,6 +468,7 @@ body.vscode-high-contrast, body.vscode-high-contrast-light {
 .tau-composer-row:focus-within textarea { border-color: var(--trace); }
 .tau-composer-row button { height: 34px; }
 .tau-completions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.tau-chip-detail { color: var(--ink-muted); font-size: 12px; }
 /* Images waiting to go with the next message (protocol 3): a row of framed thumbnails, each with
    its name and a remove control. Lines, not fills; square corners; no shadow. */
 .tau-composer .tau-error { white-space: pre-line; }

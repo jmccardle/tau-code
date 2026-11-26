@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:net';
 import { chromium } from 'playwright-core';
 import { fakeModel, png, pngOf } from './lib/fake-model.mjs';
 import { serve } from './lib/serve.mjs';
@@ -85,6 +86,8 @@ class Flood:
         """Tell every client \`text\`, \`count\` times."""
         for _ in range(count):
             cursor.tell(text)
+        cursor.tell("this one costs", level="warning")
+        cursor.tell("this one failed", level="error")
         return "flooded"
 
 extensions = [Flood()]
@@ -157,6 +160,17 @@ async function transfer(page, how, files, target = '.tau-composer') {
     { how, files: files.map(([name, bytes]) => [name, bytes.toString('base64')]), target },
   );
 }
+/** A TCP port nothing listens on now. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
 const question = (page) => page.getByTestId('questions').locator('.tau-question');
 const stepState = (page) => page.getByTestId('step-state');
 
@@ -194,6 +208,23 @@ try {
   assert.equal(await a.getByTestId('notices').getByText('hi from flood').count(), 2);
   step('/flood 2 asked for its missing text, ran, and its tells arrived as notices');
 
+  // D32: a notice names its extension and is styled by its level (a glyph and a colour, from the
+  // design system's tokens: info is ink-muted, warning caution, error redline).
+  const notices = a.getByTestId('notices');
+  const said = notices.locator('.tau-notice-info', { hasText: 'hi from flood' }).first();
+  assert.equal(await said.locator('.tau-notice-from').innerText(), 'flood', 'the extension is shown');
+  const warning = notices.locator('.tau-notice-warning', { hasText: 'this one costs' }).first();
+  const failure = notices.locator('.tau-notice-error', { hasText: 'this one failed' }).first();
+  await warning.waitFor();
+  await failure.waitFor();
+  assert.equal(await failure.getAttribute('role'), 'alert');
+  const colors = await a.evaluate(() => {
+    const color = (selector) => getComputedStyle(document.querySelector(selector)).color;
+    return { info: color('.tau-notice-info'), warning: color('.tau-notice-warning'), error: color('.tau-notice-error') };
+  });
+  assert.equal(new Set(Object.values(colors)).size, 3, `the three levels are three colours: ${JSON.stringify(colors)}`);
+  step('a notice shows its extension, and info, warning and error differ in glyph and colour');
+
   // Tab completion of a command name.
   await a.getByLabel('message').fill('/tun');
   await a.getByLabel('message').press('Tab');
@@ -204,6 +235,16 @@ try {
   await a.getByLabel('message').fill('/flo');
   await a.getByLabel('message').press('Tab');
   await a.waitForFunction(() => document.querySelector('[aria-label="message"]').value === '/flood ');
+  await a.getByLabel('message').fill('');
+  // D32: an ambiguous completion lists items: `label ?? value`, and the `detail` beside it.
+  await a.getByLabel('message').fill('/co');
+  await a.getByLabel('message').press('Tab');
+  const chips = a.locator('.tau-completions .tau-chip');
+  await chips.first().waitFor();
+  assert.ok((await chips.count()) > 1, 'more than one command starts /co');
+  assert.ok((await chips.locator('.tau-chip-detail').count()) > 0, 'a command is listed with its description as detail');
+  await chips.first().click();
+  assert.match(await a.getByLabel('message').inputValue(), /^\/\S+ $/, 'clicking an item inserts its value');
   await a.getByLabel('message').fill('');
   step(`Tab completes a command name ('/flo' to '/flood'; '/tun' stays '${completed}')`);
 
@@ -313,8 +354,11 @@ try {
   await context2.close();
 
   // Protocol 3: images in a message, to a mock model that takes them.
+  // It also allows the origin `http://lan.tau.test:LANPORT`, for the non-secure-context check below.
+  const LAN_PORT = await freePort();
   const seeing = await serve({
     webRoot: WEB_ROOT,
+    args: ['--port', String(LAN_PORT), '--allow-origin', `http://lan.tau.test:${LAN_PORT}`],
     config: { default_model: 'mock', models: { mock: { model: 'mock', provider: 'mock', images: true, options: { delay_ms: 1 } } } },
   });
   try {
@@ -383,6 +427,30 @@ try {
     step('another tab labels the images [image WxH mime], and its tree counts them');
     await context5.close();
     await context4.close();
+
+    // Not a secure context: a LAN address over plain http has no `crypto.subtle`, and attaching
+    // must work all the same (the SHA-256 is the page's own, @noble/hashes). Chrome is told that
+    // `lan.tau.test` is this server, a name that is not loopback, so the page is not secure.
+    const lan = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--host-resolver-rules=MAP lan.tau.test 127.0.0.1'] });
+    try {
+      const context6 = await lan.newContext();
+      const address = new URL(seeing.record.url);
+      address.hostname = 'lan.tau.test';
+      assert.equal(address.port, String(LAN_PORT));
+      const insecure = await tab(context6, `${address.origin}/#token=${seeing.record.token}`);
+      await insecure.locator('.tau-status-ready').waitFor();
+      const [secure, subtle] = await insecure.evaluate(() => [window.isSecureContext, typeof crypto.subtle]);
+      assert.deepEqual([secure, subtle], [false, 'undefined'], 'the page is not a secure context');
+      await pick(insecure, [['lan.png', png()]]);
+      await tray(insecure).locator('.tau-tray-item', { hasText: 'lan.png' }).waitFor();
+      await say(insecure, 'from the lan');
+      await transcript(insecure).getByText(/\[1 image: image\/png 1x1\]/).waitFor();
+      assert.equal(await composerError(insecure).count(), 0, 'no error');
+      await context6.close();
+      step('over plain http on a non-loopback name (no crypto.subtle), an image attaches and sends');
+    } finally {
+      await lan.close();
+    }
   } finally {
     await seeing.stop();
   }

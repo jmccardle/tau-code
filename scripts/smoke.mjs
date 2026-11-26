@@ -74,9 +74,27 @@ try {
   model.welcome = welcome;
   assert.equal(welcome.protocol, PROTOCOL);
   assert.equal(welcome.session, session);
-  assert.deepEqual(order, ['event:CursorView', 'event:Labels', 'hello'], 'the snapshot comes before hello answers');
+  assert.deepEqual(
+    order,
+    ['event:Commands', 'event:CursorView', 'event:Labels', 'hello'],
+    'the snapshot comes before hello answers, Commands first and Labels last',
+  );
   const cursor = model.openCursors()[0].cursor;
-  console.log(`ok: hello after its snapshot; cursor ${cursor} at node ${model.views.get(cursor).at}`);
+  console.log(`ok: hello after its snapshot (Commands first); cursor ${cursor} at node ${model.views.get(cursor).at}`);
+
+  // D32: the stream's Commands is what commands() answers, so a client never polls it.
+  assert.deepEqual(model.commands, await a.call('commands', {}), 'Commands holds exactly what commands() returns');
+  assert.ok(model.commands.some((form) => form.name === 'model'), 'and it names the built-in commands');
+  console.log(`ok: Commands holds the ${model.commands.length} command forms commands() returns`);
+
+  // D32: completions are items, `{value, label?, detail?}`, not strings.
+  const items = await a.call('complete_line', { cursor, line: '/mo' });
+  assert.ok(items.length > 0 && items.every((item) => typeof item.value === 'string'), 'complete_line answers items');
+  assert.ok(items.some((item) => item.value === '/model' && typeof item.detail === 'string'), '/model, with its detail');
+  const cursors = await a.call('complete', { cursor, named: 'cursor', prefix: '' });
+  assert.ok(cursors.length > 0 && cursors.every((item) => typeof item.value === 'string'), 'complete answers items');
+  assert.ok(cursors.some((item) => typeof item.detail === 'string'), 'a cursor says where it is, in its detail');
+  console.log(`ok: complete_line('/mo') and complete(cursor) answer items (${JSON.stringify(cursors[0])})`);
 
   // A turn, watched.
   await a.call('watch', { cursors: [cursor] });

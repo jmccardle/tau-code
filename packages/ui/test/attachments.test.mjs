@@ -19,7 +19,9 @@ import {
   rememberedImage,
   rememberImage,
   rows,
+  randomId,
   sendImages,
+  sha256Hex,
   sniff,
   trayProblem,
   treeLines,
@@ -195,4 +197,25 @@ test('a user message with images (protocol 3): its text and images in the row, a
     treeLines(model).map((line) => line.summary),
     ['plain', 'look [1 image]', '[2 images]'],
   );
+});
+
+test('the SHA-256 is one implementation, and needs no crypto.subtle (plain http has none)', async () => {
+  const digests = [new Uint8Array(0), PNG, Buffer.alloc(100_000, 7)];
+  const known = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'; // SHA-256 of nothing
+  assert.equal(sha256Hex(digests[0]), known);
+  for (const bytes of digests) assert.equal(sha256Hex(bytes), sha(bytes));
+  // A page that is not a secure context has `crypto.getRandomValues` but neither `subtle` nor
+  // `randomUUID`: attaching and starting must work there.
+  const crypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const { getRandomValues } = globalThis.crypto;
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues: getRandomValues.bind(globalThis.crypto) } });
+  try {
+    const { tray, problems } = await attach([], [file(PNG, 'p.png')]);
+    assert.deepEqual(problems, []);
+    assert.equal(tray[0].sha256, sha(PNG));
+    assert.match(randomId(), /^[0-9a-f]{8}$/);
+    assert.notEqual(randomId(), randomId());
+  } finally {
+    Object.defineProperty(globalThis, 'crypto', crypto);
+  }
 });

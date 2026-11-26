@@ -1,3 +1,5 @@
+import { sha256 as noble256 } from '@noble/hashes/sha2';
+import { bytesToHex } from '@noble/hashes/utils';
 import type { ImageInput } from '@ffwf/tau-code-protocol';
 import type { Call } from './line.js';
 
@@ -10,7 +12,7 @@ import type { Call } from './line.js';
  * (`tau.MAX_INPUT_IMAGES`, `tau.MAX_INPUT_BYTES`) and the HTTP edge's body cap. A model that takes
  * no images, or takes smaller ones, is the server's to say: a refused send says why.
  *
- * Pure but for `crypto.subtle` (the SHA-256), `Blob.arrayBuffer` and the page's image cache: no
+ * Pure but for `Blob.arrayBuffer` and the page's image cache: no
  * DOM, so `node --test` runs it.
  */
 
@@ -92,16 +94,12 @@ function base64Length(n: number): number {
 }
 
 /**
- * Lowercase hex SHA-256 of `bytes`. `crypto.subtle` exists only in a secure context (https, a
- * loopback address, a VS Code webview); elsewhere this throws, naming why.
+ * Lowercase hex SHA-256 of `bytes`, by @noble/hashes: pure JavaScript, the same everywhere. Not
+ * `crypto.subtle`, which a browser withholds from a page that is not a secure context (plain
+ * http on a LAN address), where attaching would fail.
  */
-export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) {
-    throw new Error('this page cannot hash images (crypto.subtle needs https or a loopback address)');
-  }
-  const digest = new Uint8Array(await subtle.digest('SHA-256', bytes));
-  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+export function sha256Hex(bytes: Uint8Array): string {
+  return bytesToHex(noble256(bytes));
 }
 
 /** A size, for a person: `512 B`, `1.5 KiB`, `20.0 MiB`. */
@@ -159,7 +157,7 @@ export async function attach(
       );
       continue;
     }
-    const sha256 = await sha256Hex(bytes);
+    const sha256 = sha256Hex(bytes);
     if (out.some((image) => image.sha256 === sha256)) {
       problems.push(`${name} is attached already`);
       continue;

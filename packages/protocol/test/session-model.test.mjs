@@ -107,3 +107,45 @@ test('an event kind protocol 2 does not have is a protocol violation', () => {
   assert.throws(() => model.hear({ kind: 'Panel' }), ProtocolViolation);
   assert.throws(() => model.hear(live(0, { kind: 'Sparkle' })), ProtocolViolation);
 });
+
+test('Commands replaces the command forms whole and counts; it may come first, before any cursor', () => {
+  const model = new SessionModel();
+  const form = (name, extra = {}) => ({ name, description: name, schema: { type: 'object', properties: {} }, ...extra });
+  model.hear({ kind: 'Commands', forms: [form('model'), form('note', { extension: 'notes' })] });
+  model.hear(view(0, 1));
+  model.hear({ kind: 'Labels', labels: [] });
+  assert.deepEqual(model.commands.map((f) => f.name), ['model', 'note']);
+  assert.equal(model.commandsVersion, 1);
+  model.hear({ kind: 'Commands', forms: [form('model')] });
+  assert.deepEqual(model.commands.map((f) => f.name), ['model'], 'the latest replaces the last');
+  assert.equal(model.commandsVersion, 2, 'each Commands is counted, even one that holds the same forms');
+});
+
+test('a notice keeps its cursor, extension and level; its defaults are the schema\'s', () => {
+  const model = new SessionModel();
+  model.hear({ kind: 'Notice', text: 'plain' });
+  model.hear({ kind: 'Notice', text: 'costly', cursor: 2, extension: 'usage', level: 'warning' });
+  model.hear({ kind: 'Notice', text: 'broke', cursor: null, extension: null, level: 'error' });
+  model.notify('mine');
+  model.notify('mine too', 'warning', 2);
+  const kept = model.notices.map(({ text, cursor, extension, level }) => ({ text, cursor, extension, level }));
+  assert.deepEqual(kept, [
+    { text: 'plain', cursor: null, extension: null, level: 'info' },
+    { text: 'costly', cursor: 2, extension: 'usage', level: 'warning' },
+    { text: 'broke', cursor: null, extension: null, level: 'error' },
+    { text: 'mine', cursor: null, extension: null, level: 'info' },
+    { text: 'mine too', cursor: 2, extension: null, level: 'warning' },
+  ]);
+});
+
+test('a notice about a cursor shows on that cursor\'s view; the session\'s show on every view', () => {
+  const model = new SessionModel();
+  model.hear({ kind: 'Notice', text: 'session' });
+  model.hear({ kind: 'Notice', text: 'zero', cursor: 0 });
+  model.hear({ kind: 'Notice', text: 'one', cursor: 1 });
+  const on = (cursor) => model.noticesFor(cursor).map((n) => n.text);
+  assert.deepEqual(on(0), ['session', 'zero']);
+  assert.deepEqual(on(1), ['session', 'one']);
+  assert.deepEqual(on(null), ['session'], 'with no cursor followed, only the session\'s');
+  assert.equal(model.notices.length, 3, 'the others are kept, for when their cursor is followed');
+});

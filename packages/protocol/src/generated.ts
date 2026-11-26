@@ -78,6 +78,33 @@ export interface CallNamed {
   [key: string]: unknown;
 }
 
+/**
+ * Every command's form, and `config`'s when some extension has options: exactly what
+ * `Client.commands()` returns now (D32 section 3). Sent whole whenever that changes (an
+ * extension's start, a reload, a skill file rescanned, `TreeHandle.reassemble`), and first in a
+ * stream's snapshot, so a client keeps the last one and never polls. It also says that the options
+ * forms a client holds may be stale: read them again from `options()` when next shown.
+ */
+export interface Commands {
+  kind: "Commands";
+  forms: Form[];
+  [key: string]: unknown;
+}
+
+/**
+ * One thing that could finish what is being typed (D32 section 1). `value` is what is inserted, or
+ * sent: it replaces the word being typed whole (quoted for a command line, unquoted from
+ * `Client.complete` and `values`). `label` is what a list shows instead of `value` (`None`: show
+ * `value`), and `detail` one line beside it, dimmed (`None`: nothing). Neither holds a newline
+ * (whitespace runs become one space), and `detail` is cut at `DETAIL_WIDTH` characters with `…`.
+ */
+export interface Completion {
+  value: string;
+  label?: string | null;
+  detail?: string | null;
+  [key: string]: unknown;
+}
+
 /** A config snapshot. `data` is opaque to core and typed by the driver. */
 export interface Config {
   data: string;
@@ -152,7 +179,7 @@ export interface Error {
 export type ErrorCode = -32700 | -32600 | -32601 | -32602 | -32603 | -32001 | -32002 | -32003 | -32004 | -32005 | -32006 | -32007 | -32008 | -32009 | -32010 | -32011 | -32012 | -32013 | -32014;
 
 /** The params of the notification `event`. */
-export type Event = Live | CursorView | CursorGone | Labels | Appended | Notice;
+export type Event = Live | Commands | CursorView | CursorGone | Labels | Appended | Notice;
 
 /**
  * What a client knows of something it fills in: a command (its `name`, typed as `/name`, its
@@ -287,12 +314,17 @@ export interface Node {
 }
 
 /**
- * A message for one client, or for all of them: `cursor.tell` (to every client unless it names
- * one), or an input a hook refused (to its author).
+ * A message for one client, or for all of them: a handle's `tell` (to every client unless it names
+ * one), a command's progress, or an input a hook refused (to its author). `cursor` is the cursor
+ * it is about (`None`: the session), `extension` the extension that said it (`None`: τ itself),
+ * filled in from the handle, never by the caller, and `level` how loud it is.
  */
 export interface Notice {
   kind: "Notice";
   text: string;
+  cursor?: number | null;
+  extension?: string | null;
+  level?: "info" | "warning" | "error";
   [key: string]: unknown;
 }
 
@@ -478,9 +510,10 @@ export type CloseCursorResult = null;
 
 /**
  * Each command's form: its name, description and argument schema (named types with their
- * `"format"`, each default), fixed until the driver reloads. If some extension has options there
- * is one more, `config`, whose one argument is the extension; it is changed with `configure`, not
- * `run`.
+ * `"format"`, each default). If some extension has options there is one more, `config`, whose one
+ * argument is the extension; it is changed with `configure`, not `run`. A client with a stream
+ * need not call it: the stream opens with them in `Commands`, and sends them again whenever they
+ * change.
  */
 export type CommandsParams = Record<string, never>;
 /** What `commands` answers. */
@@ -488,7 +521,8 @@ export type CommandsResult = Form[];
 
 /**
  * The values of a named type (`"path"`, `"model"`, `"cursor"`, `"label"`, `"node"`; the `"format"`
- * of a schema) that start with `prefix`, as `cursor` sees them. Paths are the driver's machine's,
+ * of a schema) that start with `prefix`, as `cursor` sees them, each a `Completion`: the `value`,
+ * and the `label` and `detail` a list shows (D32 section 1). Paths are the driver's machine's,
  * relative to its working directory.
  */
 export interface CompleteParams {
@@ -497,15 +531,18 @@ export interface CompleteParams {
   prefix: string;
 }
 /** What `complete` answers. */
-export type CompleteResult = string[];
+export type CompleteResult = Completion[];
 
-/** `commandline.completions` of `line` on the driver: what could finish its last word, in one call. */
+/**
+ * `commandline.completions` of `line` on the driver: what could finish its last word, in one call,
+ * as `Completion`s.
+ */
 export interface CompleteLineParams {
   cursor: number;
   line: string;
 }
 /** What `complete_line` answers. */
-export type CompleteLineResult = string[];
+export type CompleteLineResult = Completion[];
 
 /**
  * Change the options named in `values` (decoded JSON) of `extension` on `cursor`'s branch: a step
@@ -791,7 +828,7 @@ export type Delta = TextDelta | ThinkingDelta | CallNamed | CallArgs | Retrying 
 /** Every method, in the schema's order. */
 export const METHODS = ["abort","answer","children","close_cursor","commands","complete","complete_line","configure","go_to","hello","image","input","node","nodes","open","options","parse_line","remove_item","remove_label","reopen","run","send","set_auto","set_label","step","walk","watch"] as const;
 /** Every event `kind`, in the schema's order. */
-export const EVENT_KINDS = ["Live","CursorView","CursorGone","Labels","Appended","Notice"] as const;
+export const EVENT_KINDS = ["Live","Commands","CursorView","CursorGone","Labels","Appended","Notice"] as const;
 /** Every delta `kind`, in the schema's order. */
 export const DELTA_KINDS = ["TextDelta","ThinkingDelta","CallNamed","CallArgs","Retrying","ToolProgress"] as const;
 
