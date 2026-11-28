@@ -1,6 +1,8 @@
 export * from './app.js';
+export * from './attachments.js';
 export * from './composer.js';
 export * from './cursors.js';
+export * from './images.js';
 export * from './line.js';
 export * from './markdown.js';
 export * from './questions.js';
@@ -13,3 +15,4 @@ export * from './tree-panel.js';
 export * from './use-link.js';
 export * from './activity-mark.js';
 export * from './marks.js';
+export * from './random.js';

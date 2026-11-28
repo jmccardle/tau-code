@@ -3,6 +3,52 @@
 One section per release, newest first. `scripts/release-notes.mjs` copies the section of the
 version being released into the GitHub release, and refuses to write notes without one.
 
+## Unreleased (0.10.0, with τ 0.18.0 and ffwf-tau-web 0.18.0)
+
+Images in a user's message: τ 0.18's protocol 3 (τ's D31). **Needs τ 0.18.0**, which speaks
+protocol 3 and refuses a client of 2; τ 0.17 is refused by this client the same way.
+
+### Added
+
+- **Attach images to a message.** The composer's `attach` button (png, jpeg, gif or webp, several
+  at once), a paste, or a drop of files anywhere on the page puts images in a tray above the line, each a thumbnail
+  with a remove control. They go with the next plain message, or alone with no text; a
+  `/command` line with images is refused, saying why. The client checks what it can before
+  anything is sent (an image τ reads, at most 20 MiB, at most 20, the whole request under the
+  edge's 64 MiB) and the server decides the rest: a model that takes no images refuses the send
+  with τ's sentence, and the tray and the line stay.
+- **A message's images in the transcript.** The images this page sent are drawn in their row
+  (kept by sha256, as `data:` URLs the pages' CSPs allow); every other user image is labelled
+  `[image WxH mime]`, as τ's terminal UI does, and the tree counts them. Pending input lists its
+  images too. (Fetching another client's images with `image()` is a later slice.)
+- In VS Code, paste and drop of files into the webview work the same way, through the same relay.
+- **Completion shows what τ says about each item.** `complete_line` answers items
+  `{value, label?, detail?}` (τ's D32); the composer lists `label ?? value` with the `detail`
+  (a command's description, a cursor's node) dimmed beside it, and inserts `value`.
+- **Notices say who and how loud.** A notice shows the extension that said it, and is styled by
+  its `level` (info, warning, error) in the design system's tokens, with a glyph each. A notice
+  about a cursor shows on that cursor's view only.
+- **`Commands`**, τ's new state event (first in the snapshot): the model keeps the command forms,
+  and an open `/config` form is read again when it changes.
+
+### Fixed
+
+- **Attaching an image over plain http** (a LAN address, say) failed: `crypto.subtle` is not
+  provided to a page that is not a secure context. The SHA-256 is now `@noble/hashes`' (1.8.0,
+  pinned), the same everywhere. The same page also could not start there, because the tab's id
+  came from `crypto.randomUUID`, which is withheld the same way; it uses `getRandomValues`.
+
+### Changed
+
+- **Protocol 3**, as τ froze it (its D32, τ master 49cc6872). The generated types are τ 0.18's schema: `Body.User` is the text or
+  `{text, images}`, `ItemData.Input` has `images`, `send` and `input` take `images`, and there is a
+  new call, `image(sha256)`. The generator accepts `maxItems` on a plain array (a bound τ checks).
+- **The extension's stale-τ guard** knows protocol 3: a τ before 0.18.0 that names no protocol
+  (the 0.9 runtime companion, τ 0.17.1) is protocol 2, and is refused before anything starts, with
+  the fix.
+- A POST to the HTTP edge may take a second longer for each MiB it carries, so a message with
+  large images is not cut off by the 10 s deadline meant for small requests.
+
 ## 0.9.1
 
 The client in the Tau design system. Same protocol (2) and the same bundled τ (0.17.1) as 0.9.0;

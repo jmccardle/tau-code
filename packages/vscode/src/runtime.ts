@@ -38,7 +38,7 @@ export interface TauCandidate {
   args: string[];
   /** What `--version` said, or null when it could not be read. */
   version: string | null;
-  /** The protocol `--version` named (τ ≥ 0.17 prints `(protocol 2)`), or null. */
+  /** The protocol `--version` named (τ ≥ 0.17 prints `(protocol N)`), or null. */
   protocol: number | null;
   /** The runtime's VS Code target, for the bundled τ; otherwise null. */
   target: string | null;
@@ -150,7 +150,7 @@ async function bundled(output: vscode.LogOutputChannel): Promise<TauCandidate | 
     command: api.command,
     args: [...api.args],
     version: api.tauVersion,
-    // The runtime API names no protocol; compat.ts infers it from the version (before 0.17.0: 1).
+    // The runtime API names no protocol; compat.ts infers it from the version (before 0.17.0: 1, before 0.18.0: 2).
     protocol: null,
     target: api.target,
   };

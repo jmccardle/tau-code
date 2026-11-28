@@ -11,7 +11,12 @@
  * `SessionLink`, sees the same session and can read the whole tree; and `tau serve --stop` ends
  * the first client's stream with `end {error: null}`.
  *
- * Then, protocol 2 (τ 0.17, D30): a second `tau serve` whose model is a fake OpenAI-compatible
+ * Then, protocol 3 (τ 0.18, D31): the mock model, which takes no images, refuses a `send` with one
+ * (`Refused`, nothing queued); a `tau serve` whose mock model has `images: true` takes a `send` with
+ * an image's bytes, appends a `User {text, images}`, echoes the image, gives its bytes back with
+ * `image`, takes it again by `sha256`, and refuses bad base64, too many images and an unknown name.
+ *
+ * Then, protocol 2's images (τ 0.17, D30): a `tau serve` whose model is a fake OpenAI-compatible
  * server here, with `images: true`. It answers the first request with a call to τ's `read` on a
  * PNG, and the next with text. The `Results` node must reach the client as `Ok {value, images}`,
  * and `outcomeOf` must give its text and its image (type, size, sha256).
@@ -23,11 +28,13 @@ import {
   PROTOCOL,
   ServeClient,
   SessionLink,
+  ServeError,
   SessionModel,
   bodyKind,
   imageLabel,
   outcomeOf,
   proseText,
+  userOf,
 } from '../packages/protocol/dist/index.js';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
@@ -67,9 +74,27 @@ try {
   model.welcome = welcome;
   assert.equal(welcome.protocol, PROTOCOL);
   assert.equal(welcome.session, session);
-  assert.deepEqual(order, ['event:CursorView', 'event:Labels', 'hello'], 'the snapshot comes before hello answers');
+  assert.deepEqual(
+    order,
+    ['event:Commands', 'event:CursorView', 'event:Labels', 'hello'],
+    'the snapshot comes before hello answers, Commands first and Labels last',
+  );
   const cursor = model.openCursors()[0].cursor;
-  console.log(`ok: hello after its snapshot; cursor ${cursor} at node ${model.views.get(cursor).at}`);
+  console.log(`ok: hello after its snapshot (Commands first); cursor ${cursor} at node ${model.views.get(cursor).at}`);
+
+  // D32: the stream's Commands is what commands() answers, so a client never polls it.
+  assert.deepEqual(model.commands, await a.call('commands', {}), 'Commands holds exactly what commands() returns');
+  assert.ok(model.commands.some((form) => form.name === 'model'), 'and it names the built-in commands');
+  console.log(`ok: Commands holds the ${model.commands.length} command forms commands() returns`);
+
+  // D32: completions are items, `{value, label?, detail?}`, not strings.
+  const items = await a.call('complete_line', { cursor, line: '/mo' });
+  assert.ok(items.length > 0 && items.every((item) => typeof item.value === 'string'), 'complete_line answers items');
+  assert.ok(items.some((item) => item.value === '/model' && typeof item.detail === 'string'), '/model, with its detail');
+  const cursors = await a.call('complete', { cursor, named: 'cursor', prefix: '' });
+  assert.ok(cursors.length > 0 && cursors.every((item) => typeof item.value === 'string'), 'complete answers items');
+  assert.ok(cursors.some((item) => typeof item.detail === 'string'), 'a cursor says where it is, in its detail');
+  console.log(`ok: complete_line('/mo') and complete(cursor) answer items (${JSON.stringify(cursors[0])})`);
 
   // A turn, watched.
   await a.call('watch', { cursors: [cursor] });
@@ -104,6 +129,15 @@ try {
   assert.ok(walk.some((n) => n.body.User === 'hello from the smoke'));
   console.log(`ok: walk(${view.at}) holds the input and the reply (${walk.length} nodes)`);
 
+  // Protocol 3: the mock model takes no images, so a send with one is refused, and queues nothing.
+  await assert.rejects(
+    a.call('send', { cursor, text: 'look', images: [{ data: png().toString('base64') }] }),
+    (error) => error instanceof ServeError && error.is('Refused') && /image/.test(error.detail),
+  );
+  assert.equal(model.views.get(cursor).items.length, 0, 'a refused send queued nothing');
+  assert.equal(model.views.get(cursor).at, view.at, 'and moved nothing');
+  console.log('ok: a send with an image to a model that takes none is Refused, and queues nothing');
+
   // Client B, through the link: the same session.
   const b = new SessionLink({ open: () => HttpTransport.open({ url, token }), client: 'smoke@tau-code:b' });
   b.start();
@@ -131,9 +165,80 @@ try {
     console.error(error);
   });
 }
+if (!failed) failed = !(await userImages());
 if (!failed) failed = !(await images());
 if (failed) process.exit(1);
 console.log('smoke: green');
+
+/**
+ * Protocol 3: a user's images. The mock model with `images: true` takes them and echoes them as
+ * `[1 image: image/png 1x1]`. True when green.
+ */
+async function userImages() {
+  const picture = png();
+  const data = picture.toString('base64');
+  const sha256 = createHash('sha256').update(picture).digest('hex');
+  let served = null;
+  try {
+    served = await serve({
+      config: { default_model: 'mock', models: { mock: { model: 'mock', provider: 'mock', images: true, options: { delay_ms: 1 } } } },
+    });
+    const { url, token } = served.record;
+    const client = new ServeClient(await HttpTransport.open({ url, token }));
+    const sessionModel = new SessionModel();
+    const appended = [];
+    client.on('event', (event) => {
+      sessionModel.hear(event);
+      if (event.kind === 'Appended') appended.push(...event.nodes);
+    });
+    sessionModel.welcome = await client.hello('smoke@tau-code:user-images');
+    const cursor = sessionModel.openCursors()[0].cursor;
+    const replies = () => appended.filter((n) => bodyKind(n.body) === 'Assistant' && n.body.Assistant.stop === 'End');
+
+    // The bytes, sent: a User node with its text and image, and the mock's echo of it.
+    await client.call('send', { cursor, text: 'what is this', images: [{ data }] });
+    await until(() => replies().length === 1, 'the reply to an image', 20_000);
+    const user = appended.find((n) => bodyKind(n.body) === 'User');
+    const image = { mime: 'image/png', sha256, width: 1, height: 1 };
+    assert.deepEqual(user.body.User, { text: 'what is this', images: [image] });
+    assert.deepEqual(userOf(user.body.User), { text: 'what is this', images: [image] });
+    assert.equal(proseText(replies()[0].body.Assistant.parts[0].Text), 'mock: what is this\n[1 image: image/png 1x1]');
+    console.log(`ok: send with an image: User {text, images: [${imageLabel(image)}]}, echoed by the mock`);
+
+    // Its bytes back, by name; and sent again by name alone, with no text.
+    assert.equal(await client.call('image', { sha256 }), data, 'image(sha256) gives the bytes back');
+    await client.call('send', { cursor, text: '', images: [{ sha256 }] });
+    await until(() => replies().length === 2, 'the reply to an image by name', 20_000);
+    assert.equal(proseText(replies()[1].body.Assistant.parts[0].Text), 'mock: \n[1 image: image/png 1x1]');
+    const walk = await client.call('walk', { id: sessionModel.views.get(cursor).at });
+    assert.equal(walk.filter((n) => bodyKind(n.body) === 'User' && userOf(n.body.User).images.length === 1).length, 2, 'walk agrees');
+    console.log('ok: image(sha256) gives the bytes back; an image sent again by sha256, alone');
+
+    // Refusals: each one queues nothing.
+    const refused = async (images, name, why) => {
+      await assert.rejects(
+        client.call('send', { cursor, text: 'x', images }),
+        (error) => error instanceof ServeError && error.is(name),
+        why,
+      );
+      assert.equal(sessionModel.views.get(cursor).items.length, 0, `${why}: nothing queued`);
+    };
+    await refused([{ data: data.replace(/=+$/, '') }], 'InvalidParams', 'base64 without its padding');
+    await refused([{ data: Buffer.from('not an image').toString('base64') }], 'InvalidParams', 'bytes that are no image');
+    await refused([{ data, sha256 }], 'InvalidParams', 'both data and sha256');
+    await refused(Array.from({ length: 21 }, () => ({ sha256 })), 'InvalidParams', '21 images');
+    await refused([{ sha256: 'f'.repeat(64) }], 'NotFound', 'an unknown sha256');
+    await assert.rejects(client.call('image', { sha256: 'f'.repeat(64) }), (error) => error instanceof ServeError && error.is('NotFound'));
+    console.log('ok: bad base64, no image, both fields, 21 images: InvalidParams; an unknown sha256: NotFound');
+    client.close();
+    return true;
+  } catch (error) {
+    console.error(error);
+    return false;
+  } finally {
+    if (served) await served.stop().catch((error) => console.error(error));
+  }
+}
 
 /** Protocol 2: a tool result with an image reaches the client whole. True when green. */
 async function images() {

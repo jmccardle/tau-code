@@ -3,15 +3,18 @@
 Clients for [τ](https://github.com/jmccardle/tau), the agent harness: a web client, and a VS Code /
 VSCodium extension, both speaking τ's wire to `tau serve`.
 
-**Status: 0.9.1, on τ 0.17's wire (protocol 2), over `tau serve`'s HTTP edge.** The protocol
+**Status: 0.9.1 released, on τ 0.17's wire (protocol 2). This branch is on the way to 0.10.0, on τ
+0.18's wire (protocol 3: images in a user's message), which is not released yet: build τ from its
+`master` to run it.** Over `tau serve`'s HTTP edge. The protocol
 package, the session model, the web client, the VS Code / VSCodium extension, the runtime
 companion (τ 0.17.1, four platforms) and the container are ported and tested against a real
 `tau serve`, the extension in a real VSCodium. CHANGELOG.md says what each release changed
 and removed.
 
-**Requires τ 0.17.0 or later** (`pip install 'ffwf-tau>=0.17'`): the HTTP edge, and protocol 2.
-τ 0.16 and older serve only a Unix socket, which a browser cannot reach, and speak protocol 1,
-which this client does not; the extension refuses them by name before it starts anything.
+**Requires τ 0.18.0 or later** (`pip install 'ffwf-tau>=0.18'`): the HTTP edge, and protocol 3.
+τ 0.17 speaks protocol 2 and τ 0.16 and older protocol 1 over a Unix socket a browser cannot
+reach; this client speaks neither, and the extension refuses them by name before it starts
+anything.
 
 ## What is here
 
@@ -41,9 +44,14 @@ webview.
 `HttpTransport` speaks it with `fetch` and a `ReadableStream` (it can send `Authorization`,
 which `EventSource` cannot), POSTing one request at a time so calls arrive in order. The same
 code runs in a browser and in Node. `ServeClient` says `hello` with the protocol number and
-matches answers by id. A tool result can carry images (protocol 2, τ's D30); the wire gives each
-image's type, size and sha256 but not its bytes, so the transcript labels each one the way τ's
-terminal UI does (`[image 640x480 image/png]`). `SessionModel` folds the snapshot and the events into the cursors, the
+matches answers by id. A tool result can carry images (τ's D30), and so can a user's message
+(protocol 3, τ's D31): `send` takes up to 20 images as base64, each a PNG, JPEG, GIF or WebP of at
+most 20 MiB, and the whole request must fit the edge's 64 MiB. A node names each image by its
+type, size and sha256, not its bytes. The composer takes images from its attach button, a paste
+or a drop, shows them in a tray, and sends them with the next plain message (never with a
+`/command`); a model that takes no images refuses the send, and the tray and the line stay. A
+message draws the images this page sent (it kept their bytes, by sha256); every other image is
+labelled the way τ's terminal UI does (`[image 640x480 image/png]`). `SessionModel` folds the snapshot and the events into the cursors, the
 labels, a node cache and each watched cursor's live layer; `SessionLink` reconnects (there is no
 resume: a new connection gets a new snapshot), stops on a refusal that a retry cannot change (a
 wrong token, a refused origin, a protocol mismatch), follows one cursor and reads the tree.
@@ -54,7 +62,8 @@ The token is in the serve record (`$TAU_HOME/serve/<session>.json`, mode 600), w
 ## Requirements
 
 - Node 20 or later.
-- τ 0.17.0 or later, its `tau` console script reachable. Set `TAU_BIN` if it is not the
+- τ 0.18.0 or later, its `tau` console script reachable (until 0.18.0 is released, τ built from
+  its `master`, which says `(protocol 3)` in `tau --version`). Set `TAU_BIN` if it is not the
   `tau` on `PATH`:
 
   ```bash
@@ -92,7 +101,7 @@ tau serve --web-root packages/web/dist
 Or as a Python package, which τ finds and serves with no flags: `npm run package:web-wheel`
 builds `ffwf-tau-web` (the package `tau_web`, packages/web-py) into `dist-py/`, a pure wheel
 and an sdist that both carry the built client. Its version is τ's (0.17.x pairs with
-ffwf-tau 0.17.x, protocol 2), and once published, `pip install ffwf-tau` brings it along.
+ffwf-tau 0.17.x, protocol 2; 0.18.x with 0.18.x, protocol 3), and once published, `pip install ffwf-tau` brings it along.
 
 ```bash
 pip install ffwf-tau dist-py/ffwf_tau_web-*.whl

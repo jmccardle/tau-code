@@ -13,7 +13,7 @@ export function errorName(code: number): ErrorName | null {
   return NAMES.get(code) ?? null;
 }
 
-/** The server sent something protocol 2 does not allow. The connection is closed for it. */
+/** The server sent something protocol 3 does not allow. The connection is closed for it. */
 export class ProtocolViolation extends Error {
   constructor(detail: string) {
     super(`protocol violation: ${detail}`);

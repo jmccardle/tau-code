@@ -1,7 +1,7 @@
 import { EdgeError } from './errors.js';
 import type { Transport } from './transport.js';
 
-/** How long opening the stream (up to its connection id), or one POST, may take. τ's own client uses 10 s. */
+/** How long opening the stream (up to its connection id), or one small POST, may take. τ's own client uses 10 s. */
 export const CONNECT_MS = 10_000;
 
 export interface HttpTransportOptions {
@@ -31,7 +31,7 @@ export interface SseEvent {
 /**
  * The text/event-stream format, incrementally: `feed` takes decoded text as it arrives and returns
  * every event it completed. Comments (`: ping`, the edge's heartbeat) are dropped; `id:` and
- * `retry:` are read past, since protocol 2 has no resume (D29 §2).
+ * `retry:` are read past, since the protocol has no resume (D29 §2).
  */
 export class SseParser {
   #buffer = '';
@@ -220,7 +220,7 @@ export class HttpTransport implements Transport {
         method: 'POST',
         headers: { ...this.#headers, 'Content-Type': 'application/json' },
         body,
-        signal: AbortSignal.timeout(this.#connectMs),
+        signal: AbortSignal.timeout(postDeadline(this.#connectMs, body.length)),
       });
     } catch (error) {
       this.#finish(`a request could not be sent: ${describe(error)}`);
@@ -287,6 +287,15 @@ export class HttpTransport implements Transport {
     this.#abort.abort();
     this.#onClose(reason, violation);
   }
+}
+
+/**
+ * How long one POST may take: `connectMs`, and a second more for each MiB it carries. A message
+ * with images (protocol 3) can be tens of MiB; held to the bare 10 s, a slow link would fail the
+ * connection over an upload that was still going.
+ */
+export function postDeadline(connectMs: number, length: number): number {
+  return connectMs + Math.ceil(length / (1024 * 1024)) * 1000;
 }
 
 /** Throw the `EdgeError` a non-stream answer to `GET /stream` means; return for a stream. */

@@ -1,7 +1,7 @@
 {
   "name": "@ffwf/tau-code-ui",
   "version": "0.9.1",
-  "description": "React views of a τ session (protocol 2): host-agnostic, handed a SessionLink.",
+  "description": "React views of a τ session (protocol 3): host-agnostic, handed a SessionLink.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@ffwf/tau-code-protocol": "*",
+    "@noble/hashes": "1.8.0",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1"
   },

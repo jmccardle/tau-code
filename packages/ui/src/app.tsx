@@ -38,6 +38,7 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
   const view = state.focus === null ? undefined : model.views.get(state.focus);
   const walk = view ? model.walk(view.at) : null;
   const open = model.openCursors();
+  const notices = model.noticesFor(state.focus);
   return (
     <div className="tau-app">
       <header className={`tau-status tau-status-${phase}`}>
@@ -87,10 +88,11 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
         )}
       </main>
       <footer className="tau-footer">
-        {model.notices.length > 0 && (
+        {notices.length > 0 && (
           <div className="tau-notices" data-testid="notices">
-            {model.notices.map((notice) => (
-              <div key={notice.id} className="tau-notice">
+            {notices.map((notice) => (
+              <div key={notice.id} className={`tau-notice tau-notice-${notice.level}`} role={notice.level === 'error' ? 'alert' : 'status'}>
+                {notice.extension !== null && <span className="tau-notice-from">{notice.extension}</span>}
                 {notice.text}{' '}
                 <button type="button" className="tau-link" title="dismiss" onClick={() => model.dismiss(notice.id)}>
                   ×
@@ -128,7 +130,7 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
             <Questions key={view.cursor} questions={view.questions} client={link.clientId} call={call} />
             <Items view={view} client={link.clientId} call={call} report={setProblem} />
             <StepControls view={view} call={call} report={setProblem} />
-            <Composer key={view.cursor} cursor={view.cursor} call={call} note={(text) => model.notify(text)} />
+            <Composer key={view.cursor} cursor={view.cursor} call={call} note={(text, level) => model.notify(text, level, view.cursor)} commandsVersion={model.commandsVersion} />
           </>
         )}
       </footer>

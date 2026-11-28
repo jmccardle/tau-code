@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "τ wire protocol",
   "description": "JSON-RPC 2.0, one message per WebSocket text message (D21).",
-  "x-protocol": 2,
+  "x-protocol": 3,
   "$defs": {
     "Appended": {
       "description": "Nodes added to the tree, in id order, bodies included.",
@@ -75,9 +75,33 @@
         },
         {
           "additionalProperties": false,
+          "description": "What a person (or a frontend for them) said: text, then images (D31).",
           "properties": {
             "User": {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "properties": {
+                    "images": {
+                      "items": {
+                        "$ref": "#/$defs/Image"
+                      },
+                      "type": "array"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "images"
+                  ],
+                  "type": "object"
+                }
+              ],
+              "description": "`Body::User`'s two encodings: the text alone, or the text with its images."
             }
           },
           "required": [
@@ -238,6 +262,57 @@
         "index",
         "id",
         "tool"
+      ]
+    },
+    "Commands": {
+      "description": "Every command's form, and `config`'s when some extension has options: exactly what\n`Client.commands()` returns now (D32 section 3). Sent whole whenever that changes (an\nextension's start, a reload, a skill file rescanned, `TreeHandle.reassemble`), and first in a\nstream's snapshot, so a client keeps the last one and never polls. It also says that the\noptions forms a client holds may be stale: read them again from `options()` when next shown.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Commands"
+        },
+        "forms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Form"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "forms"
+      ]
+    },
+    "Completion": {
+      "description": "One thing that could finish what is being typed (D32 section 1). `value` is what is\ninserted, or sent: it replaces the word being typed whole (quoted for a command line, unquoted\nfrom `Client.complete` and `values`). `label` is what a list shows instead of `value` (`None`:\nshow `value`), and `detail` one line beside it, dimmed (`None`: nothing). Neither holds a\nnewline (whitespace runs become one space), and `detail` is cut at `DETAIL_WIDTH` characters\nwith `…`.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "value"
       ]
     },
     "Config": {
@@ -516,6 +591,9 @@
           "$ref": "#/$defs/Live"
         },
         {
+          "$ref": "#/$defs/Commands"
+        },
+        {
           "$ref": "#/$defs/CursorView"
         },
         {
@@ -617,6 +695,32 @@
       ],
       "type": "object"
     },
+    "ImageInput": {
+      "description": "One image a client sends with an input (D31): exactly one of `data`, the image file's bytes\nin standard base64 (with padding, nothing else), or `sha256`, the name of an image this\nsession already keeps (a node's or an input's; nothing is read from a path). The format and\nsize are read from the bytes, never taken from the client. Built from the wire or by hand,\nit is checked at once: `BadImage` (a `ValueError`) for bytes that are not strict base64 of\na PNG, JPEG, GIF or WebP image of at most `MAX_INPUT_BYTES`, or a `sha256` that is not 64\nlowercase hex digits. Its `repr` never shows the bytes.",
+      "type": "object",
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "Item": {
       "properties": {
         "data": {
@@ -644,11 +748,18 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "A client's input: its text, then its images (D31; none in a pad written before them).",
           "properties": {
             "Input": {
               "properties": {
                 "by": {
                   "$ref": "#/$defs/Author"
+                },
+                "images": {
+                  "items": {
+                    "$ref": "#/$defs/Image"
+                  },
+                  "type": "array"
                 },
                 "text": {
                   "type": "string"
@@ -832,7 +943,7 @@
       "type": "object"
     },
     "Notice": {
-      "description": "A message for one client, or for all of them: `cursor.tell` (to every client unless it\nnames one), or an input a hook refused (to its author).",
+      "description": "A message for one client, or for all of them: a handle's `tell` (to every client unless\nit names one), a command's progress, or an input a hook refused (to its author). `cursor` is\nthe cursor it is about (`None`: the session), `extension` the extension that said it (`None`:\nτ itself), filled in from the handle, never by the caller, and `level` how loud it is.",
       "type": "object",
       "properties": {
         "kind": {
@@ -840,6 +951,34 @@
         },
         "text": {
           "type": "string"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extension": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
         }
       },
       "required": [
@@ -1275,7 +1414,7 @@
       }
     },
     "commands": {
-      "description": "Each command's form: its name, description and argument schema (named types with\ntheir `\"format\"`, each default), fixed until the driver reloads. If some extension has\noptions there is one more, `config`, whose one argument is the extension; it is\nchanged with `configure`, not `run`.",
+      "description": "Each command's form: its name, description and argument schema (named types with\ntheir `\"format\"`, each default). If some extension has options there is one more,\n`config`, whose one argument is the extension; it is changed with `configure`, not `run`.\nA client with a stream need not call it: the stream opens with them in `Commands`, and\nsends them again whenever they change.",
       "type": "object",
       "properties": {},
       "additionalProperties": false,
@@ -1287,7 +1426,7 @@
       }
     },
     "complete": {
-      "description": "The values of a named type (`\"path\"`, `\"model\"`, `\"cursor\"`, `\"label\"`, `\"node\"`;\nthe `\"format\"` of a schema) that start with `prefix`, as `cursor` sees them. Paths are\nthe driver's machine's, relative to its working directory.",
+      "description": "The values of a named type (`\"path\"`, `\"model\"`, `\"cursor\"`, `\"label\"`, `\"node\"`;\nthe `\"format\"` of a schema) that start with `prefix`, as `cursor` sees them, each a\n`Completion`: the `value`, and the `label` and `detail` a list shows (D32 section 1).\nPaths are the driver's machine's, relative to its working directory.",
       "type": "object",
       "properties": {
         "cursor": {
@@ -1310,12 +1449,12 @@
       "x-result": {
         "type": "array",
         "items": {
-          "type": "string"
+          "$ref": "#/$defs/Completion"
         }
       }
     },
     "complete_line": {
-      "description": "`commandline.completions` of `line` on the driver: what could finish its last\nword, in one call.",
+      "description": "`commandline.completions` of `line` on the driver: what could finish its last\nword, in one call, as `Completion`s.",
       "type": "object",
       "properties": {
         "cursor": {
@@ -1334,7 +1473,7 @@
       "x-result": {
         "type": "array",
         "items": {
-          "type": "string"
+          "$ref": "#/$defs/Completion"
         }
       }
     },
@@ -1418,8 +1557,24 @@
         "$ref": "#/$defs/Welcome"
       }
     },
+    "image": {
+      "description": "The bytes of the image named `sha256` that this session holds (a node's, or an input's\non a scratchpad), as base64: what a client draws a node's `Image` with (D31).\n`MissingImage` (a `LookupError`) if the session holds none by that name.",
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "x-result": {
+        "type": "string"
+      }
+    },
     "input": {
-      "description": "Add `text` to the cursor's scratchpad as this client's input; returns the item.",
+      "description": "Add `text` to the cursor's scratchpad as this client's input, with `images` after it\n(D31); returns the item. At most `MAX_INPUT_IMAGES` images, each an `ImageInput` (its\nbytes are checked as it is made: `BadImage`). The images are held to the model of the\ncursor's branch as a tool's are (D30 section 6): `ValueError` saying why if it does not\ntake images or one is over its provider's limits, `MissingImage` for a `sha256` the\nsession does not hold, `ValueError` for too many; nothing is added then.",
       "type": "object",
       "properties": {
         "cursor": {
@@ -1428,6 +1583,13 @@
         },
         "text": {
           "type": "string"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ImageInput"
+          },
+          "maxItems": 20
         }
       },
       "required": [
@@ -1640,6 +1802,13 @@
         },
         "text": {
           "type": "string"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ImageInput"
+          },
+          "maxItems": 20
         }
       },
       "required": [

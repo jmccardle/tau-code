@@ -9,7 +9,7 @@
  */
 
 /** The protocol `hello` names. The server refuses any other number (`ProtocolMismatch`). */
-export const PROTOCOL = 2 as const;
+export const PROTOCOL = 3 as const;
 
 /** Nodes added to the tree, in id order, bodies included. */
 export interface Appended {
@@ -27,7 +27,12 @@ export type Author = "Provider" | "Tools" | "Core" | {
 export type Body = {
   System: string;
 } | {
-  User: string;
+  /** `Body::User`'s two encodings: the text alone, or the text with its images. */
+  User: string | {
+    images: Image[];
+    text: string;
+    [key: string]: unknown;
+  };
 } | {
   Assistant: {
     /**
@@ -70,6 +75,33 @@ export interface CallNamed {
   index: number;
   id: string;
   tool: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Every command's form, and `config`'s when some extension has options: exactly what
+ * `Client.commands()` returns now (D32 section 3). Sent whole whenever that changes (an
+ * extension's start, a reload, a skill file rescanned, `TreeHandle.reassemble`), and first in a
+ * stream's snapshot, so a client keeps the last one and never polls. It also says that the options
+ * forms a client holds may be stale: read them again from `options()` when next shown.
+ */
+export interface Commands {
+  kind: "Commands";
+  forms: Form[];
+  [key: string]: unknown;
+}
+
+/**
+ * One thing that could finish what is being typed (D32 section 1). `value` is what is inserted, or
+ * sent: it replaces the word being typed whole (quoted for a command line, unquoted from
+ * `Client.complete` and `values`). `label` is what a list shows instead of `value` (`None`: show
+ * `value`), and `detail` one line beside it, dimmed (`None`: nothing). Neither holds a newline
+ * (whitespace runs become one space), and `detail` is cut at `DETAIL_WIDTH` characters with `…`.
+ */
+export interface Completion {
+  value: string;
+  label?: string | null;
+  detail?: string | null;
   [key: string]: unknown;
 }
 
@@ -147,7 +179,7 @@ export interface Error {
 export type ErrorCode = -32700 | -32600 | -32601 | -32602 | -32603 | -32001 | -32002 | -32003 | -32004 | -32005 | -32006 | -32007 | -32008 | -32009 | -32010 | -32011 | -32012 | -32013 | -32014;
 
 /** The params of the notification `event`. */
-export type Event = Live | CursorView | CursorGone | Labels | Appended | Notice;
+export type Event = Live | Commands | CursorView | CursorGone | Labels | Appended | Notice;
 
 /**
  * What a client knows of something it fills in: a command (its `name`, typed as `/name`, its
@@ -199,6 +231,21 @@ export interface Image {
   [key: string]: unknown;
 }
 
+/**
+ * One image a client sends with an input (D31): exactly one of `data`, the image file's bytes in
+ * standard base64 (with padding, nothing else), or `sha256`, the name of an image this session
+ * already keeps (a node's or an input's; nothing is read from a path). The format and size are
+ * read from the bytes, never taken from the client. Built from the wire or by hand, it is checked
+ * at once: `BadImage` (a `ValueError`) for bytes that are not strict base64 of a PNG, JPEG, GIF or
+ * WebP image of at most `MAX_INPUT_BYTES`, or a `sha256` that is not 64 lowercase hex digits. Its
+ * `repr` never shows the bytes.
+ */
+export interface ImageInput {
+  data?: string | null;
+  sha256?: string | null;
+  [key: string]: unknown;
+}
+
 export interface Item {
   data: ItemData;
   id: number;
@@ -209,6 +256,7 @@ export interface Item {
 export type ItemData = {
   Input: {
     by: Author;
+    images?: Image[];
     text: string;
     [key: string]: unknown;
   };
@@ -266,12 +314,17 @@ export interface Node {
 }
 
 /**
- * A message for one client, or for all of them: `cursor.tell` (to every client unless it names
- * one), or an input a hook refused (to its author).
+ * A message for one client, or for all of them: a handle's `tell` (to every client unless it names
+ * one), a command's progress, or an input a hook refused (to its author). `cursor` is the cursor
+ * it is about (`None`: the session), `extension` the extension that said it (`None`: τ itself),
+ * filled in from the handle, never by the caller, and `level` how loud it is.
  */
 export interface Notice {
   kind: "Notice";
   text: string;
+  cursor?: number | null;
+  extension?: string | null;
+  level?: "info" | "warning" | "error";
   [key: string]: unknown;
 }
 
@@ -457,9 +510,10 @@ export type CloseCursorResult = null;
 
 /**
  * Each command's form: its name, description and argument schema (named types with their
- * `"format"`, each default), fixed until the driver reloads. If some extension has options there
- * is one more, `config`, whose one argument is the extension; it is changed with `configure`, not
- * `run`.
+ * `"format"`, each default). If some extension has options there is one more, `config`, whose one
+ * argument is the extension; it is changed with `configure`, not `run`. A client with a stream
+ * need not call it: the stream opens with them in `Commands`, and sends them again whenever they
+ * change.
  */
 export type CommandsParams = Record<string, never>;
 /** What `commands` answers. */
@@ -467,7 +521,8 @@ export type CommandsResult = Form[];
 
 /**
  * The values of a named type (`"path"`, `"model"`, `"cursor"`, `"label"`, `"node"`; the `"format"`
- * of a schema) that start with `prefix`, as `cursor` sees them. Paths are the driver's machine's,
+ * of a schema) that start with `prefix`, as `cursor` sees them, each a `Completion`: the `value`,
+ * and the `label` and `detail` a list shows (D32 section 1). Paths are the driver's machine's,
  * relative to its working directory.
  */
 export interface CompleteParams {
@@ -476,15 +531,18 @@ export interface CompleteParams {
   prefix: string;
 }
 /** What `complete` answers. */
-export type CompleteResult = string[];
+export type CompleteResult = Completion[];
 
-/** `commandline.completions` of `line` on the driver: what could finish its last word, in one call. */
+/**
+ * `commandline.completions` of `line` on the driver: what could finish its last word, in one call,
+ * as `Completion`s.
+ */
 export interface CompleteLineParams {
   cursor: number;
   line: string;
 }
 /** What `complete_line` answers. */
-export type CompleteLineResult = string[];
+export type CompleteLineResult = Completion[];
 
 /**
  * Change the options named in `values` (decoded JSON) of `extension` on `cursor`'s branch: a step
@@ -526,10 +584,29 @@ export interface HelloParams {
 /** What `hello` answers. */
 export type HelloResult = Welcome;
 
-/** Add `text` to the cursor's scratchpad as this client's input; returns the item. */
+/**
+ * The bytes of the image named `sha256` that this session holds (a node's, or an input's on a
+ * scratchpad), as base64: what a client draws a node's `Image` with (D31). `MissingImage` (a
+ * `LookupError`) if the session holds none by that name.
+ */
+export interface ImageParams {
+  sha256: string;
+}
+/** What `image` answers. */
+export type ImageResult = string;
+
+/**
+ * Add `text` to the cursor's scratchpad as this client's input, with `images` after it (D31);
+ * returns the item. At most `MAX_INPUT_IMAGES` images, each an `ImageInput` (its bytes are checked
+ * as it is made: `BadImage`). The images are held to the model of the cursor's branch as a tool's
+ * are (D30 section 6): `ValueError` saying why if it does not take images or one is over its
+ * provider's limits, `MissingImage` for a `sha256` the session does not hold, `ValueError` for too
+ * many; nothing is added then.
+ */
 export interface InputParams {
   cursor: number;
   text: string;
+  images?: ImageInput[];
 }
 /** What `input` answers. */
 export type InputResult = number;
@@ -636,6 +713,7 @@ export type RunResult = string | null;
 export interface SendParams {
   cursor: number;
   text: string;
+  images?: ImageInput[];
 }
 /** What `send` answers. */
 export type SendResult = number;
@@ -692,6 +770,7 @@ export interface Requests {
   configure: ConfigureParams;
   go_to: GoToParams;
   hello: HelloParams;
+  image: ImageParams;
   input: InputParams;
   node: NodeParams;
   nodes: NodesParams;
@@ -722,6 +801,7 @@ export interface Results {
   configure: ConfigureResult;
   go_to: GoToResult;
   hello: HelloResult;
+  image: ImageResult;
   input: InputResult;
   node: NodeResult;
   nodes: NodesResult;
@@ -746,9 +826,9 @@ export type Method = keyof Requests;
 export type Delta = TextDelta | ThinkingDelta | CallNamed | CallArgs | Retrying | ToolProgress;
 
 /** Every method, in the schema's order. */
-export const METHODS = ["abort","answer","children","close_cursor","commands","complete","complete_line","configure","go_to","hello","input","node","nodes","open","options","parse_line","remove_item","remove_label","reopen","run","send","set_auto","set_label","step","walk","watch"] as const;
+export const METHODS = ["abort","answer","children","close_cursor","commands","complete","complete_line","configure","go_to","hello","image","input","node","nodes","open","options","parse_line","remove_item","remove_label","reopen","run","send","set_auto","set_label","step","walk","watch"] as const;
 /** Every event `kind`, in the schema's order. */
-export const EVENT_KINDS = ["Live","CursorView","CursorGone","Labels","Appended","Notice"] as const;
+export const EVENT_KINDS = ["Live","Commands","CursorView","CursorGone","Labels","Appended","Notice"] as const;
 /** Every delta `kind`, in the schema's order. */
 export const DELTA_KINDS = ["TextDelta","ThinkingDelta","CallNamed","CallArgs","Retrying","ToolProgress"] as const;
 
