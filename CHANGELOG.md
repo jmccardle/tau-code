@@ -57,6 +57,9 @@ protocol 3 and refuses a client of 2; τ 0.17 is refused by this client the same
   the fix.
 - A POST to the HTTP edge may take a second longer for each MiB it carries, so a message with
   large images is not cut off by the 10 s deadline meant for small requests.
+- **ffwf-tau-web 0.18.0** (released from `tau-web-v0.18.0`) is this client, protocol 3, for
+  `tau serve` with no flags. It is released before τ 0.18.0, which refuses a protocol-2 client at
+  `hello` (τ's D29 section 9); its pinned schema is the one τ 0.18.0 (τ master 06b868ac) prints.
 
 ## 0.9.1
 
