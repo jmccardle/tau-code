@@ -16,7 +16,7 @@ export interface Transport {
   onMessage(handler: (message: unknown) => void): void;
   /**
    * Register the sink for "the connection is gone", with why, as a sentence. `violation` is true
-   * when the transport closed because the server sent something protocol 2 does not allow: a
+   * when the transport closed because the server sent something protocol 3 does not allow: a
    * retry would meet the same server, so it is final. Called once.
    */
   onClose(handler: (reason: string, violation: boolean) => void): void;

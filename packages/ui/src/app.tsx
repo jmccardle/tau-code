@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { LinkState, SessionLink } from '@ffwf/tau-code-protocol';
 import { ActivityMark } from './activity-mark.js';
+import { tokensText } from './attachments.js';
 import { Composer } from './composer.js';
 import { CursorTabs, Items, StepControls } from './cursors.js';
 import type { Call } from './line.js';
@@ -38,6 +39,8 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
   const view = state.focus === null ? undefined : model.views.get(state.focus);
   const walk = view ? model.walk(view.at) : null;
   const open = model.openCursors();
+  const notices = model.noticesFor(state.focus);
+  const modelInfo = model.modelInfo(view?.model);
   return (
     <div className="tau-app">
       <header className={`tau-status tau-status-${phase}`}>
@@ -50,7 +53,13 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
           {welcome.cwd}
         </span>
         <span className="tau-spacer" />
-        {view?.model && <span className="tau-hint">model {view.model}</span>}
+        {view?.model && (
+          <span className="tau-hint" data-testid="model">
+            model {view.model}
+            {modelInfo?.context_window != null && ` (${tokensText(modelInfo.context_window)} context)`}
+            {modelInfo && modelInfo.images === null && ', no images'}
+          </span>
+        )}
         <span className="tau-hint">tau {welcome.version}</span>
         <button type="button" className="tau-link" onClick={() => setTreeOpen(!treeOpen)} aria-pressed={treeOpen}>
           {treeOpen ? 'hide tree' : 'tree'}
@@ -87,10 +96,11 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
         )}
       </main>
       <footer className="tau-footer">
-        {model.notices.length > 0 && (
+        {notices.length > 0 && (
           <div className="tau-notices" data-testid="notices">
-            {model.notices.map((notice) => (
-              <div key={notice.id} className="tau-notice">
+            {notices.map((notice) => (
+              <div key={notice.id} className={`tau-notice tau-notice-${notice.level}`} role={notice.level === 'error' ? 'alert' : 'status'}>
+                {notice.extension !== null && <span className="tau-notice-from">{notice.extension}</span>}
                 {notice.text}{' '}
                 <button type="button" className="tau-link" title="dismiss" onClick={() => model.dismiss(notice.id)}>
                   ×
@@ -128,7 +138,7 @@ export function TauApp({ link, hints = {} }: TauAppProps): JSX.Element {
             <Questions key={view.cursor} questions={view.questions} client={link.clientId} call={call} />
             <Items view={view} client={link.clientId} call={call} report={setProblem} />
             <StepControls view={view} call={call} report={setProblem} />
-            <Composer key={view.cursor} cursor={view.cursor} call={call} note={(text) => model.notify(text)} />
+            <Composer key={view.cursor} cursor={view.cursor} call={call} note={(text, level) => model.notify(text, level, view.cursor)} commandsVersion={model.commandsVersion} takesImages={modelInfo === undefined || modelInfo.images !== null} />
           </>
         )}
       </footer>

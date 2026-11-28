@@ -4,6 +4,9 @@ import { EdgeError, PROTOCOL, SessionLink } from '../dist/index.js';
 import { node, pair, view } from './helpers.mjs';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+const MODELS = [
+  { name: 'm', provider: 'p', context_window: 1000, max_tokens: null, images: null, price: null, default: true },
+];
 const WELCOME = { protocol: PROTOCOL, version: '0.17.0', session: 's1', cwd: '/w', pid: 7 };
 
 /**
@@ -39,6 +42,8 @@ function server({ snapshot = [view(0, 2), { kind: 'Labels', labels: [] }], tree 
             }
             return answer(chain);
           }
+          case 'models':
+            return answer(MODELS);
           case 'nodes':
             return answer(tree.slice(message.params.start, message.params.start + message.params.limit));
           default:
@@ -75,10 +80,24 @@ test('ready after hello: the snapshot is in the model, the first open cursor fol
   assert.equal(link.state.phase, 'ready');
   assert.deepEqual(link.state.welcome, WELCOME);
   assert.equal(link.state.focus, 0);
-  assert.deepEqual(fake.calls.map(([m]) => m), ['hello', 'watch', 'walk']);
+  assert.deepEqual(fake.calls.map(([m]) => m), ['hello', 'models', 'watch', 'walk']);
   assert.deepEqual(fake.calls[0][1], { protocol: PROTOCOL, client: 'me@test:web' });
-  assert.deepEqual(fake.calls[1][1], { cursors: [0] });
+  assert.deepEqual(fake.calls[2][1], { cursors: [0] });
   assert.deepEqual(link.state.model.walk(2).map((n) => n.id), [0, 1, 2]);
+  link.dispose();
+});
+
+test('models() is read at connect and again on each Commands', async () => {
+  const fake = server({ tree });
+  const link = new SessionLink({ open: fake.open, client: 'me' });
+  link.start();
+  await tick();
+  const count = () => fake.calls.filter(([m]) => m === 'models').length;
+  assert.equal(count(), 1, 'one read at connect: the snapshot\'s Commands came before hello answered');
+  assert.deepEqual(link.state.model.modelInfo('m').context_window, 1000);
+  fake.connections[0].deliver({ jsonrpc: '2.0', method: 'event', params: { kind: 'Commands', forms: [] } });
+  await tick();
+  assert.equal(count(), 2);
   link.dispose();
 });
 

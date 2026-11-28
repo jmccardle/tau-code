@@ -16,7 +16,8 @@
  *    for the folder (τ from TAU_BIN, else PATH) and relays its HTTP edge to the webview;
  * 4. in the webview: a message and its streamed reply (the chat round trip); `/model v`, then a
  *    message whose reply reads a PNG, so a tool result carries an image (protocol 2) and the row
- *    labels it `[image 1x1 image/png]`;
+ *    labels it `[image 1x1 image/png]`; and before that, two images (protocol 3), one picked and
+ *    one pasted into the webview, sent through the relay, drawn in their row, echoed by the mock;
  * 5. "Developer: Reload Window": the tab comes back on the same session (webview state), with
  *    the conversation;
  * 6. "tau: Restart This Session's tau Server": a new server (new pid and token) for the same
@@ -26,7 +27,8 @@
  * too and sets `tau-code.runtime` to `bundled`, so the server is the payload's τ.
  *
  * With STALE_RUNTIME_VSIX=…/ffwf-tau-runtime-0.8.1-linux-x64.vsix (the last runtime before 0.9.0:
- * τ 0.14.1, protocol 1, which the marketplaces keep serving on the targets 0.9.0 dropped) it checks
+ * τ 0.14.1, protocol 1, which the marketplaces keep serving on the targets 0.9.0 dropped), or a 0.9.x
+ * runtime (τ 0.17.1, protocol 2: what a user has installed when tau code 0.10 arrives), it checks
  * the refusal instead, and stops there: the runtime is installed beside the τ on PATH with
  * `tau-code.runtime` left at `auto`, so the stale runtime is chosen; "tau: Open Agent" must start
  * no server and say, in the page and in a notification, which τ it found, what it needs and how
@@ -42,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { fakeModel, png } from './lib/fake-model.mjs';
+import { fakeModel, png, pngOf } from './lib/fake-model.mjs';
 import { mockConfig, TAU_BIN } from './lib/serve.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -118,6 +120,8 @@ writeFileSync(
 const model = await fakeModel('pixel.png');
 const config = mockConfig();
 config.models.v = { model: 'm', base_url: model.url, images: true };
+// τ's mock takes images when its model says so (D31), and echoes them: `[2 images: ...]`.
+config.models.mock.images = true;
 writeFileSync(join(home, 'config.json'), JSON.stringify(config));
 
 const tau = tauPath();
@@ -271,26 +275,28 @@ const STOP = Symbol('stop');
 /** The stale runtime is refused: no server, and the reason in the page and a notification. */
 async function stale(page) {
   const frame = await tauFrame(page);
-  const said = frame.locator('.tau-app', { hasText: 'speaks protocol 1' });
+  // Any runtime before this protocol: 0.8.1 (τ 0.14.1, protocol 1) or 0.9.x (τ 0.17.1, protocol 2).
+  const stalePhrase = /speaks protocol [12]\b/;
+  const said = frame.locator('.tau-app', { hasText: stalePhrase });
   await said.waitFor({ timeout: 60_000 });
   const text = await said.innerText();
   for (const expected of [
-    /tau 0\.14\.1 from the tau runtime extension \(linux-x64, Python [\d.]+\) speaks protocol 1/,
-    new RegExp(`tau code ${VERSION.replace(/\./g, '\\.')} speaks protocol 2, which needs tau 0\\.17\\.0 or newer`),
-    /from tau on PATH does speak protocol 2/,
+    /tau 0\.1[47]\.1 from the tau runtime extension \(linux-x64, Python [\d.]+\) speaks protocol [12]/,
+    new RegExp(`tau code ${VERSION.replace(/\./g, '\\.')} speaks protocol 3, which needs tau 0\\.18\\.0 or newer`),
+    /from tau on PATH does speak protocol 3/,
     /"tau-code\.runtime" to "system"/,
     // linux-x64 is a released target, so the fix includes updating the runtime.
     /Update it from the Extensions view: ffwf\.tau-runtime [\d.]+ for linux-x64/,
   ]) {
     assert.match(text, expected);
   }
-  step(`the page says: ${/tau 0\.14\.1[^\n]*/.exec(text)?.[0]}`);
-  const toast = page.locator('.notification-toast', { hasText: 'speaks protocol 1' });
+  step(`the page says: ${/tau 0\.1[47]\.1[^\n]*/.exec(text)?.[0]}`);
+  const toast = page.locator('.notification-toast', { hasText: stalePhrase });
   try {
     await toast.first().waitFor({ timeout: 30_000 });
   } catch (error) {
     const shown = await page.locator('.notification-toast').allInnerTexts();
-    throw new Error(`no notification about protocol 1; the toasts: ${JSON.stringify(shown)}`, { cause: error });
+    throw new Error(`no notification about the stale protocol; the toasts: ${JSON.stringify(shown)}`, { cause: error });
   }
   await toast.getByRole('button', { name: 'Choose Which tau' }).first().waitFor();
   step('a notification says the same, with "Choose Which tau"');
@@ -334,19 +340,36 @@ try {
   assert.ok(first, 'the extension started a tau serve in the throwaway τ home');
   tokens.add(first.token);
   assert.equal(first.cwd, work, 'the server runs in the workspace folder');
-  assert.equal(first.protocol, 2);
+  assert.equal(first.protocol, 3);
   if (RUNTIME_VSIX) {
     const command = readFileSync(`/proc/${first.pid}/cmdline`, 'utf8').split('\0').join(' ');
     assert.ok(command.startsWith(join(extensions, 'ffwf.tau-runtime-')), `the server is the runtime's: ${command}`);
     step(`the server is the runtime companion's interpreter: ${command.split(' ')[0]}`);
   }
   assert.match(await frame.locator('.tau-status').innerText(), new RegExp(`tau ${first.version.replace(/\./g, '\\.')}`));
-  step(`"tau: Open Agent" started tau serve ${first.version} (protocol 2, pid ${first.pid}) in the folder; the tab is connected`);
+  step(`"tau: Open Agent" started tau serve ${first.version} (protocol 3, pid ${first.pid}) in the folder; the tab is connected`);
 
   await say(frame, 'hello there');
   await frame.getByTestId('transcript').getByText('mock: hello there').waitFor();
   await frame.getByTestId('step-state').getByText('at rest · done').waitFor();
   step('a message and its streamed reply, through the extension host relay (chat round trip)');
+
+  // Protocol 3: images in a message, through the relay. One picked, one pasted into the webview.
+  await frame.getByTestId('image-picker').setInputFiles([{ name: 'wide.png', mimeType: 'image/png', buffer: pngOf(16, 8, (x) => [x * 16, 90, 200]) }]);
+  await frame.evaluate((b64) => {
+    const data = new DataTransfer();
+    data.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], 'pixel.png'));
+    document
+      .querySelector('[aria-label="message"]')
+      .dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  }, png().toString('base64'));
+  await frame.getByTestId('tray').locator('.tau-tray-item').nth(1).waitFor();
+  await say(frame, 'what are these');
+  await frame.getByTestId('transcript').getByText(/\[2 images: image\/png 16x8, image\/png 1x1\]/).waitFor();
+  const mine = frame.getByTestId('transcript').locator('.tau-row-user', { hasText: 'what are these' });
+  assert.equal(await mine.locator('img.tau-thumb').count(), 2, 'the message draws its own images');
+  assert.equal(await frame.getByTestId('tray').count(), 0, 'the tray is empty');
+  step('two images, picked and pasted in the webview, sent through the relay; drawn, and echoed by the mock');
 
   await say(frame, '/model v');
   await frame.locator('.tau-status', { hasText: 'model v' }).waitFor();

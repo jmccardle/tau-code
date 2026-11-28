@@ -48,8 +48,8 @@ export async function planLine(call: Call, cursor: number, line: string): Promis
     }
     throw error;
   }
-  const save = parsed.save ?? false;
-  if (parsed.extension !== null && parsed.extension !== undefined) {
+  const { save } = parsed;
+  if (parsed.extension !== null) {
     const extension = parsed.extension;
     if (Object.keys(parsed.args).length === 0) {
       return { kind: 'options', extension, save, form: await call('options', { cursor, extension }) };

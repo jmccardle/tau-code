@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SessionLink } from '@ffwf/tau-code-protocol';
-import { TauApp } from '@ffwf/tau-code-ui';
+import { TauApp, randomId } from '@ffwf/tau-code-ui';
 import '@ffwf/tau-code-ui/styles.css';
 import type { WebviewContext } from './messages.js';
 import { Relay } from './vscode-transport.js';
@@ -24,7 +24,7 @@ const relay = new Relay();
 // panel: `vscode@<user@host>:<random>`.
 let client = relay.state.client;
 if (!client) {
-  client = `vscode@${context.where}:${crypto.randomUUID().slice(0, 8)}`;
+  client = `vscode@${context.where}:${randomId()}`;
   relay.remember({ client });
 }
 

@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HttpTransport, SessionLink } from '@ffwf/tau-code-protocol';
-import { TauApp } from '@ffwf/tau-code-ui';
+import { TauApp, randomId } from '@ffwf/tau-code-ui';
 import '@ffwf/tau-code-ui/styles.css';
 import './app.css';
 import { clientId, takeToken } from './token.js';
@@ -15,7 +15,7 @@ const link = new SessionLink({
   // The token is read again for every connection: after a 401, opening the new `open:` address in
   // this tab (only its fragment changes, so the page does not reload) brings the new one.
   open: () => HttpTransport.open({ url: origin, token: takeToken(place) }),
-  client: clientId(window.location.host, window.sessionStorage, () => crypto.randomUUID().slice(0, 8)),
+  client: clientId(window.location.host, window.sessionStorage, randomId),
 });
 window.addEventListener('hashchange', () => {
   if (new URLSearchParams(window.location.hash.slice(1)).has('token')) link.retry();

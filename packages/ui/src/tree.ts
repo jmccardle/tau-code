@@ -1,5 +1,5 @@
 import type { SessionModel } from '@ffwf/tau-code-protocol';
-import { bodyKind, proseText } from '@ffwf/tau-code-protocol';
+import { bodyKind, proseText, userOf } from '@ffwf/tau-code-protocol';
 import type { Node } from '@ffwf/tau-code-protocol';
 
 /** One line of the tree view: a node at a depth. */
@@ -48,8 +48,12 @@ export function summary(node: Node): string {
   switch (bodyKind(body)) {
     case 'System':
       return 'system prompt';
-    case 'User':
-      return clip((body as { User: string }).User);
+    case 'User': {
+      // One line: a user's images (D31) as a count after the text.
+      const { text, images } = userOf((body as Extract<Node['body'], { User: unknown }>).User);
+      const pictured = images.length === 0 ? '' : images.length === 1 ? '[1 image]' : `[${images.length} images]`;
+      return [clip(text), pictured].filter((part) => part !== '').join(' ');
+    }
     case 'Assistant': {
       const parts = (body as Extract<Node['body'], { Assistant: unknown }>).Assistant.parts;
       const text = parts.find((part) => 'Text' in part);

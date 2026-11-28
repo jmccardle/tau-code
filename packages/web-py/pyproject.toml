@@ -6,7 +6,7 @@
 # `npm run package:web-wheel` from the repository root. The sdist carries both, so building a wheel from the sdist needs no Node.
 #
 # THE VERSION IS τ'S, NOT tau-code's. ffwf-tau-web 0.17.x speaks protocol 2 and pairs with
-# ffwf-tau 0.17.x; ffwf-tau depends on this package, so there is deliberately no dependency on
+# ffwf-tau 0.17.x; 0.18.x speaks protocol 3 and pairs with ffwf-tau 0.18.x; ffwf-tau depends on this package, so there is deliberately no dependency on
 # ffwf-tau here (it would be circular). Release order: ffwf-tau-web first, then ffwf-tau.
 [build-system]
 requires = ["hatchling>=1.26"]
@@ -14,7 +14,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ffwf-tau-web"
-version = "0.17.1"
+version = "0.18.0"
 description = "tau-code's web client, built, for `tau serve` to serve with no flags."
 readme = "README.md"
 license = "MIT"

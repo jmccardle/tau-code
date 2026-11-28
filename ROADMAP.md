@@ -1,8 +1,9 @@
 # tau-code roadmap
 
-State as of 2026-11-25. `v0.9.0` is tagged (τ 0.17.1, protocol 2). `master` is 0.9.1, prepared and
-not yet tagged: `v0.9.0` plus the Tau design-system restyle (`feat/tau-design-system`), with
-ffwf-tau-web 0.17.1 (`tau-web-v0.17.1`) as the same client for `tau serve`.
+State as of 2026-11-28. `v0.9.1` is tagged (τ 0.17.1, protocol 2), with ffwf-tau-web 0.17.1
+(`tau-web-v0.17.1`). `master` is on the way to 0.10.0 (τ 0.18.0, protocol 3: `feat/user-images`
+merged), and its web client is ffwf-tau-web 0.18.0 (`tau-web-v0.18.0`), released ahead of τ 0.18.0
+because a 0.18 server refuses a protocol-2 client.
 
 ## In progress: the port to τ 0.17 (protocol 2, the HTTP edge)
 The plan is akb #484 (rev 3) under #474; the item ids (TC-nn, Q-x) are its.

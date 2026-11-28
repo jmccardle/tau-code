@@ -1,5 +1,5 @@
 import { ProtocolViolation } from './errors.js';
-import type { CursorView, Event, Live, Node, Retrying, Welcome } from './generated.js';
+import type { CursorView, Event, Form, Live, ModelInfo, Node, Notice, Retrying, Welcome } from './generated.js';
 
 /** A tool call forming in a reply: `CallNamed`, then its `CallArgs`. */
 export interface LiveCall {
@@ -32,10 +32,20 @@ export interface LiveLayer {
   retrying: Retrying | null;
 }
 
-/** A `Notice` heard (or a notice of this client's own), numbered so a view can dismiss it. */
+/** How loud a notice is (τ's D32: `Notice.level`). */
+export type NoticeLevel = NonNullable<Notice['level']>;
+
+/**
+ * A `Notice` heard (or a notice of this client's own), numbered so a view can dismiss it.
+ * `cursor` is the cursor it is about (null: the session), `extension` who said it (null: τ, or
+ * this client).
+ */
 export interface HeardNotice {
   id: number;
   text: string;
+  cursor: number | null;
+  extension: string | null;
+  level: NoticeLevel;
 }
 
 /** How many notices are kept; older ones are dropped. */
@@ -51,6 +61,11 @@ export const NOTICES_KEPT = 50;
  * - `nodes`: a sparse cache of the tree. A node never changes, so it is never invalidated;
  *   `Appended` adds every new node, and `walk`/`nodes` reads fill in the past;
  * - `layers`: the `Live` layer of each watched cursor that is streaming;
+ * - `commands`: every command's form, from the latest `Commands` event (first in the snapshot,
+ *   and again whenever they change), so a client never calls `commands()`. `commandsVersion`
+ *   counts the `Commands` heard: a form read with `options()` is stale once it moves;
+ * - `models`: the driver's catalog as `models()` last answered (D32 section 8), which the link reads
+ *   at connect and again on each `Commands`; `modelInfo(name)` is one of them;
  * - `notices`: the `Notice`s heard, newest last.
  *
  * On a reconnect there is no resume: a new connection gets a new model, rebuilt from the
@@ -61,6 +76,9 @@ export class SessionModel {
   readonly views = new Map<number, CursorView>();
   readonly gone = new Map<number, number>();
   labels: [string, number][] = [];
+  commands: Form[] = [];
+  commandsVersion = 0;
+  models: ModelInfo[] = [];
   readonly nodes = new Map<number, Node>();
   readonly layers = new Map<number, LiveLayer>();
   notices: HeardNotice[] = [];
@@ -82,7 +100,7 @@ export class SessionModel {
     for (const listener of this.#listeners) listener();
   }
 
-  /** Take one event. A kind protocol 2 does not have is a `ProtocolViolation`. */
+  /** Take one event. A kind protocol 3 does not have is a `ProtocolViolation`. */
   hear(event: Event): void {
     switch (event.kind) {
       case 'CursorView':
@@ -96,6 +114,10 @@ export class SessionModel {
       case 'Labels':
         this.labels = event.labels;
         break;
+      case 'Commands':
+        this.commands = event.forms;
+        this.commandsVersion++;
+        break;
       case 'Appended':
         for (const node of event.nodes) {
           this.#settle(node);
@@ -103,7 +125,7 @@ export class SessionModel {
         }
         break;
       case 'Notice':
-        this.#notice(event.text);
+        this.#notice(event.text, event.level, event.cursor, event.extension);
         break;
       case 'Live':
         this.#live(event);
@@ -114,20 +136,42 @@ export class SessionModel {
     this.#changed();
   }
 
+  /** What `models()` answered: replaces the catalog held. */
+  setModels(models: ModelInfo[]): void {
+    this.models = models;
+    this.#changed();
+  }
+
+  /** The catalog's entry for a qualified model name (`CursorView.model`), if it has one. */
+  modelInfo(name: string | null | undefined): ModelInfo | undefined {
+    return name == null ? undefined : this.models.find((m) => m.name === name);
+  }
+
   /** Nodes a `walk`, `nodes` or `node` call returned. */
   insert(nodes: readonly Node[]): void {
     for (const node of nodes) this.#insert(node);
     this.#changed();
   }
 
-  /** Add a notice of this client's own (a cursor it followed was closed, say). */
-  notify(text: string): void {
-    this.#notice(text);
+  /**
+   * Add a notice of this client's own (a cursor it followed was closed, say), about `cursor` if
+   * it has one.
+   */
+  notify(text: string, level: NoticeLevel = 'info', cursor: number | null = null): void {
+    this.#notice(text, level, cursor, null);
     this.#changed();
   }
 
-  #notice(text: string): void {
-    this.notices = [...this.notices, { id: this.#nextNotice++, text }].slice(-NOTICES_KEPT);
+  #notice(text: string, level: NoticeLevel, cursor: number | null, extension: string | null): void {
+    this.notices = [...this.notices, { id: this.#nextNotice++, text, cursor, extension, level }].slice(-NOTICES_KEPT);
+  }
+
+  /**
+   * The notices to show on `cursor`'s view: the session's (no cursor) and that cursor's own.
+   * Another cursor's wait in the model until it is followed.
+   */
+  noticesFor(cursor: number | null): HeardNotice[] {
+    return this.notices.filter((notice) => notice.cursor === null || notice.cursor === cursor);
   }
 
   /** Forget a notice. */

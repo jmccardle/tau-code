@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Generate packages/protocol/src/generated.ts from τ's wire schema (protocol 2, τ ≥ 0.17).
+ * Generate packages/protocol/src/generated.ts from τ's wire schema (protocol 3, τ ≥ 0.18).
  *
  * The input is pinned: packages/protocol/schema/protocol.schema.json, a copy of what
  * `tau serve --schema` prints. The build reads only that file, so building tau-code needs no τ;
@@ -55,8 +55,8 @@ const KNOWN_KEYWORDS = new Set([
   'enum',
   'const',
   'items',
-  // A fixed-length array, `(extension, text)`: a tuple. `minItems`/`maxItems` are accepted only
-  // beside `prefixItems`, equal to its length; TypeScript has no type for any other bound.
+  // A fixed-length array, `(extension, text)`: a tuple, with `minItems`/`maxItems` equal to its
+  // length. A plain array may carry `maxItems` alone (see arrayType); TypeScript has no type for it.
   'prefixItems',
   'minItems',
   'maxItems',
@@ -200,8 +200,14 @@ function arrayType(schema, path, indent) {
     const members = schema.prefixItems.map((sub, i) => typeOf(sub, `${path}.prefixItems[${i}]`, indent));
     return `[${members.join(', ')}]`;
   }
-  if ('minItems' in schema || 'maxItems' in schema) {
-    throw new Error(`${path}: minItems/maxItems without prefixItems has no TypeScript type.`);
+  // A plain array may carry `maxItems` (protocol 3: `images` on `input`/`send`, at most 20): a
+  // runtime claim τ checks, like `minimum`; TypeScript has no type for it. `minItems` has no use
+  // in τ's schema yet, so it is still refused rather than silently dropped.
+  if ('minItems' in schema) {
+    throw new Error(`${path}: minItems without prefixItems has no TypeScript type.`);
+  }
+  if ('maxItems' in schema && !(Number.isInteger(schema.maxItems) && schema.maxItems >= 0)) {
+    throw new Error(`${path}: maxItems must be a non-negative integer, not ${JSON.stringify(schema.maxItems)}.`);
   }
   if (schema.items === undefined) return 'unknown[]';
   const element = typeOf(schema.items, `${path}.items`, indent);
